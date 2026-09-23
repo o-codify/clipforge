@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
-import { clips, games, streamers, platformAccounts, publications, runtimeValue, forgetYoutubeAccount, type Database } from "@clipforge/db";
+import { clips, games, streamers, platformAccounts, publications, runtimeValue, beginYoutubeDisconnect, forgetYoutubeAccount, type Database } from "@clipforge/db";
 import { QUEUES } from "@clipforge/jobs";
 import {
   authUrl,
@@ -120,7 +120,7 @@ export class PlatformsService {
     const channel = await myChannel(accessToken);
     if (!channel) throw new BadRequestException("у аккаунта Google нет YouTube-канала");
 
-    await this.db
+    const saved = await this.db
       .insert(platformAccounts)
       .values({
         id: randomUUID(),
@@ -134,12 +134,12 @@ export class PlatformsService {
         target: [platformAccounts.platform, platformAccounts.externalId],
         set: { label: channel.title, credentials: { refreshToken }, verifiedAt:new Date() },
         setWhere:isNull(platformAccounts.disconnectRequestedAt),
-      });
+      }).returning({id:platformAccounts.id});
+    if(!saved.length) throw new BadRequestException("Отключение канала ещё выполняется. Дождитесь завершения и подключите его снова.");
   }
 
   async disconnect(id: string): Promise<{state:"disconnected"|"pending"}> {
-    const [account]=await this.db.update(platformAccounts).set({disconnectRequestedAt:sql`coalesce(${platformAccounts.disconnectRequestedAt},now())`})
-      .where(and(eq(platformAccounts.id,id),eq(platformAccounts.platform,"youtube"))).returning();
+    const account=await beginYoutubeDisconnect(this.db,id);
     if(!account) return {state:"disconnected"};
     try { if(account.credentials.refreshToken) await revokeToken(account.credentials.refreshToken); }
     catch { return {state:"pending"}; } // Durable intent: worker retries automatically; no new uploads are accepted.

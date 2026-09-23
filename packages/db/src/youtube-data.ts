@@ -2,6 +2,23 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { platformAccounts, publications, publicationMetrics } from "./schema.js";
 
+// Leave room for five-day backups and the daily backup cleanup cycle.
+export const YOUTUBE_DATA_RETENTION_DAYS = 21;
+export const YOUTUBE_REVOCATION_RETRY_HOURS = 12;
+
+/** Stop access and remove display data immediately, even if Google's revoke endpoint is down. */
+export async function beginYoutubeDisconnect(db: Database, id: string) {
+  const [account] = await db.update(platformAccounts).set({
+    disconnectRequestedAt: sql`coalesce(${platformAccounts.disconnectRequestedAt},now())`, label: "",
+  }).where(and(eq(platformAccounts.id,id),eq(platformAccounts.platform,"youtube"))).returning();
+  if (!account) return;
+  const rows=await db.select({id:publications.id}).from(publications)
+    .where(and(eq(publications.platform,"youtube"),eq(publications.account,account.externalId)));
+  await clearYoutubePublications(db,rows.map(row=>row.id));
+  await db.execute(sql`delete from platform_runtime where key in ('youtube-access','metrics')`);
+  return account;
+}
+
 /** Keeps only our own delivery tombstone, so automatic publishing cannot duplicate a removed upload. */
 export async function clearYoutubePublications(db: Database, ids: string[]): Promise<void> {
   if (!ids.length) return;
@@ -20,27 +37,32 @@ export async function clearYoutubePublications(db: Database, ids: string[]): Pro
 
 /** Idempotent cleanup after confirmed revocation or expired authorization. No YouTube videos are deleted. */
 export async function forgetYoutubeAccount(db: Database, id: string): Promise<void> {
-  // Serialize against an API enqueue, then leave a durable disconnect marker for all readers.
-  const account = await db.transaction(async tx => {
-    const [row] = await tx.select().from(platformAccounts).where(and(eq(platformAccounts.id,id),eq(platformAccounts.platform,"youtube"))).for("update");
-    if(row) await tx.update(platformAccounts).set({disconnectRequestedAt:row.disconnectRequestedAt??new Date()}).where(eq(platformAccounts.id,id));
-    return row;
-  });
+  const account = await beginYoutubeDisconnect(db,id);
   if(!account) return;
-  const rows=await db.select({id:publications.id}).from(publications).where(and(eq(publications.platform,"youtube"),eq(publications.account,account.externalId)));
-  await clearYoutubePublications(db,rows.map(row=>row.id));
   await db.transaction(async tx=>{
     await tx.delete(platformAccounts).where(eq(platformAccounts.id,id));
     await tx.execute(sql`delete from platform_runtime where key in ('youtube-access','metrics')`);
   });
 }
 
-/** Refresh/delete window is shorter than 30 days, including when Google is unavailable. */
+/** Live data expires before backups, so their combined retention stays below 30 days. */
 export async function pruneYoutubeData(db: Database): Promise<void> {
-  await db.delete(publicationMetrics).where(sql`${publicationMetrics.collectedAt} < now() - interval '29 days'`);
+  await db.delete(publicationMetrics).where(sql`${publicationMetrics.collectedAt} < now() - ${YOUTUBE_DATA_RETENTION_DAYS} * interval '1 day'`);
   const stale=await db.select({id:publications.id}).from(publications).where(and(eq(publications.platform,"youtube"),
-    sql`${publications.mediaId} is not null`,sql`${publications.updatedAt} < now() - interval '29 days'`));
+    sql`${publications.mediaId} is not null`,sql`${publications.updatedAt} < now() - ${YOUTUBE_DATA_RETENTION_DAYS} * interval '1 day'`));
   await clearYoutubePublications(db,stale.map(row=>row.id));
+}
+
+/** Run on an offline restored database before starting the application or any worker. */
+export async function sanitizeRestoredYoutubeData(db: Database): Promise<void> {
+  const rows=await db.select({id:publications.id}).from(publications).where(eq(publications.platform,"youtube"));
+  await clearYoutubePublications(db,rows.map(row=>row.id));
+  await db.transaction(async tx=>{
+    await tx.delete(platformAccounts).where(eq(platformAccounts.platform,"youtube"));
+    await tx.execute(sql`delete from platform_runtime where key in ('youtube-access','metrics','youtube-policy')`);
+    await tx.execute(sql`insert into platform_runtime(key,value) values('settings','{"paused":true,"developmentMode":true}'::jsonb)
+      on conflict(key) do update set value=platform_runtime.value || excluded.value,updated_at=now()`);
+  });
 }
 
 /** Enabled only after a recorded YouTube approval; ordinary views/counts do not need this allowance. */

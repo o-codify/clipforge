@@ -6,7 +6,7 @@ import {createContext} from '../apps/worker/dist/context.js';
 import {PlatformsService} from '../apps/api/dist/platforms/platforms.service.js';
 import {collectMetrics} from '../apps/worker/dist/metrics.js';
 import {publishClip} from '../apps/worker/dist/publish.js';
-import {pruneYoutubeData,forgetYoutubeAccount,youtubeDerivedMetricsAllowed} from '../packages/db/dist/index.js';
+import {pruneYoutubeData,forgetYoutubeAccount,youtubeDerivedMetricsAllowed,sanitizeRestoredYoutubeData} from '../packages/db/dist/index.js';
 assert.match(new URL(process.env.DATABASE_URL).hostname,/^clipforge-test-db-/,'Disposable CI database required');
 const ctx=createContext(),db=ctx.db;
 const prefix=`audit-test-${randomUUID()}`;
@@ -47,8 +47,9 @@ try{
   assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,1);
   failure='unavailable';await collectMetrics(testCtx);
   assert.equal((await service.accounts()).length,1,'An outage must not erase consent');failure=null;
-  await db.sql`insert into publication_metrics(id,publication_id,collected_at,views) values(${prefix},${a.publicationId},now()-interval '31 days',999)`;
+  await db.sql`insert into publication_metrics(id,publication_id,collected_at,views) values(${prefix},${a.publicationId},now()-interval '22 days',999),(${prefix+'-recent'},${a.publicationId},now()-interval '20 days',100)`;
   await pruneYoutubeData(db);assert.equal((await db.sql`select id from publication_metrics where id=${prefix}`).length,0);
+  assert.equal((await db.sql`select id from publication_metrics where id=${prefix+'-recent'}`).length,1,'Recent history remains available');
   assert.equal(await youtubeDerivedMetricsAllowed(db),false);
   for(const role of ['admin','moderator','user']){
     const id=`${prefix}-${role}`,token=randomUUID();
@@ -63,6 +64,8 @@ try{
     assert.equal(denied.status,role==='admin'?400:403);
   }
   revokeFailure=true;assert.equal((await service.disconnect(account)).state,'pending');
+  assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,0,'Display data removed before provider revocation succeeds');
+  assert.equal((await service.accounts())[0].label,'','Pending disconnect does not keep the channel title');
   await assert.rejects(service.publish(clip,metadata));
   assert.equal((await service.preview(clip)).accounts.length,0);
   revokeFailure=false;await collectMetrics(testCtx);
@@ -73,7 +76,25 @@ try{
   await forgetYoutubeAccount(db,account);
   await db.sql`insert into platform_accounts(id,platform,external_id,credentials) values(${account},'youtube',${channel},${JSON.stringify({refreshToken:'revoked'})}::jsonb)`;
   failure='invalid_grant';await collectMetrics(testCtx);assert.equal((await service.accounts()).length,0,'Revoked consent cleared even with no videos');
-  console.log('PASS: exact upload metadata, duplicate enqueue, actual visibility, authorization outages/revocation, deletion retries, retention and role isolation');
+  await db.sql`insert into platform_accounts(id,platform,external_id,credentials,verified_at,created_at) values(${account},'youtube',${channel},${JSON.stringify({refreshToken:'unverifiable'})}::jsonb,now()-interval '22 days',now()-interval '22 days')`;
+  failure='unavailable';await collectMetrics(testCtx);
+  assert.equal((await service.accounts()).length,0,'Expired verification leaves room for backup retention');
+  await db.sql`insert into platform_accounts(id,platform,external_id,credentials,disconnect_requested_at) values(${account},'youtube',${channel},${JSON.stringify({refreshToken:'pending'})}::jsonb,now()-interval '13 hours')`;
+  revokeFailure=true;await collectMetrics(testCtx);
+  assert.equal((await service.accounts()).length,0,'Revocation retries cannot retain credentials beyond 12 hours plus polling');
+  await db.sql`insert into platform_accounts(id,platform,external_id,credentials) values(${account},'youtube',${channel},${JSON.stringify({refreshToken:'restored-token'})}::jsonb)`;
+  await db.sql`update publications set account=${channel},media_id='restored-video',url='https://youtube.com/watch?v=restored-video',title='Restored title',privacy='private',status='uploaded' where id=${a.publicationId}`;
+  await db.sql`insert into publication_metrics(id,publication_id,views) values(${prefix+'-restored'},${a.publicationId},10)`;
+  await sanitizeRestoredYoutubeData(db);await sanitizeRestoredYoutubeData(db);
+  assert.equal((await service.accounts()).length,0);
+  assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,0);
+  const [restored]=await db.sql`select * from publications where id=${a.publicationId}`;
+  assert.equal(restored.mediaId,null);assert.equal(restored.title,null);assert.equal(restored.status,'takedown');
+  assert.equal((await db.sql`select * from clips where id=${clip}`).length,1);
+  assert.equal((await db.sql`select * from accounts where id=${prefix+'-admin'}`).length,1,'Restore sanitizer preserves platform login');
+  const [settings]=await db.sql`select value from platform_runtime where key='settings'`;
+  assert.equal(settings.value.paused,true);assert.equal(settings.value.developmentMode,true);
+  console.log('PASS: exact upload metadata, duplicate enqueue, actual visibility, immediate deletion during revoke outages, bounded retries, backup-aware retention, offline restore sanitization and role isolation');
 }finally{
   globalThis.fetch=original;
   await db.sql`delete from accounts where id in (${prefix+'-admin'},${prefix+'-moderator'},${prefix+'-user'})`;

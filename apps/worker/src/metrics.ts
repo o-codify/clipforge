@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { platformAccounts, publications, publicationMetrics, runtimeValue, forgetYoutubeAccount, clearYoutubePublications, pruneYoutubeData } from "@clipforge/db";
+import { platformAccounts, publications, publicationMetrics, runtimeValue, forgetYoutubeAccount, clearYoutubePublications, pruneYoutubeData, YOUTUBE_DATA_RETENTION_DAYS, YOUTUBE_REVOCATION_RETRY_HOURS } from "@clipforge/db";
 import { refreshAccessToken, videoSnapshots, myChannel, revokeToken, YoutubeAccessRevokedError } from "@clipforge/youtube";
 import type { Context } from "./context.js";
 
@@ -16,7 +16,7 @@ export async function collectMetrics(ctx: Context): Promise<void> {
         await forgetYoutubeAccount(ctx.db,account.id);
       }catch{
         failed++;
-        if(Date.now()-account.disconnectRequestedAt.getTime()>6*86400000)await forgetYoutubeAccount(ctx.db,account.id);
+        if(Date.now()-account.disconnectRequestedAt.getTime()>YOUTUBE_REVOCATION_RETRY_HOURS*3600000)await forgetYoutubeAccount(ctx.db,account.id);
       }
       continue;
     }
@@ -58,7 +58,7 @@ export async function collectMetrics(ctx: Context): Promise<void> {
       }
     }catch(error){
       failed++;
-      if(error instanceof YoutubeAccessRevokedError || Date.now()-(account.verifiedAt??account.createdAt).getTime()>29*86400000){
+      if(error instanceof YoutubeAccessRevokedError || Date.now()-(account.verifiedAt??account.createdAt).getTime()>YOUTUBE_DATA_RETENTION_DAYS*86400000){
         await forgetYoutubeAccount(ctx.db,account.id);
       }
     }
