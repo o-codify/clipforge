@@ -20,7 +20,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Card, JobButton, PageSkeleton, Pill, SectionTitle } from "@/components/ui";
-import { api, hhmm, runTime, TRIGGERS, when } from "@/lib/api";
+import { api, hhmm, runTime, TRIGGERS, when, type Viewer } from "@/lib/api";
 import { useJobs, useLiveReload } from "@/lib/jobs";
 
 interface VodDetail {
@@ -67,6 +67,8 @@ export default function VodPage() {
 
   const [vod, setVod] = useState<VodDetail | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [viewer,setViewer]=useState<Viewer|null>(null);
+  useEffect(()=>{void api.get<{viewer:Viewer}>("/api/auth/me").then(value=>setViewer(value.viewer));},[]);
 
   // Есть ли вообще работа по эфиру: пока идёт одна, вторую не начать.
   const anyJob = activeFor(id);
@@ -92,12 +94,12 @@ export default function VodPage() {
     facecam: Boolean(vod.facecam),
   };
   const detail: Record<string, string> = {
-    sources: vod.state === "ready" ? "На диске" : vod.error ?? "",
+    sources: vod.state === "ready" ? "Запись готова" : viewer?.isAdmin ? vod.error ?? "" : "",
     transcript: vod.transcript
-      ? `${vod.transcript.segments} фраз · модель ${vod.transcript.model}`
+      ? `${vod.transcript.segments} фраз${viewer?.isAdmin?` · модель ${vod.transcript.model}`:""}`
       : "",
-    signals: vod.signals ? `${vod.signals.frames.toLocaleString("ru-RU")} кадров` : "",
-    facecam: vod.facecam?.note ?? "",
+    signals: vod.signals ? viewer?.isAdmin?`${vod.signals.frames.toLocaleString("ru-RU")} кадров`:"Звук проанализирован" : "",
+    facecam: vod.facecam ? viewer?.isAdmin?vod.facecam.note:(vod.facecam.found?"Камера найдена":"Отдельная камера не используется") : "",
   };
   const readySteps = STEPS.filter((step) => done[step.key]).length;
   // Пока по эфиру идёт работа, первый незавершённый шаг показывает её
@@ -249,7 +251,7 @@ export default function VodPage() {
                 <th>Прогон</th>
                 <th className="num">Клипов</th>
                 <th className="num">Кандидатов</th>
-                <th>Оформление</th>
+                {viewer?.isAdmin&&<th>Оформление</th>}
                 <th>Когда</th>
               </tr>
             </thead>
@@ -258,9 +260,9 @@ export default function VodPage() {
                 <NavigationRow key={run.id} href={`/runs/${run.id}`} label={runTime(run.id)}>
                   <td className="num">{run.clips}</td>
                   <td className="num">{run.candidates}</td>
-                  <td>
+                  {viewer?.isAdmin&&<td>
                     <Pill>{run.version || "—"}</Pill>
-                  </td>
+                  </td>}
                   <td className="muted">{when(run.startedAt)}</td>
                 </NavigationRow>
               ))}

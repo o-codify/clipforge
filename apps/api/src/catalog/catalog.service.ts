@@ -165,7 +165,11 @@ export class CatalogService {
       .groupBy(runs.id)
       .orderBy(desc(runs.startedAt));
 
-    return { ...row, transcript: transcript ?? null, runs: vodRuns };
+    if(viewer?.isAdmin)return { ...row, transcript: transcript ?? null, runs: vodRuns };
+    const {error,facecam,signals,...visible}=row;
+    return {...visible,facecam:facecam?{found:facecam.found}:null,signals:signals?{ready:true}:null,
+      transcript:transcript?{language:transcript.language,segments:transcript.segments}:null,
+      runs:vodRuns.map(({version,settings,...run})=>run)};
   }
 
   async run(viewer: Viewer | null, id: string) {
@@ -180,7 +184,8 @@ export class CatalogService {
       .from(clips)
       .where(and(eq(clips.runId, id), isNull(clips.archivedAt)))
       .orderBy(clips.peak);
-    return { run: row, clips: list };
+    const {outDir,settings,version,...visible}=row;
+    return { run: viewer?.isAdmin ? row : visible, clips: list.map(clip=>visibleClip(viewer,clip)) };
   }
 
   async clips(

@@ -29,8 +29,10 @@ export async function forgetYoutubeAccount(db: Database, id: string): Promise<vo
   if(!account) return;
   const rows=await db.select({id:publications.id}).from(publications).where(and(eq(publications.platform,"youtube"),eq(publications.account,account.externalId)));
   await clearYoutubePublications(db,rows.map(row=>row.id));
-  await db.delete(platformAccounts).where(eq(platformAccounts.id,id));
-  await db.execute(sql`delete from platform_runtime where key in ('youtube-access','metrics')`);
+  await db.transaction(async tx=>{
+    await tx.delete(platformAccounts).where(eq(platformAccounts.id,id));
+    await tx.execute(sql`delete from platform_runtime where key in ('youtube-access','metrics')`);
+  });
 }
 
 /** Refresh/delete window is shorter than 30 days, including when Google is unavailable. */

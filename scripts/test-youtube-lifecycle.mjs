@@ -16,7 +16,7 @@ let failure=null,revokeFailure=false,uploads=0,captured;
 const queued=[];
 const app={clientId:'test-client',clientSecret:'test-secret'};
 const service=new PlatformsService(db,{youtube:app,apiOrigin:'http://localhost',webOrigin:'http://localhost'}, {enqueue:async(name,payload)=>queued.push(payload)});
-const testCtx={...ctx,youtube:app,storage:{openVideo:async()=>({body:Readable.from(['video']),size:5})}};
+const testCtx={...ctx,youtube:app,storage:{openVideo:async()=>({body:Readable.from([Buffer.from('video')]),size:5})}};
 globalThis.fetch=async(url,init)=>{
   const address=String(url);
   if(address.startsWith('http://127.0.0.1:8420/'))return original(url,init);
@@ -33,8 +33,8 @@ try{
   await db.sql`insert into streamers(login) values(${prefix})`;
   await db.sql`insert into vods(id,streamer) values(${prefix},${prefix})`;
   await db.sql`insert into runs(id,vod_id,streamer,out_dir) values(${prefix},${prefix},${prefix},'/unused')`;
-  await db.sql`insert into clips(id,run_id,vod_id,streamer,segment_key,file,state,text,media_storage) values(${clip},${prefix},${prefix},${prefix},${prefix},'test.mp4','ready','Test clip',${db.sql.json({videoKey:'test/video',posterKey:'test/poster'})})`;
-  await db.sql`insert into platform_accounts(id,platform,external_id,label,credentials) values(${account},'youtube',${channel},'Test channel',${db.sql.json({refreshToken:'test-refresh'})})`;
+  await db.sql`insert into clips(id,run_id,vod_id,streamer,segment_key,file,state,text,media_storage) values(${clip},${prefix},${prefix},${prefix},${prefix},'test.mp4','ready','Test clip',${JSON.stringify({videoKey:'test/video',posterKey:'test/poster'})}::jsonb)`;
+  await db.sql`insert into platform_accounts(id,platform,external_id,label,credentials) values(${account},'youtube',${channel},'Test channel',${JSON.stringify({refreshToken:'test-refresh'})}::jsonb)`;
   const draft=await service.preview(clip);assert.equal(draft.accounts[0].id,account);assert.equal(draft.privacy,'private');
   const metadata={accountId:account,title:'Сохранить  пробелы!',description:'Точное описание\nСо второй строкой',privacy:'public'};
   const [a,b]=await Promise.all([service.publish(clip,metadata),service.publish(clip,metadata)]);
@@ -71,7 +71,7 @@ try{
   assert.equal(tombstone.status,'takedown');for(const field of ['mediaId','url','operationId','title','caption','privacy'])assert.equal(tombstone[field],null);
   assert.equal((await db.sql`select * from clips where id=${clip}`).length,1,'Disconnect preserves source clips');
   await forgetYoutubeAccount(db,account);
-  await db.sql`insert into platform_accounts(id,platform,external_id,credentials) values(${account},'youtube',${channel},${db.sql.json({refreshToken:'revoked'})})`;
+  await db.sql`insert into platform_accounts(id,platform,external_id,credentials) values(${account},'youtube',${channel},${JSON.stringify({refreshToken:'revoked'})}::jsonb)`;
   failure='invalid_grant';await collectMetrics(testCtx);assert.equal((await service.accounts()).length,0,'Revoked consent cleared even with no videos');
   console.log('PASS: exact upload metadata, duplicate enqueue, actual visibility, authorization outages/revocation, deletion retries, retention and role isolation');
 }finally{

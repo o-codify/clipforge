@@ -36,12 +36,12 @@ test('preserves complete uploader metadata and rejects invalid input before send
     await new Response(init.body).arrayBuffer();return Response.json({id:'test-id'});
   };
   try{
-    await uploadVideo('test-token',{...metadata,tags:[],source:{body:Readable.from(['x']),size:1}});
+    await uploadVideo('test-token',{...metadata,tags:[],source:{body:Readable.from([Buffer.from('x')]),size:1}});
     assert.equal(calls,2);
     assert.throws(()=>validateVideoMetadata({...metadata,title:'x'.repeat(101)}));
     assert.throws(()=>validateVideoMetadata({...metadata,description:metadata.description+'x'}));
     assert.throws(()=>validateVideoMetadata({...metadata,title:'<title>'}));
-    const invalid=Readable.from(['x']);
+    const invalid=Readable.from([Buffer.from('x')]);
     await assert.rejects(uploadVideo('test-token',{...metadata,title:' ',tags:[],source:{body:invalid,size:1}}));
     assert(invalid.destroyed);assert.equal(calls,2);
   }finally{globalThis.fetch=original;}
