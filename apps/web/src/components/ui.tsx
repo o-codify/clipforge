@@ -64,7 +64,7 @@ export function Button({
       {reserve && reserve.length > 0 ? (
         <span className="btn-stack">
           {reserve.map((ghost, index) => (
-            <span key={index} className="btn-ghost" aria-hidden>
+            <span key={index} className="btn-reserve" aria-hidden>
               {icon && <span className="btn-icon">{icon}</span>}
               <span>{ghost}</span>
             </span>
@@ -203,15 +203,15 @@ export function JobButton({
       onClick={start}
     >
       <span className="btn-stack">
-        <span className="btn-ghost" aria-hidden>
+        <span className="btn-reserve" aria-hidden>
           {icon && <span className="btn-icon">{icon}</span>}
           <span>{children}</span>
         </span>
-        <span className="btn-ghost" aria-hidden>
+        <span className="btn-reserve" aria-hidden>
           <span className="spinner" />
           <span>В очереди</span>
         </span>
-        <span className="btn-ghost" aria-hidden>
+        <span className="btn-reserve" aria-hidden>
           <span className="dot" />
           <span>Идёт 888:88</span>
         </span>

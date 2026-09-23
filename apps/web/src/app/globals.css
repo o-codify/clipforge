@@ -753,7 +753,7 @@ button.pill { cursor: pointer; border: none; font: inherit; font-size: 11px; }
   gap: 8px;
   white-space: nowrap;
 }
-.btn-ghost { visibility: hidden; }
+.btn-reserve { visibility: hidden; }
 .btn-layer { animation: layer-in .16s ease-out; }
 @keyframes layer-in {
   from { opacity: 0; }
