@@ -68,13 +68,13 @@ function createLane(): <T>(task: () => Promise<T>) => Promise<T> {
  * происходящее.
  */
 async function releaseStaleJobs(boss: PgBoss, ctx: Context): Promise<void> {
-  const stale = await ctx.db.execute<{ id: string; name: string; data: { publicationId?: string } }>(
+  const active = await ctx.db.execute<{ id: string; name: string; data: { publicationId?: string } }>(
     sql`select id::text, name, data from jobs.job where state = 'active'`,
   );
+  const stale = active.filter(job => servesQueue(ctx.config.role, job.name as QueueName));
   if (stale.length === 0) return;
 
   for (const job of stale) {
-    if (!servesQueue(ctx.config.role, job.name as QueueName)) continue;
     if (job.name === QUEUES.publishClip && job.data.publicationId) {
       await ctx.db.execute(sql`update publications set status = 'failed',
         error = '[upload-uncertain] Процесс прервался во время загрузки. Проверьте канал перед повторной отправкой.'
