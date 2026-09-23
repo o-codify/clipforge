@@ -245,6 +245,9 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  // Windows has no POSIX SIGTERM delivery. The PC supervisor uses IPC so
+  // pg-boss can finish its shutdown before Python/ffmpeg are cleaned up.
+  process.on("message", message => { if (message === "shutdown") void stop(); });
 }
 
 main().catch((error) => {

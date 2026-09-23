@@ -20,6 +20,14 @@ jobs:
       contents: read
       packages: write
     steps:
+      - name: Wait for Docker Desktop
+        run: |
+          for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            docker info --format '{{.ServerVersion}}' 2>$null
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Start-Sleep -Seconds 5
+          }
+          throw 'Docker Desktop did not become ready'
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -56,3 +64,8 @@ jobs:
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
           RELEASE_SHA: ${{ github.sha }}
         run: node scripts/deploy.mjs
+      - name: Install media worker release
+        if: ${{ vars.CLIPFORGE_MEDIA_HOME != '' }}
+        env:
+          CLIPFORGE_MEDIA_HOME: ${{ vars.CLIPFORGE_MEDIA_HOME }}
+        run: ./scripts/install-media-release.ps1

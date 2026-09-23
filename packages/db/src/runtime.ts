@@ -6,6 +6,7 @@ export async function upgradeRuntime(db: Database): Promise<void> {
   await db.execute(sql`ALTER TYPE account_role ADD VALUE IF NOT EXISTS 'moderator'`);
   await db.execute(sql`ALTER TYPE account_role ADD VALUE IF NOT EXISTS 'user'`);
   await db.execute(sql`UPDATE accounts SET role = 'user' WHERE role = 'streamer'`);
+  await db.execute(sql`ALTER TABLE accounts ALTER COLUMN role SET DEFAULT 'user'`);
   await db.execute(sql`ALTER TABLE publications ADD COLUMN IF NOT EXISTS privacy text`);
   await db.execute(sql`ALTER TABLE clips ADD COLUMN IF NOT EXISTS archived_at timestamptz`);
   await db.execute(sql`ALTER TABLE clips ADD COLUMN IF NOT EXISTS archive_reason text`);

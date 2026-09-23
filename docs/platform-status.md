@@ -16,7 +16,7 @@
 
 ## YouTube
 
-Проверка существующего подключения вернула `invalid_grant`. Нужно повторно войти через «Управление платформой → YouTube». Причина отзыва/истечения токена из ответа неизвестна. Для внешнего приложения в Google OAuth Testing токен с YouTube scopes обычно живёт 7 дней: https://developers.google.com/identity/protocols/oauth2#expiration
+Повторная проверка 23 сентября прошла: refresh token работает, подключён канал «Кузня Клипов» (`UC-P-55QVYfT8SBtGnCNAtog`). Предыдущая запись об `invalid_grant` устарела. Фактический OAuth-проект — `valid-climber-507122-a3` (97417694771), приложение ClipForge, External / Testing. В Cloud Console проверена отдельная квота загрузок: 100 видео в день. Переход OAuth в Production и аудит YouTube API ещё не завершены. Для внешнего приложения в Google OAuth Testing токен с YouTube scopes обычно живёт 7 дней: https://developers.google.com/identity/protocols/oauth2#expiration
 
 Загрузка, проверка реальной видимости и сбор статистики реализованы. Автопубликация по умолчанию выключена. Новые ролики не загружались в ходе проверки. Существующий приватный ролик не объявляется публичным без подтверждения API. Чтобы считать публикацию публичной, требуется actual privacy=public и uploadStatus=processed.
 
