@@ -1,0 +1,37 @@
+{
+  "name": "@clipforge/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "start": "node dist/main.js",
+    "dev": "node --watch dist/main.js",
+    "test": "tsc -b && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@clipforge/storage": "workspace:*",
+    "@clipforge/db": "workspace:*",
+    "@clipforge/jobs": "workspace:*",
+    "@clipforge/pipeline": "workspace:*",
+    "@clipforge/twitch": "workspace:*",
+    "@clipforge/youtube": "workspace:*",
+    "@fastify/cookie": "^11.0.2",
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/platform-fastify": "^11.0.1",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.3",
+    "fastify": "^5.12.1",
+    "pg-boss": "^10.1.6",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^3.24.1",
+    "@clipforge/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

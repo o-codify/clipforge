@@ -1,0 +1,241 @@
+"use client";
+
+/**
+ * Плитка клипов с проигрывателем.
+ *
+ * Кадр-превью грузится с бэкенда: он режет его ffmpeg-ом и держит в
+ * кэше. Клип открывается в окне поверх страницы, а не отдельной
+ * страницей - смотреть их приходится подряд, и возвращаться назад после
+ * каждого утомительно.
+ */
+import { useEffect, useState } from "react";
+
+import { Button, Pill } from "@/components/ui";
+import { api, hhmm, PUB_STATE, size, TRIGGERS, type ClipRow, type Viewer } from "@/lib/api";
+import { toast } from "@/lib/toast";
+
+interface ClipDetail extends ClipRow {
+  publications: {
+    id: string; platform: string; privacy?: string | null; error?: string | null; account: string;
+    url: string | null; status: string;
+  }[];
+  versions: {
+    id: string; version: string; file: string;
+    runId: string; createdAt: string; state: string;
+  }[];
+}
+
+export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () => void }) {
+  const [viewer, setViewer] = useState<Viewer | null>(null);
+  useEffect(() => { void api.get<{viewer:Viewer}>("/api/auth/me").then(r=>setViewer(r.viewer)); }, []);
+  const [open, setOpen] = useState<ClipDetail | null>(null);
+  const [busy, setBusy] = useState(false);
+  /** Снятие - в два шага прямо в окне: причина спрашивается на месте,
+   *  а не системным диалогом, выпадающим из оформления. */
+  const [blocking, setBlocking] = useState(false);
+  const [reason, setReason] = useState("");
+
+  const show = async (id: string) => {
+    setBlocking(false);
+    setReason("");
+    setOpen(await api.get<ClipDetail>(`/api/clips/${id}`));
+  };
+
+  const block = async (id: string) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/clips/${id}/block`, { reason });
+      await show(id);
+      onChange?.();
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Вернуть снятый клип. Возвращается сразу одобренным: одобрение на
+   * площадке автоматическое, ручного состояния «черновик» больше нет.
+   */
+  const publish = async (id: string) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/platforms/publish/${id}`);
+      await show(id);
+      onChange?.();
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restore = async (id: string) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/clips/${id}/state`, { state: "ready" });
+      await show(id);
+      onChange?.();
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (clips.length === 0) {
+    return <div className="empty">Клипов пока нет.</div>;
+  }
+
+  return (
+    <>
+      <div className="grid clips">
+        {clips.map((clip) => (
+          <button key={clip.id} className="clip" onClick={() => show(clip.id)}>
+            <div
+              className="shot"
+              style={{ backgroundImage: `url(/media/poster/${clip.id})` }}
+            >
+              {clip.state === "blocked" && <span className="flag">Снят</span>}
+              <span className="len">{hhmm(clip.duration)}</span>
+            </div>
+            <div className="body">
+              <div className="name">
+                {TRIGGERS[clip.trigger ?? ""] ?? clip.trigger} · {hhmm(clip.start)}
+              </div>
+              <div className="txt">{clip.text || "—"}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {open && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setOpen(null)}>
+          <div className="sheet">
+            {/* Закрытие живёт в углу окна, как везде, а не среди кнопок
+                управления клипом: это действие над окном, не над клипом. */}
+            <button
+              className="modal-close"
+              aria-label="Закрыть"
+              onClick={() => setOpen(null)}
+            >
+              ✕
+            </button>
+            <h2 style={{ marginTop: 0 }}>{open.file}</h2>
+            <div className="player">
+              <video src={`/media/clip/${open.id}`} controls autoPlay
+                     poster={`/media/poster/${open.id}`} />
+              <div className="side">
+                <p className="sub">
+                  {TRIGGERS[open.trigger ?? ""] ?? open.trigger} ·{" "}
+                  {hhmm(open.start)}–{hhmm(open.end)} ({open.duration.toFixed(1)} с) ·{" "}
+                  {open.width}×{open.height} {open.fps} к/с · {size(open.sizeBytes)}
+                </p>
+                <div className="pillrow">
+                  {Object.entries(open.parts).map(([name, value]) => (
+                    <span key={name} className="pill">
+                      {name} {Number(value).toFixed(2)}
+                    </span>
+                  ))}
+                </div>
+                <p style={{ marginTop: 12 }}>{open.text}</p>
+
+                <h2>Версии момента</h2>
+                <div className="pillrow">
+                  {open.versions.map((v) => (
+                    <span key={v.id} className={`pill${v.id === open.id ? " on" : ""}`}>
+                      {v.version || "Без версии"}
+                      {v.id === open.id ? " — эта" : ""}
+                    </span>
+                  ))}
+                </div>
+
+                <h2>Публикации</h2>
+                {open.publications.length === 0 ? (
+                  <p className="sub">Не публиковался.</p>
+                ) : (
+                  <div className="scroller">
+                    <table>
+                      <tbody>
+                        {open.publications.map((p) => {
+                          const [label, tone] = PUB_STATE[p.status] ?? [p.status, ""];
+                          return (
+                            <tr key={p.id}>
+                              <td>{{ youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram", twitch: "Twitch" }[p.platform] ?? p.platform}</td>
+                              <td><Pill tone={tone}>{label}</Pill>{p.privacy && <span> · {p.privacy === "public" ? "Публично" : p.privacy === "private" ? "Приватно" : "По ссылке"}</span>}{p.error && <p role="alert">{p.error}</p>}</td>
+                              <td>
+                                {p.url ? (
+                                  <a href={p.url} target="_blank" rel="noopener">
+                                    Открыть
+                                  </a>
+                                ) : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {viewer?.isAdmin && open.state !== "blocked" &&
+                  !open.publications.some(
+                    (p) => p.platform === "youtube" && p.status !== "failed",
+                  ) && (
+                    <div style={{ marginTop: 8 }}>
+                      <Button size="sm" variant="primary" busy={busy}
+                              onClick={() => publish(open.id)}>
+                        {open.publications.some((p) => p.platform === "youtube")
+                          ? "Повторить на YouTube"
+                          : "Опубликовать на YouTube"}
+                      </Button>
+                    </div>
+                  )}
+
+                <div className="actions" hidden={viewer?.role === "moderator"}>
+                  {open.state === "blocked" ? (
+                    <>
+                      <Pill tone="bad">
+                        Запрещён: {open.blockedReason || "Без причины"}
+                      </Pill>
+                      <Button busy={busy} onClick={() => restore(open.id)}>
+                        Вернуть
+                      </Button>
+                    </>
+                  ) : blocking ? (
+                    <>
+                      <input
+                        className="field"
+                        autoFocus
+                        placeholder="Причина (например, жалоба на авторские права)"
+                        value={reason}
+                        style={{ flex: 1, minWidth: 220 }}
+                        onChange={(event) => setReason(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void block(open.id);
+                        }}
+                      />
+                      <Button variant="danger" busy={busy} onClick={() => block(open.id)}>
+                        Запретить
+                      </Button>
+                      <Button variant="ghost" onClick={() => setBlocking(false)}>
+                        Отмена
+                      </Button>
+                    </>
+                  ) : (
+                    // Одобрения нет: клип одобрен с рождения, площадка
+                    // автоматическая. Единственное ручное действие -
+                    // снять, если прилетела жалоба.
+                    <Button variant="danger" onClick={() => setBlocking(true)}>
+                      Запретить новые публикации
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

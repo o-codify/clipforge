@@ -1,0 +1,30 @@
+{
+  "name": "@clipforge/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "start": "node dist/main.js",
+    "dev": "node --watch dist/main.js",
+    "enqueue": "node dist/enqueue.js"
+  },
+  "dependencies": {
+    "@clipforge/storage": "workspace:*",
+    "@clipforge/contracts": "workspace:*",
+    "@clipforge/db": "workspace:*",
+    "@clipforge/jobs": "workspace:*",
+    "@clipforge/pipeline": "workspace:*",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.3",
+    "pg-boss": "^10.1.6",
+    "zod": "^3.24.1",
+    "@clipforge/twitch": "workspace:*",
+    "@clipforge/youtube": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

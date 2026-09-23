@@ -1,0 +1,11 @@
+{
+  "name": "@clipforge/assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.tsx", "./styles.css": "./src/styles.css" },
+  "scripts": { "build": "tsc -b", "typecheck": "tsc -b" },
+  "peerDependencies": { "react": ">=18" },
+  "dependencies": { "@blobatar/react": "2.7.0", "blobatar": "2.7.0" },
+  "devDependencies": { "@types/react": "^19.0.2", "typescript": "^5.7.2" }
+}

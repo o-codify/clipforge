@@ -1,0 +1,6 @@
+# Linux container: same pipeline, no unused CUDA runtime or GUI libraries.
+numpy==2.3.4
+faster-whisper==1.2.1
+ctranslate2==4.8.1
+opencv-python-headless==5.0.0.93
+yt-dlp==2026.08.19

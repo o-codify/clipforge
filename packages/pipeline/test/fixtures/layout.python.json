@@ -1,0 +1,111 @@
+{
+ "с камерой": {
+  "describe": "игра 1080x812 @y704, камера 486x576 @y105",
+  "subTop": 1539,
+  "accentY": 94,
+  "game": {
+   "crop": {
+    "x": 312,
+    "y": 0,
+    "w": 956,
+    "h": 720
+   },
+   "x": 0,
+   "y": 704,
+   "w": 1080,
+   "h": 812
+  },
+  "cam": {
+   "crop": {
+    "x": 53,
+    "y": 414,
+    "w": 259,
+    "h": 306
+   },
+   "x": 297,
+   "y": 105,
+   "w": 486,
+   "h": 576
+  },
+  "filter": "[0:v]split=3[s0][s1][s2];[s0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=22,eq=brightness=-0.22:saturation=0.55[bg];[s1]crop=956:720:312:0,scale=1080:812,drawbox=x=0:y=0:w=iw:h=ih:color=0x9146FF@0.95:t=5[game];[bg][game]overlay=0:704[stage1];[s2]crop=259:306:53:414,scale=486:576,drawbox=x=0:y=0:w=iw:h=ih:color=0x9146FF@0.95:t=5[cam];[stage1][cam]overlay=297:105[stage2];[stage2]drawbox=x=480:y=94:w=120:h=5:color=0x9146FF@0.9:t=fill[accent];color=c=black:s=1080x1920:d=34.000:r=30,format=rgba,fade=t=in:st=30.500:d=0.50:alpha=1,colorchannelmixer=aa=0.88[scrimsrc];[accent][scrimsrc]overlay=0:0[scrimmed];[1:v]scale=640:-1,format=rgba,fade=t=in:st=30.500:d=0.40:alpha=1,fade=t=out:st=33.500:d=0.40:alpha=1[ov0];[scrimmed][ov0]overlay=220:900[st0];[st0]subtitles='subs.ass'[vout]"
+ },
+ "без камеры": {
+  "describe": "игра 1080x1412 @y105, камеры нет",
+  "subTop": 1540,
+  "accentY": 94,
+  "game": {
+   "crop": {
+    "x": 365,
+    "y": 0,
+    "w": 550,
+    "h": 720
+   },
+   "x": 0,
+   "y": 105,
+   "w": 1080,
+   "h": 1412
+  },
+  "cam": null,
+  "filter": "[0:v]split=2[s0][s1];[s0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=22,eq=brightness=-0.22:saturation=0.55[bg];[s1]crop=550:720:365:0,scale=1080:1412,drawbox=x=0:y=0:w=iw:h=ih:color=0x9146FF@0.95:t=5[game];[bg][game]overlay=0:105[stage1];[stage1]drawbox=x=480:y=94:w=120:h=5:color=0x9146FF@0.9:t=fill[accent];color=c=black:s=1080x1920:d=34.000:r=30,format=rgba,fade=t=in:st=30.500:d=0.50:alpha=1,colorchannelmixer=aa=0.88[scrimsrc];[accent][scrimsrc]overlay=0:0[scrimmed];[1:v]scale=640:-1,format=rgba,fade=t=in:st=30.500:d=0.40:alpha=1,fade=t=out:st=33.500:d=0.40:alpha=1[ov0];[scrimmed][ov0]overlay=220:900[st0];[st0]subtitles='subs.ass'[vout]"
+ },
+ "камера справа": {
+  "describe": "игра 1080x812 @y704, камера 728x576 @y105",
+  "subTop": 1539,
+  "accentY": 94,
+  "game": {
+   "crop": {
+    "x": 64,
+    "y": 0,
+    "w": 1436,
+    "h": 1080
+   },
+   "x": 0,
+   "y": 704,
+   "w": 1080,
+   "h": 812
+  },
+  "cam": {
+   "crop": {
+    "x": 1500,
+    "y": 700,
+    "w": 380,
+    "h": 300
+   },
+   "x": 176,
+   "y": 105,
+   "w": 728,
+   "h": 576
+  },
+  "filter": "[0:v]split=3[s0][s1][s2];[s0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=22,eq=brightness=-0.22:saturation=0.55[bg];[s1]crop=1436:1080:64:0,scale=1080:812,drawbox=x=0:y=0:w=iw:h=ih:color=0x9146FF@0.95:t=5[game];[bg][game]overlay=0:704[stage1];[s2]crop=380:300:1500:700,scale=728:576,drawbox=x=0:y=0:w=iw:h=ih:color=0x9146FF@0.95:t=5[cam];[stage1][cam]overlay=176:105[stage2];[stage2]drawbox=x=480:y=94:w=120:h=5:color=0x9146FF@0.9:t=fill[accent];color=c=black:s=1080x1920:d=34.000:r=30,format=rgba,fade=t=in:st=30.500:d=0.50:alpha=1,colorchannelmixer=aa=0.88[scrimsrc];[accent][scrimsrc]overlay=0:0[scrimmed];[1:v]scale=640:-1,format=rgba,fade=t=in:st=30.500:d=0.40:alpha=1,fade=t=out:st=33.500:d=0.40:alpha=1[ov0];[scrimmed][ov0]overlay=220:900[st0];[st0]subtitles='subs.ass'[vout]"
+ },
+ "широкая камера": {
+  "describe": "игра 1080x1028 @y488, камера 1080x360 @y105",
+  "subTop": 1539,
+  "accentY": 94,
+  "game": {
+   "crop": {
+    "x": 524,
+    "y": 0,
+    "w": 756,
+    "h": 720
+   },
+   "x": 0,
+   "y": 488,
+   "w": 1080,
+   "h": 1028
+  },
+  "cam": {
+   "crop": {
+    "x": 10,
+    "y": 10,
+    "w": 900,
+    "h": 300
+   },
+   "x": 0,
+   "y": 105,
+   "w": 1080,
+   "h": 360
+  },
+  "filter": "[0:v]split=3[s0][s1][s2];[s0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=22,eq=brightness=-0.22:saturation=0.55[bg];[s1]crop=756:720:524:0,scale=1080:1028,drawbox=x=0:y=0:w=iw:h=ih:color=0x9146FF@0.95:t=5[game];[bg][game]overlay=0:488[stage1];[s2]crop=900:300:10:10,scale=1080:360,drawbox=x=0:y=0:w=iw:h=ih:color=0x9146FF@0.95:t=5[cam];[stage1][cam]overlay=0:105[stage2];[stage2]drawbox=x=480:y=94:w=120:h=5:color=0x9146FF@0.9:t=fill[accent];color=c=black:s=1080x1920:d=34.000:r=30,format=rgba,fade=t=in:st=30.500:d=0.50:alpha=1,colorchannelmixer=aa=0.88[scrimsrc];[accent][scrimsrc]overlay=0:0[scrimmed];[1:v]scale=640:-1,format=rgba,fade=t=in:st=30.500:d=0.40:alpha=1,fade=t=out:st=33.500:d=0.40:alpha=1[ov0];[scrimmed][ov0]overlay=220:900[st0];[st0]subtitles='subs.ass'[vout]"
+ }
+}

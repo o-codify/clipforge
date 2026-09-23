@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler", "rootDir": "src", "outDir": "dist", "jsx": "react-jsx", "lib": ["ES2023", "DOM"] },
+  "include": ["src/**/*.tsx"]
+}
+

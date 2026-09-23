@@ -1,0 +1,1 @@
+ALTER TABLE "clips" ADD COLUMN "media_storage" jsonb;

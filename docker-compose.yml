@@ -1,0 +1,26 @@
+# Инфраструктура для разработки. Postgres здесь один и на всё: он же
+# очередь заданий (pg-boss), поэтому отдельный Redis не нужен - на одной
+# машине лишний демон это лишний источник отказов.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: clipforge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: clipforge
+      POSTGRES_PASSWORD: clipforge
+      POSTGRES_DB: clipforge
+      # C-локаль: сортировка не зависит от системы, одинакова везде.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipforge -d clipforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

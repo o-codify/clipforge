@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+
+.venv/
+__pycache__/
+*.pyc
+
+.env
+.env.local
+.env.*
+!.env.example
+
+# Исходники и результат: гигабайты, в репозитории им не место.
+data/
+out/
+
+.next-dev/
+/legacy/
+/Twitch-Brand.zip

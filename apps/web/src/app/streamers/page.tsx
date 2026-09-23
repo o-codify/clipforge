@@ -1,0 +1,11 @@
+"use client";
+import Link from "next/link";
+import { useCallback, useState } from "react";
+import { api, type Viewer, type StreamerRow } from "@/lib/api";
+import { useLiveReload } from "@/lib/jobs";
+export default function StreamersPage(){
+  const [admin,setAdmin]=useState(false);
+  const [rows,setRows]=useState<StreamerRow[]>([]);const [query,setQuery]=useState("");const [error,setError]=useState("");
+  const load=useCallback(()=>{void api.get<{viewer:Viewer}>("/api/auth/me").then(r=>setAdmin(r.viewer.isAdmin)).catch(()=>{});void api.get<StreamerRow[]>("/api/streamers").then(rows=>{setRows(rows);setError("");}).catch(()=>setError("Не удалось загрузить стримеров"));},[]);useLiveReload(load);
+  return <><h1>Стримеры</h1><p className="sub">Каналы, с которыми работает платформа.</p><div className="form-row"><input className="input" aria-label="Найти стримера" placeholder="Имя стримера" value={query} onChange={e=>setQuery(e.target.value)}/>{admin&&<Link className="btn" href="/discovery">Поиск новых каналов</Link>}</div>{error&&<p role="alert">{error}</p>}<div className="catalog-grid">{rows.filter(row=>`${row.login} ${row.displayName}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(row=><Link className="card catalog-entry" href={`/streamers/${row.login}`} key={row.login}>{row.avatar&&<img src={row.avatar} alt=""/>}<div><b>{row.displayName??row.login}</b><p className="sub">{row.live?"Сейчас в эфире":"Записи эфиров"} · {row.clips} клипов</p></div></Link>)}</div>{!rows.length&&!error&&<p>Пока нет доступных каналов.</p>}</>;
+}
