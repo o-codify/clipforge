@@ -74,15 +74,18 @@ try {
   assert.equal(nextExec(heartbeatState), "standby");
   assert.equal(execNode(heartbeatState), "online");
   assert.equal(execNode(dbCode("const rows=await ctx.db.sql`select count(*) as n from pg_locks where locktype='advisory' and classid=0 and objid=740021 and objsubid=1 and granted`;console.log(rows[0].n)")), "1");
-  assert.equal((await fetch(origin + "/api/health/ready")).status, 200);
+  // Docker can allocate a different ephemeral host port after restart.
+  const activePort = inspect().NetworkSettings.Ports["3000/tcp"][0].HostPort;
+  assert.equal((await fetch(`http://127.0.0.1:${activePort}/api/health/ready`)).status, 200);
   docker(["stop", "-t", "50", app]);
   await until(() => nextExec(heartbeatState) === "online" && nextState().State.Health?.Status === "healthy", "replacement takes over control after old container stops");
   assert.equal(nextExec(dbCode("const rows=await ctx.db.sql`select state from jobs.job where name='heavy.pipeline'`;console.log(rows[0].state)")), "created");
   console.log("PASS: rolling deployment serves HTTP before old container stops, with one active controller and preserved media queue");
 } catch (error) {
-  console.error(String(error));
+  console.error(String(error.stack ?? error));
   const logs = docker(["logs", "--tail", "70", app], true);
   console.error(logs.replaceAll(secret, "[redacted]"));
+  console.error(docker(["logs", "--tail", "20", replacement], true).replaceAll(secret, "[redacted]"));
   process.exitCode = 1;
 } finally {
   docker(["rm", "-f", app, replacement, db], true);
