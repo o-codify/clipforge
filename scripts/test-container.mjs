@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 const image = process.argv[2] ?? "clipforge:deployment-test";
 const suffix = randomBytes(5).toString("hex");
 const app = `clipforge-test-app-${suffix}`;
+const replacement = `clipforge-test-next-${suffix}`;
 const db = `clipforge-test-db-${suffix}`;
 const network = `clipforge-test-net-${suffix}`;
 const volume = `clipforge-test-files-${suffix}`;
@@ -63,13 +64,28 @@ try {
   assert.equal(execNode(dbCode("const rows=await ctx.db.sql`select id from accounts`;console.log(rows[0].id)")), seeded);
   assert.equal(execNode("import{readFileSync}from'node:fs';console.log(readFileSync('/storage/data/recovery-marker','utf8'))"), "persistent");
   console.log("PASS: normal restart applies migrations again without resetting data");
+  docker(["run", "-d", "--name", replacement, "--network", network, "--stop-timeout", "50",
+    "-p", "127.0.0.1::3000", "-v", `${volume}:/storage`, "-e", `DATABASE_URL=postgresql://postgres:${secret}@${db}:5432/clipforge`,
+    "-e", `ADMIN_PASSWORD=${secret}`, "-e", "AUTO_PUBLISH_ENABLED=false", "-e", "DEV_MODE=true", image]);
+  const nextState = () => JSON.parse(docker(["inspect", replacement]))[0];
+  const nextExec = code => docker(["exec", replacement, "node", "--input-type=module", "-e", code]);
+  const heartbeatState = "import{readFileSync}from'node:fs';console.log(JSON.parse(readFileSync('/tmp/clipforge/worker.json','utf8')).state)";
+  await until(() => nextState().State.Health?.Status === "healthy", "rolling replacement ready while original stays online");
+  assert.equal(nextExec(heartbeatState), "standby");
+  assert.equal(execNode(heartbeatState), "online");
+  assert.equal(execNode(dbCode("const rows=await ctx.db.sql`select count(*) as n from pg_locks where locktype='advisory' and classid=0 and objid=740021 and objsubid=1 and granted`;console.log(rows[0].n)")), "1");
+  assert.equal((await fetch(origin + "/api/health/ready")).status, 200);
+  docker(["stop", "-t", "50", app]);
+  await until(() => nextExec(heartbeatState) === "online" && nextState().State.Health?.Status === "healthy", "replacement takes over control after old container stops");
+  assert.equal(nextExec(dbCode("const rows=await ctx.db.sql`select state from jobs.job where name='heavy.pipeline'`;console.log(rows[0].state)")), "created");
+  console.log("PASS: rolling deployment serves HTTP before old container stops, with one active controller and preserved media queue");
 } catch (error) {
   console.error(String(error));
   const logs = docker(["logs", "--tail", "70", app], true);
   console.error(logs.replaceAll(secret, "[redacted]"));
   process.exitCode = 1;
 } finally {
-  docker(["rm", "-f", app, db], true);
+  docker(["rm", "-f", app, replacement, db], true);
   docker(["volume", "rm", volume], true);
   docker(["network", "rm", network], true);
 }

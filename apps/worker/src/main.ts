@@ -104,9 +104,17 @@ async function main(): Promise<void> {
   await upgradeRuntime(ctx.db);
   const lease = await ctx.db.sql.reserve();
   let leasePid = 0;
+  const localHeartbeat = async (state: "online" | "standby") => {
+    const file = process.env.WORKER_HEARTBEAT_FILE;
+    if (!file) return;
+    await writeFile(`${file}.tmp`, JSON.stringify({
+      instance: process.env.RUNTIME_INSTANCE, pid: process.pid, state, at: Date.now(),
+    }));
+    await rename(`${file}.tmp`, file);
+  };
   // During a deployment the previous container may still be draining jobs.
   // Wait for its lease instead of running a second scheduler or releasing its jobs.
-  for (let attempt = 0; attempt < 60; attempt++) {
+  for (let attempt = 0; role === "control" || attempt < 60; attempt++) {
     const acquired: number[] = [];
     for (const key of lockKeys) {
       const [locked] = await lease`select pg_try_advisory_lock(${key}) as ok, pg_backend_pid() as pid`;
@@ -117,6 +125,9 @@ async function main(): Promise<void> {
     if (leasePid) break;
     for (const key of acquired) await lease`select pg_advisory_unlock(${key})`;
     if (attempt === 0) ctx.log("ожидание остановки предыдущего воркера");
+    // A replacement can serve HTTP while the old controller drains. Do not
+    // overwrite its shared heartbeat or touch its jobs before owning the lease.
+    if (role === "control") await localHeartbeat("standby");
     await new Promise(r => setTimeout(r, 1000));
   }
   if (!leasePid) throw new Error("Другой воркер всё ещё работает");
@@ -150,13 +161,7 @@ async function main(): Promise<void> {
         freeGb = Math.min(...disks.map(d => d.bavail * d.bsize)) / 1024 ** 3;
       }
       await runtimeValue(ctx.db, runtimeKey, { pid: process.pid, state: "online", role, freeGb });
-      if (process.env.WORKER_HEARTBEAT_FILE) {
-        const file = process.env.WORKER_HEARTBEAT_FILE;
-        await writeFile(`${file}.tmp`, JSON.stringify({
-          instance: process.env.RUNTIME_INSTANCE, pid: process.pid, state: "online", at: Date.now(),
-        }));
-        await rename(`${file}.tmp`, file);
-      }
+      await localHeartbeat("online");
     } catch (error) {
       ctx.log(`потеря работоспособности воркера: ${String(error)}`);
       // A lost session lock must never leave a scheduler running without a lease.

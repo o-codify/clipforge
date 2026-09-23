@@ -10,7 +10,9 @@ ENV NEXT_TELEMETRY_DISABLED=1 API_URL=http://127.0.0.1:8420
 RUN pnpm build
 # Installation timestamps are irrelevant at runtime and would invalidate the
 # dependency layer on every otherwise identical GitHub build.
-RUN rm -f node_modules/.modules.yaml node_modules/.pnpm-workspace-state-v1.json
+RUN CI=true pnpm install --prod --frozen-lockfile --ignore-scripts \
+    && rm -f node_modules/.modules.yaml node_modules/.pnpm-workspace-state-v1.json \
+    && rm -rf apps/web/.next/cache
 
 FROM node:22-bookworm-slim AS cpu-worker
 RUN apt-get update && apt-get install --no-install-recommends -y \
