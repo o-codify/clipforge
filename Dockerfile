@@ -41,7 +41,21 @@ FROM node:22-bookworm-slim AS server
 RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates dumb-init \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build --chown=node:node /app /app
+# Dependencies stay in a separate stable layer: a code-only release should not
+# download and unpack thousands of unchanged dependency files on the small VPS.
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=build --chown=node:node /app/apps/worker/node_modules ./apps/worker/node_modules
+COPY --from=build --chown=node:node /app/apps/web/node_modules ./apps/web/node_modules
+COPY --from=build --chown=node:node /app/packages ./packages
+COPY --from=build --chown=node:node /app/package.json ./package.json
+COPY --from=build --chown=node:node /app/apps/api/package.json ./apps/api/package.json
+COPY --from=build --chown=node:node /app/apps/worker/package.json ./apps/worker/package.json
+COPY --from=build --chown=node:node /app/apps/web/package.json ./apps/web/package.json
+COPY --from=build --chown=node:node /app/apps/api/dist ./apps/api/dist
+COPY --from=build --chown=node:node /app/apps/worker/dist ./apps/worker/dist
+COPY --from=build --chown=node:node /app/apps/web/.next ./apps/web/.next
+COPY --from=build --chown=node:node /app/apps/web/public ./apps/web/public
 COPY --chown=node:node scripts ./scripts
 ARG RELEASE_SHA=local
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 RELEASE_SHA=$RELEASE_SHA WORKER_ROLE=control \

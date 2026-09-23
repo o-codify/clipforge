@@ -2,7 +2,7 @@ const {COOLIFY_APP_WEBHOOK:webhook,COOLIFY_TOKEN:token,PUBLIC_ORIGIN:origin,RELE
 if(!webhook||!token||!origin||!sha) throw new Error('Deployment configuration is incomplete');
 const request=await fetch(webhook,{method:'POST',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(30000)});
 if(!request.ok) throw new Error(`Coolify rejected deployment (${request.status})`);
-for(let attempt=0;attempt<90;attempt++) {
+for(let attempt=0;attempt<180;attempt++) {
   try {
     const response=await fetch(new URL('/api/health/ready',origin),{signal:AbortSignal.timeout(8000)});
     const state=await response.json();
