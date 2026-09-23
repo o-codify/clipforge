@@ -42,6 +42,7 @@ try {
   assert.equal((await fetch(origin + "/api/clips")).status, 401);
   assert.equal((await fetch(origin + "/api/platforms")).status, 401);
   console.log("PASS: production UI, public pages, private API protection and fresh migrations");
+  console.log(docker(["exec",app,"node","scripts/test-migration-upgrade.mjs"]));
   console.log(docker(["exec",app,"node","scripts/test-youtube-lifecycle.mjs"]));
   execNode("import{writeFileSync}from'node:fs';writeFileSync('/storage/data/recovery-marker','persistent')");
   const seeded = execNode(dbCode("const rows=await ctx.db.sql`select id from accounts`;console.log(rows[0].id)"));

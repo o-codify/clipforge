@@ -37,9 +37,15 @@ export default function MePage() {
   const [busy, setBusy] = useState("");
   const [youtubeStatus,setYoutubeStatus] = useState<{state:string;reason?:string;channel?:string}|null>(null);
   const [platforms, setPlatforms] = useState<PlatformAccount[]>([]);
+  const [platformsState, setPlatformsState] = useState<"loading" | "ready" | "error">("loading");
 
-  const loadPlatforms = () =>
-    api.get<PlatformAccount[]>("/api/platforms").then(setPlatforms).catch(() => {});
+  const loadPlatforms = async () => {
+    setPlatformsState("loading");
+    try {
+      setPlatforms(await api.get<PlatformAccount[]>("/api/platforms"));
+      setPlatformsState("ready");
+    } catch { setPlatformsState("error"); }
+  };
 
   useEffect(() => {
     void api.get<{ viewer: Viewer }>("/api/auth/me").then((r) => setViewer(r.viewer));
@@ -184,8 +190,19 @@ export default function MePage() {
         <Card className="setting">
           <b>Публикация</b>
           {youtubeStatus && <p role="status">{youtubeStatus.state === "ok" ? `Доступ работает: ${youtubeStatus.channel}` : youtubeStatus.reason}</p>}
-          <Button size="sm" onClick={async()=>{try {setYoutubeStatus(await api.post("/api/platforms/youtube/check"));}catch(e){toast.error(String(e));}}}>Проверить доступ</Button>
-          <Button size="sm" busy={busy === "youtube"} onClick={connectYoutube}>Переподключить YouTube</Button>
+          {platformsState === "loading" ? <p role="status">Загружаю подключение…</p> : platformsState === "error" ? <>
+            <p role="alert">Не удалось загрузить сведения о канале. Подключение пока не проверено.</p>
+            <Button size="sm" onClick={() => void loadPlatforms()}>Повторить</Button>
+          </> : <>
+          {platforms.length > 0 && <>
+            <Button size="sm" busy={busy === "youtube-check"} onClick={async()=>{
+              setBusy("youtube-check");
+              try {setYoutubeStatus(await api.post("/api/platforms/youtube/check")); await loadPlatforms();}
+              catch {setYoutubeStatus({state:"error",reason:"Проверка не завершилась. Повторите попытку."});}
+              finally {setBusy("");}
+            }}>Проверить доступ</Button>
+            <Button size="sm" busy={busy === "youtube"} onClick={connectYoutube}>Переподключить YouTube</Button>
+          </>}
           {platforms.length > 0 ? (
             <Pill tone={platforms[0]!.disconnectRequestedAt?"warn":"ok"}>{platforms[0]!.disconnectRequestedAt?"Отключение…":`YouTube: ${platforms[0]!.label}`}</Pill>
           ) : (
@@ -216,6 +233,7 @@ export default function MePage() {
             </Button>
           )}
           {platforms.length>0&&<p className="muted">Отключение отзывает доступ Google и удаляет сведения о канале и статистику из ClipForge. Видео на YouTube сохраняются.</p>}
+          </>}
         </Card>
 
         <Card className="setting">

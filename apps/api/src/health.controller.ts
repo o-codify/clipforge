@@ -18,7 +18,8 @@ export class HealthController {
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
-        this.db.sql`select 1`,
+        // Readiness includes the schema used by channel access, not just a live socket.
+        this.db.sql`select verified_at, disconnect_requested_at from platform_accounts limit 0`,
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Database timeout")), 3000); }),
       ]);
       if (process.env.WORKER_HEARTBEAT_FILE) {
