@@ -25,7 +25,7 @@ export function PublicPage({ children, current }: {
           <Link href="/about" aria-current={current === "/about" ? "page" : undefined}>О платформе</Link>
           <Link href="/privacy" aria-current={current === "/privacy" ? "page" : undefined}>Конфиденциальность</Link>
           <Link href="/terms" aria-current={current === "/terms" ? "page" : undefined}>Условия использования</Link>
-          <a href="mailto:mr.sagrin@gmail.com">Связаться</a>
+          <a href="mailto:admin@clanvelt.com">Связаться</a>
         </nav>
       </footer>
     </div>

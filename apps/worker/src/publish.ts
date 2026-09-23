@@ -85,6 +85,7 @@ export async function publishClip(
     .select({
       publication: publications,
       file: clips.file,
+      storage: clips.mediaStorage,
       outDir: runs.outDir,
       text: clips.text,
       trigger: clips.trigger,
@@ -140,9 +141,11 @@ export async function publishClip(
   let uploadMayExist = false;
   try {
     const accessToken = await refreshAccessToken(ctx.youtube, refreshToken);
+    const source = row.storage && ctx.storage ? await ctx.storage.openVideo(row.storage.videoKey) : undefined;
+    if (ctx.config.role === 'control' && !source) throw new Error('Клип ещё не загружен в S3');
     uploadMayExist = true;
     const videoId = await uploadVideo(accessToken, {
-      file: join(row.outDir, row.file),
+      ...(source ? {source} : {file:join(row.outDir, row.file)}),
       title,
       description: buildDescription({
         displayName: row.displayName ?? row.login,

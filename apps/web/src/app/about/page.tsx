@@ -16,7 +16,7 @@ export default function AboutPage() {
       <p>ClipForge анализирует эфиры Twitch, выбирает моменты и собирает короткие видео с субтитрами. Результаты публикаций помогают выбирать следующие эфиры и улучшать отбор.</p>
       <div className={s.actions}>
         <Link href="/login" className={s.primary}>Войти в платформу <span aria-hidden="true">↗</span></Link>
-        <a href="mailto:mr.sagrin@gmail.com" className={s.secondary}>Связаться с командой</a>
+        <a href="mailto:admin@clanvelt.com" className={s.secondary}>Связаться с командой</a>
       </div>
     </section>
     <section className={s.steps} aria-label="Как работает ClipForge">

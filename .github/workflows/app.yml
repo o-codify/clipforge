@@ -47,7 +47,7 @@ jobs:
           docker push "$image:latest"
 
   deploy:
-    needs: build
+    needs: [build, media]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -67,3 +67,52 @@ jobs:
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
           RELEASE_SHA: ${{ github.sha }}
         run: node scripts/deploy.mjs
+
+  media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.3
+      - run: pnpm install --frozen-lockfile
+      - name: Compile media worker on GitHub
+        run: pnpm exec turbo run build --filter=@clipforge/worker...
+      - name: Verify streamed publication transport without uploading to YouTube
+        run: node --test packages/youtube/test/source.test.mjs
+      - name: Package portable media runtime
+        run: node scripts/package-media.mjs
+      - name: Verify portable bundle and queue isolation
+        run: node dist/media/apps/worker/dist/main.mjs --check-runtime
+      - name: Archive prepared runtime
+        run: cd dist/media && zip -qr ../clipforge-media.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipforge-media-${{ github.sha }}
+          path: dist/clipforge-media.zip
+          retention-days: 14
+
+  publish-media:
+    needs: [media, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: clipforge-media-${{ github.sha }}
+      - name: Publish prepared worker for the PC to download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          sha256sum clipforge-media.zip > clipforge-media.zip.sha256
+          gh release create "media-$RELEASE_SHA" --target "$RELEASE_SHA" --title "Media worker $RELEASE_SHA" --notes "Prepared on GitHub; the PC only downloads and runs this media worker." clipforge-media.zip clipforge-media.zip.sha256

@@ -25,6 +25,7 @@ import {
 } from "./handlers.js";
 import { publishClip } from "./publish.js";
 import { pruneSources } from "./storage.js";
+import { servesQueue } from "./routing.js";
 
 type Handler = (ctx: Context, payload: never, report: JobReport) => Promise<unknown>;
 
@@ -73,6 +74,7 @@ async function releaseStaleJobs(boss: PgBoss, ctx: Context): Promise<void> {
   if (stale.length === 0) return;
 
   for (const job of stale) {
+    if (!servesQueue(ctx.config.role, job.name as QueueName)) continue;
     if (job.name === QUEUES.publishClip && job.data.publicationId) {
       await ctx.db.execute(sql`update publications set status = 'failed',
         error = '[upload-uncertain] Процесс прервался во время загрузки. Проверьте канал перед повторной отправкой.'
@@ -86,9 +88,15 @@ async function releaseStaleJobs(boss: PgBoss, ctx: Context): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (process.argv.includes('--check-runtime')) {
+    if (!servesQueue('media', QUEUES.pipeline) || servesQueue('media', QUEUES.publishClip) || servesQueue('media', QUEUES.indexChannel)) throw new Error('Invalid media queue routing');
+    if (!servesQueue('control', QUEUES.publishClip) || !servesQueue('control', QUEUES.indexChannel) || servesQueue('control', QUEUES.renderRun)) throw new Error('Invalid control queue routing');
+    console.log('PASS: portable worker imports and role isolation');
+    return;
+  }
   const ctx = createContext();
   const role = ctx.config.role;
-  const handlers = role === "control" ? {} : HANDLERS;
+  const handlers = Object.fromEntries(Object.entries(HANDLERS).filter(([queue]) => servesQueue(role, queue as QueueName)));
   const runtimeKey = role === "control" ? "control" : "worker";
   // all needs both leases, so it cannot overlap a distributed installation.
   const lockKeys = role === "all" ? [740021, 740023] : [role === "control" ? 740021 : 740023];
@@ -126,7 +134,7 @@ async function main(): Promise<void> {
     await boss.createQueue(queue);
   }
 
-  if (role !== "control") await releaseStaleJobs(boss, ctx);
+  await releaseStaleJobs(boss, ctx);
 
   const heavyLane = createLane();
   let beating = false;

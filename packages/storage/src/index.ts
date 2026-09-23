@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -29,6 +30,13 @@ export class MediaStorage {
   async readUrl(key: string, expiresIn = 300): Promise<string> {
     this.checkKey(key);
     return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn });
+  }
+
+  async openVideo(key: string): Promise<{ body: Readable; size: number }> {
+    this.checkKey(key);
+    const object = await this.client.send(new GetObjectCommand({Bucket:this.bucket,Key:key}));
+    if (!(object.Body instanceof Readable) || !object.ContentLength) throw new Error('Stored video is empty or unreadable');
+    return {body:object.Body,size:object.ContentLength};
   }
 
   async removeProbe(key: string): Promise<void> {

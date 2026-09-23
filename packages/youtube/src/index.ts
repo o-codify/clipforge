@@ -141,7 +141,8 @@ export async function myChannel(
 }
 
 export interface UploadOptions {
-  file: string;
+  file?: string;
+  source?: { body: Readable; size: number };
   title: string;
   description: string;
   tags: string[];
@@ -160,7 +161,11 @@ export async function uploadVideo(
   accessToken: string,
   options: UploadOptions,
 ): Promise<string> {
-  const size = (await stat(options.file)).size;
+  if ((!options.file && !options.source) || (options.file && options.source)) throw new Error('Exactly one video source is required');
+  const size = options.source?.size ?? (await stat(options.file!)).size;
+  const body = options.source?.body ?? createReadStream(options.file!);
+  if (!Number.isSafeInteger(size) || size <= 0) throw new Error('Video source must have a positive byte length');
+  try {
 
   const init = await fetch(`${UPLOAD}?uploadType=resumable&part=snippet,status`, {
     signal: AbortSignal.timeout(20_000),
@@ -202,7 +207,7 @@ export async function uploadVideo(
       "content-type": "video/mp4",
     },
     // Файл уходит потоком: клип целиком в памяти держать незачем.
-    body: Readable.toWeb(createReadStream(options.file)) as unknown as RequestInit["body"],
+    body: Readable.toWeb(body) as unknown as RequestInit["body"],
     duplex: "half",
   } as RequestInit);
   if (!put.ok) {
@@ -210,6 +215,7 @@ export async function uploadVideo(
   }
   const video = (await put.json()) as { id: string };
   return video.id;
+  } finally { body.destroy(); }
 }
 
 /** Состояние обработки ролика: залит, обрабатывается, готов. */

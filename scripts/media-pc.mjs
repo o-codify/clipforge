@@ -18,6 +18,16 @@ const log=message=>void appendFile(join(home,'logs',`media-${new Date().toISOStr
 const guard=createServer();
 await new Promise((ok,fail)=>{guard.once('error',fail);guard.listen(18423,'127.0.0.1',ok);});
 let stopping=false;
+let updating=false;
+async function updateRuntime(){
+ if(updating||stopping||process.platform!=='win32')return;
+ updating=true;
+ try{await exec('powershell.exe',['-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',join(home,'update-media.ps1'),'-RuntimeHome',home],{windowsHide:true,timeout:180000});}
+ catch{log('Prepared runtime update unavailable; will retry');}
+ finally{updating=false;}
+}
+const updateTimer=setInterval(()=>void updateRuntime(),5*60_000);
+void updateRuntime();
 let wakeStop;
 const stopRequested=new Promise(resolveStop=>{wakeStop=resolveStop;});
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{stopping=true;wakeStop();});
@@ -52,7 +62,7 @@ while(!stopping){
   tunnel=spawn(ssh,[...sshArgs,'-N','-T','-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3','-L',`127.0.0.1:${port}:${ip}:5432`,config.SSH_HOST],{windowsHide:true,stdio:['ignore','ignore','pipe']});
   const tunnelExit=exited(tunnel);tunnel.stderr.on('data',buf=>log(`SSH: ${buf.toString().trim()}`));
   if(!await portReady())throw Error('Database tunnel did not become ready');
-  worker=spawn(process.execPath,['apps/worker/dist/main.js'],{cwd:current.path,env:{...process.env,...config,WORKER_ROLE:'media'},windowsHide:true,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe','ipc']});
+  worker=spawn(process.execPath,[current.entry || 'apps/worker/dist/main.js'],{cwd:current.path,env:{...process.env,...config,WORKER_ROLE:'media'},windowsHide:true,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe','ipc']});
   worker.stdout.on('data',buf=>log(buf.toString().trim()));worker.stderr.on('data',buf=>log(buf.toString().trim()));
   log(`Media worker started, release ${current.release}`);
   const update=new Promise(resolveUpdate=>{watch=setInterval(async()=>{
@@ -64,4 +74,5 @@ while(!stopping){
  if(!stopping)await Promise.race([sleep(10000),stopRequested]);
 }
 guard.close();
+clearInterval(updateTimer);
 log('Media supervisor stopped');

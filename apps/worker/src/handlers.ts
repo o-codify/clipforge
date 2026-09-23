@@ -195,6 +195,27 @@ export async function indexChannel(
   report: JobReport,
 ): Promise<{ found: number; added: number }> {
   const login = safeName(payload.login);
+  if (ctx.config.role === 'control') {
+    if (!ctx.twitch) throw new Error('Twitch API не настроен');
+    const [user] = await ctx.twitch.users([login]);
+    if (!user) throw new Error('Канал Twitch не найден');
+    const archives = await ctx.twitch.archives(user.id, payload.limit);
+    await ctx.db.insert(streamers).values({login, displayName:user.displayName, source:'manual'})
+      .onConflictDoNothing();
+    await ensureProfile(ctx, login, report);
+    let added = 0;
+    for (const archive of archives) {
+      const id = `v${archive.id.replace(/^v/, '')}`;
+      const [existing] = await ctx.db.select({id:vods.id}).from(vods).where(eq(vods.id,id));
+      const metadata = {title:archive.title,duration:archive.durationSeconds,publishedAt:new Date(archive.publishedAt)};
+      await ctx.db.insert(vods).values({id,streamer:login,...metadata,state:'known'})
+        .onConflictDoUpdate({target:vods.id,set:metadata});
+      if (!existing) added++;
+    }
+    await ctx.db.update(streamers).set({indexedAt:new Date()}).where(eq(streamers.login,login));
+    report.log(`Найдено эфиров: ${archives.length}, новых: ${added}. Главы выбранного эфира уточняются перед скачиванием.`);
+    return {found:archives.length,added};
+  }
   const ytdlp = { command: ctx.config.pythonBin, args: ["-m", "yt_dlp"] };
 
   report.log(`архивы канала ${login}`);
@@ -273,8 +294,17 @@ export async function fetchVod(
   payload: { vodId: string; audioOnly: boolean },
   report: JobReport,
 ): Promise<{ audio: string; video: string | null }> {
-  const { row, workspace } = await loadVod(ctx, payload.vodId);
   const ytdlp = { command: ctx.config.pythonBin, args: ["-m", "yt_dlp"] };
+  // Server discovery uses Helix only. The downloader resolves the selected
+  // archive's chapters before choosing its cache path and starting analysis.
+  if (ctx.config.role === 'media') {
+    const info = await fetchVodInfo(payload.vodId, ytdlp);
+    const game = await ensureGame(ctx, mainGame(info));
+    await ctx.db.update(vods).set({chapters:info.chapters,title:info.title,duration:info.duration,
+      publishedAt:info.publishedAt ? new Date(info.publishedAt) : null,...(game ? {game} : {})})
+      .where(eq(vods.id,payload.vodId));
+  }
+  const { row, workspace } = await loadVod(ctx, payload.vodId);
 
   await ctx.db.update(vods).set({ state: "fetching", error: null }).where(eq(vods.id, row.id));
 
