@@ -15,6 +15,13 @@
       "when": 1790180281330,
       "tag": "0001_violet_hedge_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790211600000,
+      "tag": "0002_youtube_access_lifecycle",
+      "breakpoints": true
     }
   ]
 }

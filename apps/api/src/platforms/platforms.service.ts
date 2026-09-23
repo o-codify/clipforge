@@ -9,15 +9,17 @@
 import { randomUUID } from "node:crypto";
 
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
-import { clips, platformAccounts, publications, runtimeValue, type Database } from "@clipforge/db";
+import { clips, games, streamers, platformAccounts, publications, runtimeValue, forgetYoutubeAccount, type Database } from "@clipforge/db";
 import { QUEUES } from "@clipforge/jobs";
 import {
   authUrl,
   exchangeCode,
   myChannel,
   refreshAccessToken,
+  suggestVideoMetadata, validateVideoMetadata, type VideoMetadata,
+  revokeToken, YoutubeAccessRevokedError,
   type YoutubeApp,
 } from "@clipforge/youtube";
 
@@ -25,7 +27,7 @@ import { CONFIG, DATABASE, type ApiConfig } from "../config.js";
 import { JobsService } from "../jobs/jobs.service.js";
 
 /** Статусы, в которых публикацию не надо ставить второй раз. */
-const IN_FLIGHT = new Set(["queued", "uploading", "uploaded", "processing", "published"]);
+const IN_FLIGHT = new Set(["queued", "uploading", "uploaded", "processing", "published", "takedown"]);
 
 @Injectable()
 export class PlatformsService {
@@ -60,21 +62,27 @@ export class PlatformsService {
         label: platformAccounts.label,
         externalId: platformAccounts.externalId,
         createdAt: platformAccounts.createdAt,
+        disconnectRequestedAt: platformAccounts.disconnectRequestedAt,
       })
       .from(platformAccounts);
   }
 
-  async check() {
-    const [account] = await this.db.select().from(platformAccounts).where(eq(platformAccounts.platform,"youtube"));
+  async check(accountId?: string) {
+    const [account] = await this.db.select().from(platformAccounts).where(and(eq(platformAccounts.platform,"youtube"),accountId ? eq(platformAccounts.id,accountId) : undefined));
     if (!account?.credentials.refreshToken) return { state:"missing", reason:"Подключите YouTube-канал" };
+    if (account.disconnectRequestedAt) return {state:"pending",reason:"Отключение канала выполняется"};
     try {
       const token = await refreshAccessToken(this.youtube,account.credentials.refreshToken);
       const channel = await myChannel(token);
       if (channel?.id !== account.externalId) throw new Error("Подключение принадлежит другому каналу");
+      const saved=await this.db.update(platformAccounts).set({label:channel.title,verifiedAt:new Date()})
+        .where(and(eq(platformAccounts.id,account.id),isNull(platformAccounts.disconnectRequestedAt))).returning({id:platformAccounts.id});
+      if(!saved.length) return {state:"missing",reason:"Канал отключён"};
       const result = { state:"ok", channel:channel.title };
       await runtimeValue(this.db,"youtube-access",result);
       return result;
-    } catch {
+    } catch(error) {
+      if(error instanceof YoutubeAccessRevokedError) await forgetYoutubeAccount(this.db,account.id);
       const result = { state:"error", reason:"Доступ недействителен. Подключите YouTube повторно. Для приложения Google в режиме Testing токены могут истекать." };
       await runtimeValue(this.db,"youtube-access",result);
       return result;
@@ -120,15 +128,23 @@ export class PlatformsService {
         label: channel.title,
         externalId: channel.id,
         credentials: { refreshToken },
+        verifiedAt: new Date(),
       })
       .onConflictDoUpdate({
         target: [platformAccounts.platform, platformAccounts.externalId],
-        set: { label: channel.title, credentials: { refreshToken } },
+        set: { label: channel.title, credentials: { refreshToken }, verifiedAt:new Date() },
+        setWhere:isNull(platformAccounts.disconnectRequestedAt),
       });
   }
 
-  async disconnect(id: string): Promise<void> {
-    await this.db.delete(platformAccounts).where(eq(platformAccounts.id, id));
+  async disconnect(id: string): Promise<{state:"disconnected"|"pending"}> {
+    const [account]=await this.db.update(platformAccounts).set({disconnectRequestedAt:sql`coalesce(${platformAccounts.disconnectRequestedAt},now())`})
+      .where(and(eq(platformAccounts.id,id),eq(platformAccounts.platform,"youtube"))).returning();
+    if(!account) return {state:"disconnected"};
+    try { if(account.credentials.refreshToken) await revokeToken(account.credentials.refreshToken); }
+    catch { return {state:"pending"}; } // Durable intent: worker retries automatically; no new uploads are accepted.
+    await forgetYoutubeAccount(this.db,id);
+    return {state:"disconnected"};
   }
 
   /**
@@ -138,7 +154,18 @@ export class PlatformsService {
    * постановка идущей или вышедшей публикации не создаёт дубля - у пары
    * (клип, площадка, аккаунт) одно место.
    */
-  async publish(clipId: string): Promise<{ publicationId: string }> {
+  async preview(clipId: string) {
+    const [clip] = await this.db.select({ text:clips.text, trigger:clips.trigger, login:clips.streamer,
+      displayName:streamers.displayName, gameTitle:games.title })
+      .from(clips).innerJoin(streamers,eq(clips.streamer,streamers.login)).leftJoin(games,eq(clips.game,games.slug))
+      .where(and(eq(clips.id,clipId),eq(clips.state,"ready"),sql`${clips.archivedAt} is null`));
+    if(!clip) throw new NotFoundException("Клип недоступен для публикации");
+    return { ...suggestVideoMetadata({...clip,displayName:clip.displayName ?? clip.login}),
+      accounts:(await this.accounts()).filter(account=>account.platform==="youtube"&&!account.disconnectRequestedAt) };
+  }
+
+  async publish(clipId: string, metadata: VideoMetadata & {accountId:string}): Promise<{ publicationId: string }> {
+    try { validateVideoMetadata(metadata); } catch(error) { throw new BadRequestException((error as Error).message); }
     const [clip] = await this.db
       .select({ id: clips.id, state: clips.state, archivedAt: clips.archivedAt })
       .from(clips)
@@ -148,18 +175,19 @@ export class PlatformsService {
       throw new BadRequestException("клип снят с публикации");
     }
 
-    const access = await this.check();
+    const access = await this.check(metadata.accountId);
     if (access.state !== "ok") throw new BadRequestException("Подключите YouTube повторно в настройках");
 
-    const [account] = await this.db
+    const queued=await this.db.transaction(async tx=>{
+    const [account] = await tx
       .select()
       .from(platformAccounts)
-      .where(eq(platformAccounts.platform, "youtube"));
+      .where(and(eq(platformAccounts.platform, "youtube"),eq(platformAccounts.id,metadata.accountId),isNull(platformAccounts.disconnectRequestedAt))).for("update");
     if (!account) {
       throw new BadRequestException("YouTube не подключён: сначала подключите канал в настройках");
     }
 
-    const [existing] = await this.db
+    const [existing] = await tx
       .select({ id: publications.id, status: publications.status, error: publications.error })
       .from(publications)
       .where(
@@ -176,24 +204,29 @@ export class PlatformsService {
     }
     if (existing && IN_FLIGHT.has(existing.status)) {
       // Уже в работе или вышла - просто вернуть, кнопка не дублирует.
-      return { publicationId: existing.id };
+      return { publicationId: existing.id, send:false };
     } else if (existing) {
       publicationId = existing.id;
-      await this.db
+      await tx
         .update(publications)
-        .set({ status: "queued", error: null })
+        .set({ status: "queued", error: null, title:metadata.title,caption:metadata.description,privacy:metadata.privacy })
         .where(eq(publications.id, existing.id));
     } else {
       publicationId = randomUUID();
-      await this.db.insert(publications).values({
+      await tx.insert(publications).values({
         id: publicationId,
         clipId,
         platform: "youtube",
         account: account.externalId,
         status: "queued",
+        title:metadata.title,caption:metadata.description,privacy:metadata.privacy,
       });
     }
 
+    return {publicationId,send:true};
+    });
+    const {publicationId}=queued;
+    if(!queued.send) return {publicationId};
     try {
       await this.jobs.enqueue(QUEUES.publishClip, { publicationId });
     } catch(error) {

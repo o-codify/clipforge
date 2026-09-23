@@ -891,3 +891,12 @@ tr.row-link:hover { background: var(--l2); }
 .catalog-entry { display:flex; align-items:center; gap:14px; padding:18px; min-width:0; }
 .catalog-entry img { width:48px; height:48px; object-fit:cover; border-radius:12px; }
 .catalog-entry b { overflow-wrap:anywhere; }
+.publish-form { margin-top:16px;padding:20px;border:1px solid var(--line);border-radius:10px;background:var(--l1); }
+.publish-form h3 { margin:0 0 18px;font-size:16px; }
+.publish-field { display:grid;gap:7px;margin-bottom:16px;font-size:12px; }
+.publish-field .field { width:100%;min-width:0; }
+.publish-field textarea { resize:vertical; }
+.publish-field small { color:var(--dim); }
+.publish-form>.btn { margin:4px 8px 0 0; }
+.clip-diagnostics { margin:12px 0;color:var(--dim);font-size:12px;overflow-wrap:anywhere; }
+.clip-diagnostics summary { cursor:pointer; }

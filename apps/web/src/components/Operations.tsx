@@ -19,7 +19,7 @@ export function Operations() {
   return <Card>
     <div className="form-row"><b>Автономная обработка</b>
       <Pill tone={error || !status?.online ? "bad" : paused ? "warn" : "ok"}>
-        {error ? "API недоступен" : !status ? "Проверка…" : !status.online ? "Воркер недоступен" : paused ? "На паузе" : "Воркер работает"}
+        {error ? "Нет связи" : !status ? "Проверка…" : !status.online ? "Обработка недоступна" : paused ? "На паузе" : "Работает"}
       </Pill>
       {viewer?.isAdmin && status && <Button size="sm" onClick={async () => {
         try { await api.post("/api/operations/pause", { paused: !paused }); load(); } catch(e) { toast.error(String(e)); }

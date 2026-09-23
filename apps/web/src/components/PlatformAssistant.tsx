@@ -34,7 +34,7 @@ export function PlatformAssistant({ viewer }: { viewer: Viewer }) {
           }
           if(runtime.settings?.paused)add("paused",true,"Вы приостановили новые автоматические задания. Текущую работу завершаю, новые эфиры пока не начинаю.");
           if(runtime.metrics?.state==="error")add("metrics","error","Не смог обновить статистику YouTube. Администратору нужно проверить подключение канала. Создание клипов продолжается.","error");
-          if(runtime.metrics?.state==="ok")add("metrics",runtime.metrics.updatedAt,`Обновил статистику публикаций: ${runtime.metrics.collected??0} снимков. Для улучшения отбора учитываю только публичные результаты.`);
+          if(runtime.metrics?.state==="ok")add("metrics",runtime.metrics.updatedAt,`Обновил статистику публикаций: ${runtime.metrics.collected??0} видео. Сохранил просмотры и реакции, полученные от YouTube.`);
         }
         setMessages(previous=>{const merged=new Map(previous.filter(message=>!message.id.startsWith("event-")).map(message=>[message.id,message]));for(const message of [...feed,...additions])merged.set(message.id,{...message,time:merged.get(message.id)?.time??message.time});return [...merged.values()].sort((a,b)=>a.time.localeCompare(b.time)).slice(-300);});
       }catch{if(!stopped)setError(true);}
@@ -62,6 +62,10 @@ export function PlatformAssistant({ viewer }: { viewer: Viewer }) {
       return {text:scheduler?`${scheduler.streamer?`Выбран канал ${scheduler.streamer}. `:""}${scheduler.reason??"Сравниваю доступные эфиры"}. Учитываю текущую аудиторию, подписчиков и публичные результаты клипов. Каждый пятый успешный прогон пробую менее обработанный канал. Затем сравниваю речь, звук и разнообразие моментов.`:"В вашем доступе видны только связанные с вами материалы. Для клипов сравниваю речь, звуковую активность и разнообразие моментов.",facts:scheduler?[{label:"Бюджет эфиров/сутки",value:String(scheduler.dailyLimit??3)},{label:"Лимит загрузки",value:"40 000 Кбит/с"}]:undefined};
     }
     if(/youtube|ютуб|публик/.test(q)){
+      if(!viewer.isAdmin){
+        const summary=await api.get<Summary>("/api/summary");
+        return {text:summary.published?`Опубликовано клипов: ${summary.published}. Ссылки доступны в карточках клипов.`:"Публичных публикаций пока нет. Готовые клипы можно посмотреть здесь.",actions:[{id:"show-clips",label:"Показать клипы"}]};
+      }
       const ops=await api.get<Operations>("/api/operations");
       const failed=ops.runtime?.metrics?.state==="error"||ops.runtime?.["youtube-access"]?.state==="error";
       return {text:failed?"Не удалось обновить данные YouTube. Нужно проверить подключение канала; готовые клипы продолжаю сохранять.":`Я различаю загруженные, приватные и действительно публичные ролики. ${ops.autoPublishEnabled?"Автопубликация включена; фактическую видимость проверяю после загрузки.":"Автопубликация сейчас выключена."}`,actions:viewer.isAdmin?[{id:"/me",label:"Проверить подключение"}]:undefined};

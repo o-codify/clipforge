@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { Button, Pill } from "@/components/ui";
 import { api, hhmm, PUB_STATE, size, TRIGGERS, type ClipRow, type Viewer } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { PublishForm } from "./PublishForm";
 
 interface ClipDetail extends ClipRow {
   publications: {
@@ -34,9 +35,11 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
    *  а не системным диалогом, выпадающим из оформления. */
   const [blocking, setBlocking] = useState(false);
   const [reason, setReason] = useState("");
+  const [publishing,setPublishing] = useState(false);
 
   const show = async (id: string) => {
     setBlocking(false);
+    setPublishing(false);
     setReason("");
     setOpen(await api.get<ClipDetail>(`/api/clips/${id}`));
   };
@@ -45,23 +48,6 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
     setBusy(true);
     try {
       await api.post(`/api/clips/${id}/block`, { reason });
-      await show(id);
-      onChange?.();
-    } catch (error) {
-      toast.error(String(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /**
-   * Вернуть снятый клип. Возвращается сразу одобренным: одобрение на
-   * площадке автоматическое, ручного состояния «черновик» больше нет.
-   */
-  const publish = async (id: string) => {
-    setBusy(true);
-    try {
-      await api.post(`/api/platforms/publish/${id}`);
       await show(id);
       onChange?.();
     } catch (error) {
@@ -122,16 +108,18 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
             >
               ✕
             </button>
-            <h2 style={{ marginTop: 0 }}>{open.file}</h2>
+            <h2 style={{ marginTop: 0 }}>{open.streamer} · {TRIGGERS[open.trigger ?? ""] ?? "Момент эфира"}</h2>
             <div className="player">
               <video src={`/media/clip/${open.id}`} controls autoPlay
                      poster={`/media/poster/${open.id}`} />
               <div className="side">
                 <p className="sub">
                   {TRIGGERS[open.trigger ?? ""] ?? open.trigger} ·{" "}
-                  {hhmm(open.start)}–{hhmm(open.end)} ({open.duration.toFixed(1)} с) ·{" "}
-                  {open.width}×{open.height} {open.fps} к/с · {size(open.sizeBytes)}
+                  {hhmm(open.start)}–{hhmm(open.end)} ({open.duration.toFixed(1)} с)
                 </p>
+                {viewer?.isAdmin && <details className="clip-diagnostics">
+                  <summary>Диагностика администратора</summary>
+                  <p className="sub">{open.file} · {open.width}×{open.height} · {open.fps} к/с · {size(open.sizeBytes)}</p>
                 <div className="pillrow">
                   {Object.entries(open.parts).map(([name, value]) => (
                     <span key={name} className="pill">
@@ -139,8 +127,6 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                     </span>
                   ))}
                 </div>
-                <p style={{ marginTop: 12 }}>{open.text}</p>
-
                 <h2>Версии момента</h2>
                 <div className="pillrow">
                   {open.versions.map((v) => (
@@ -150,6 +136,8 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                     </span>
                   ))}
                 </div>
+                </details>}
+                <p style={{ marginTop: 12 }}>{open.text}</p>
 
                 <h2>Публикации</h2>
                 {open.publications.length === 0 ? (
@@ -163,7 +151,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                           return (
                             <tr key={p.id}>
                               <td>{{ youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram", twitch: "Twitch" }[p.platform] ?? p.platform}</td>
-                              <td><Pill tone={tone}>{label}</Pill>{p.privacy && <span> · {p.privacy === "public" ? "Публично" : p.privacy === "private" ? "Приватно" : "По ссылке"}</span>}{p.error && <p role="alert">{p.error}</p>}</td>
+                              <td><Pill tone={tone}>{label}</Pill>{p.privacy && <span> · {p.privacy === "public" ? "Публично" : p.privacy === "private" ? "Приватно" : "По ссылке"}</span>}{viewer?.isAdmin && p.error && <p role="alert">{p.error}</p>}</td>
                               <td>
                                 {p.url ? (
                                   <a href={p.url} target="_blank" rel="noopener">
@@ -183,12 +171,12 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                     (p) => p.platform === "youtube" && p.status !== "failed",
                   ) && (
                     <div style={{ marginTop: 8 }}>
-                      <Button size="sm" variant="primary" busy={busy}
-                              onClick={() => publish(open.id)}>
+                      {publishing ? <PublishForm key={open.id} clipId={open.id} onCancel={()=>setPublishing(false)} onDone={()=>{void show(open.id);onChange?.();toast.info("Публикация поставлена в очередь");}}/> : <Button size="sm" variant="primary"
+                              onClick={() => setPublishing(true)}>
                         {open.publications.some((p) => p.platform === "youtube")
                           ? "Повторить на YouTube"
                           : "Опубликовать на YouTube"}
-                      </Button>
+                      </Button>}
                     </div>
                   )}
 

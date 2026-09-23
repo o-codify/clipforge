@@ -49,7 +49,6 @@ export default function MePage() {
       .get<DiscoveryStatus>("/api/discovery/status")
       .then(setStatus)
       .catch(() => setStatus(null));
-    void loadPlatforms();
 
     // Возврат с согласия Google: результат приходит параметром адреса.
     const params = new URLSearchParams(window.location.search);
@@ -60,6 +59,8 @@ export default function MePage() {
       else toast.error("Подключить канал не удалось: проверьте настройки приложения и принадлежность канала");
     }
   }, []);
+
+  useEffect(() => { if (viewer?.isAdmin) void loadPlatforms(); }, [viewer?.isAdmin]);
 
   const connectYoutube = async () => {
     setBusy("youtube");
@@ -77,7 +78,8 @@ export default function MePage() {
   const disconnectPlatform = async (id: string) => {
     setBusy(`off:${id}`);
     try {
-      await api.del(`/api/platforms/${id}`);
+      const result=await api.del<{state:string}>(`/api/platforms/${id}`);
+      toast.info(result.state==="pending"?"Новые публикации остановлены. Повторю отключение автоматически, когда Google ответит.":"Доступ отозван. Данные канала удалены из ClipForge.");
       await loadPlatforms();
     } catch (error) {
       toast.error(String(error));
@@ -185,7 +187,7 @@ export default function MePage() {
           <Button size="sm" onClick={async()=>{try {setYoutubeStatus(await api.post("/api/platforms/youtube/check"));}catch(e){toast.error(String(e));}}}>Проверить доступ</Button>
           <Button size="sm" busy={busy === "youtube"} onClick={connectYoutube}>Переподключить YouTube</Button>
           {platforms.length > 0 ? (
-            <Pill tone="ok">YouTube: {platforms[0]!.label}</Pill>
+            <Pill tone={platforms[0]!.disconnectRequestedAt?"warn":"ok"}>{platforms[0]!.disconnectRequestedAt?"Отключение…":`YouTube: ${platforms[0]!.label}`}</Pill>
           ) : (
             <Pill>Не подключена</Pill>
           )}
@@ -201,7 +203,7 @@ export default function MePage() {
               busy={busy === `off:${platforms[0]!.id}`}
               onClick={() => disconnectPlatform(platforms[0]!.id)}
             >
-              Отключить
+              Отключить и удалить данные канала
             </Button>
           ) : (
             <Button
@@ -213,6 +215,7 @@ export default function MePage() {
               Подключить YouTube
             </Button>
           )}
+          {platforms.length>0&&<p className="muted">Отключение отзывает доступ Google и удаляет сведения о канале и статистику из ClipForge. Видео на YouTube сохраняются.</p>}
         </Card>
 
         <Card className="setting">

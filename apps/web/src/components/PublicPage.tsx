@@ -15,7 +15,7 @@ export function PublicPage({ children, current }: {
           <span className={styles.mark} aria-hidden="true">C<span>F</span></span>
           ClipForge
         </Link>
-        <span className={styles.status}>Закрытая разработка</span>
+        <span className={styles.status}>Моменты эфиров</span>
         <Link className={styles.login} href="/login">Войти <span aria-hidden="true">↗</span></Link>
       </header>
       <main id="public-content" className={styles.content}>{children}</main>

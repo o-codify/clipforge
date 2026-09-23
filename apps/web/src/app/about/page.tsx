@@ -13,24 +13,16 @@ export default function AboutPage() {
     <section className={s.hero}>
       <p className={s.eyebrow}>Из эфира — в короткий клип</p>
       <h1>У интересного момента<br />должно быть продолжение.</h1>
-      <p>ClipForge анализирует эфиры Twitch, выбирает моменты и собирает короткие видео с субтитрами. Результаты публикаций помогают выбирать следующие эфиры и улучшать отбор.</p>
+      <p>Яркие реакции, неожиданные победы и запоминающиеся разговоры из эфиров Twitch. ClipForge находит интересные моменты и превращает их в короткие видео с субтитрами.</p>
       <div className={s.actions}>
         <Link href="/login" className={s.primary}>Войти в платформу <span aria-hidden="true">↗</span></Link>
-        <a href="mailto:admin@clanvelt.com" className={s.secondary}>Связаться с командой</a>
+        <a href="mailto:admin@clanvelt.com" className={s.secondary}>Связаться</a>
       </div>
     </section>
-    <section className={s.steps} aria-label="Как работает ClipForge">
-      <article className={s.step}><span>01 / Отбор</span><h2>Находит интересные эфиры</h2><p>Следит за популярностью стримеров, игр и контента. Собирает очередь для анализа.</p></article>
-      <article className={s.step}><span>02 / Монтаж</span><h2>Готовит короткие видео</h2><p>Обрабатывает запись, распознаёт речь и компонует кадр с учётом камеры и игрового экрана.</p></article>
-      <article className={s.step}><span>03 / Обратная связь</span><h2>Сравнивает результаты</h2><p>Собирает просмотры и реакции на опубликованные видео, чтобы улучшать следующие попытки.</p></article>
-    </section>
-    <section className={s.integration}>
-      <div><h2>Подключение YouTube</h2><p>Доступ разрешает владелец канала.</p></div>
-      <div>
-        <p>ClipForge использует YouTube API Services для загрузки клипов в подключённый канал, проверки их обработки и получения статистики. Подключение проходит через Google OAuth; пароль Google платформа не запрашивает.</p>
-        <p>Сейчас платформа находится в закрытой разработке. Открытой регистрации и продажи подписок нет. Автоматическая публичная публикация готовится к запуску.</p>
-        <p>Описание данных и способов отключения доступа — в <Link href="/privacy">политике конфиденциальности</Link>. Использование платформы описано в <Link href="/terms">условиях</Link>.</p>
-      </div>
+    <section className={s.steps} aria-label="Что есть в ClipForge">
+      <article className={s.step}><span>01 / Моменты</span><h2>Самое интересное из эфиров</h2><p>Короткие истории, ради которых не нужно пересматривать многочасовую запись.</p></article>
+      <article className={s.step}><span>02 / Стримеры</span><h2>Знакомые и новые лица</h2><p>Любимые авторы и стримеры, которых вы ещё не открыли для себя.</p></article>
+      <article className={s.step}><span>03 / Игры</span><h2>Разные игры и эмоции</h2><p>Решающий раунд, смешной диалог или неожиданная развязка — у каждого эфира свои моменты.</p></article>
     </section>
   </PublicPage>;
 }

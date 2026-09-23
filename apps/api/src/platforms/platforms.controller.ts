@@ -1,4 +1,5 @@
-import { Controller, Delete, Get, Param, Post, Query, Res } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Query, Res } from "@nestjs/common";
+import { z } from "zod";
 import type { FastifyReply } from "fastify";
 
 import { AdminOnly, Public } from "../auth/auth.guard.js";
@@ -61,8 +62,18 @@ export class PlatformsController {
   }
 
   @AdminOnly()
+  @Get("publish/:clipId")
+  preview(@Param("clipId") clipId: string) {
+    return this.platforms.preview(clipId);
+  }
+
+  @AdminOnly()
   @Post("publish/:clipId")
-  publish(@Param("clipId") clipId: string) {
-    return this.platforms.publish(clipId);
+  publish(@Param("clipId") clipId: string, @Body() body: unknown) {
+    const metadata = z.object({
+      accountId: z.string().min(1), title: z.string(), description: z.string(),
+      privacy: z.enum(["private", "unlisted", "public"]),
+    }).strict().parse(body);
+    return this.platforms.publish(clipId, metadata);
   }
 }

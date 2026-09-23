@@ -4,7 +4,7 @@ import { pruneSources } from "./storage.js";
 import { collectMetrics } from "./metrics.js";
 import { schedulePipelines } from "./autopilot.js";
 import type PgBoss from "pg-boss";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { randomUUID } from "node:crypto";
 
@@ -257,7 +257,7 @@ export function startAutomation(
       .select()
       .from(platformAccounts)
       .where(eq(platformAccounts.platform, "youtube"));
-    if (!account) return;
+    if (!account || account.disconnectRequestedAt) return;
 
     // Бюджет считается скользящими сутками по всем попыткам, включая
     // сбойные: квота площадки тратится и на них.
@@ -286,13 +286,20 @@ export function startAutomation(
 
     for (const clip of fresh) {
       const publicationId = randomUUID();
-      await ctx.db.insert(publications).values({
+      const inserted=await ctx.db.transaction(async tx=>{
+      const [active]=await tx.select({id:platformAccounts.id}).from(platformAccounts)
+        .where(and(eq(platformAccounts.id,account.id),isNull(platformAccounts.disconnectRequestedAt))).for("update");
+      if(!active)return false;
+      await tx.insert(publications).values({
         id: publicationId,
         clipId: clip.id,
         platform: "youtube",
         account: account.externalId,
         status: "queued",
       });
+      return true;
+      });
+      if(!inserted)break;
       await send(QUEUES.publishClip, { publicationId });
     }
     ctx.log(
@@ -308,7 +315,8 @@ export function startAutomation(
     running.add(name);
     try {
       const [setting] = await ctx.db.execute<{value: {paused?: boolean}}>(sql`select value from platform_runtime where key = 'settings'`);
-      if (!setting?.value.paused) await task();
+      // Access revocation and retention keep running while scheduling is paused.
+      if (name === "статистика" || !setting?.value.paused) await task();
     } catch (error) {
       ctx.log(`автоматика (${name}): ${String(error)}`);
       await runtimeValue(ctx.db, name === "поиск" ? "discovery" : name === "статистика" ? "metrics" : "scheduler", {state:"error", reason:String(error)}).catch(() => {});

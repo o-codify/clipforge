@@ -52,7 +52,7 @@ export default function LoginPage() {
           Войти
         </Button>
         <div className="note">
-          Регистрация закрыта: аккаунты заводит администратор.
+          Вход для пользователей с аккаунтом ClipForge.
         </div>
         <nav aria-label="О сервисе" className="login-legal">
           <Link href="/about">О ClipForge</Link>

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Post } from "@nestjs/common";
 import { sql } from "drizzle-orm";
-import { runtimeValue, type Database } from "@clipforge/db";
+import { runtimeValue, youtubeDerivedMetricsAllowed, type Database } from "@clipforge/db";
 import { z } from "zod";
 import { DATABASE } from "./config.js";
 import { AdminOnly, CurrentViewer } from "./auth/auth.guard.js";
@@ -15,7 +15,7 @@ export class OperationsController {
     const rows = await this.db.execute<{ key: string; value: Record<string, unknown>; updatedAt: Date }>(sql`select * from platform_runtime where key in ('worker','settings','scheduler','discovery','metrics','storage','youtube-access')`);
     const worker = rows.find(r => r.key === "worker");
     const online = worker?.value.state === "online" && Date.now() - new Date(worker.updatedAt).getTime() < 35000;
-    if (viewer.role === "user") return { online: !!online };
+    if (!viewer.isAdmin) return { online: !!online };
     return { online: !!online, runtime: Object.fromEntries(rows.map(r => [r.key, { ...r.value, updatedAt: r.updatedAt }])),
       twitchConfigured: !!process.env.TWITCH_CLIENT_ID && !!process.env.TWITCH_CLIENT_SECRET,
       autoPublishEnabled: process.env.AUTO_PUBLISH_ENABLED === "true" };
@@ -33,6 +33,7 @@ export class OperationsController {
   @AdminOnly()
   @Get("analytics")
   async analytics() {
+    if(!await youtubeDerivedMetricsAllowed(this.db))return [];
     return this.db.execute(sql`select c.streamer, c.trigger, count(*)::int as samples,
       round(avg(m.views))::int as "averageViews", max(m.collected_at) as "lastCollected"
       from clips c join publications p on p.clip_id = c.id

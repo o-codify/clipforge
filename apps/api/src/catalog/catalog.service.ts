@@ -27,6 +27,13 @@ import type { Viewer } from "../auth/auth.service.js";
 const only = (viewer: Viewer | null, column: PgColumn) =>
   viewer?.actingAs ? eq(column, viewer.actingAs) : undefined;
 
+/** Internal rendering/storage details are only part of the administrator view. */
+function visibleClip<T extends Record<string, unknown>>(viewer: Viewer | null, row: T) {
+  if (viewer?.isAdmin) return row;
+  const { file, mediaStorage, version, segmentKey, parts, score, archiveReason, ...visible } = row;
+  return visible;
+}
+
 @Injectable()
 export class CatalogService {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
@@ -182,7 +189,7 @@ export class CatalogService {
     limit = 120,
   ) {
     const scope = viewer?.actingAs ?? filters.streamer;
-    return this.db.execute(sql`
+    const rows = await this.db.execute(sql`
       select c.*,
              -- Именно счётчик, а не список: в карточке клипа
              -- publications - это массив, и одно имя для разных вещей
@@ -200,6 +207,7 @@ export class CatalogService {
       order by c.created_at desc
       limit ${limit}
     `);
+    return rows.map(row => visibleClip(viewer, row));
   }
 
   async clip(viewer: Viewer | null, id: string) {
@@ -223,7 +231,10 @@ export class CatalogService {
       .where(and(eq(clips.vodId, row.vodId), eq(clips.segmentKey, row.segmentKey), isNull(clips.archivedAt)))
       .orderBy(clips.createdAt);
 
-    return { ...row, publications: pubs, versions };
+    return { ...visibleClip(viewer, row),
+      publications: viewer?.isAdmin ? pubs : pubs.map(({id,platform,url,status,privacy}) => ({id,platform,url,status,privacy})),
+      versions: viewer?.isAdmin ? versions : [],
+    };
   }
 
   /**

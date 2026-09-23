@@ -450,6 +450,8 @@ export const platformAccounts = pgTable(
     label: text("label").notNull().default(""),
     /** Идентификатор канала на площадке. */
     externalId: text("external_id").notNull().default(""),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    disconnectRequestedAt: timestamp("disconnect_requested_at", { withTimezone: true }),
     credentials: jsonb("credentials")
       .$type<Record<string, string>>()
       .notNull()

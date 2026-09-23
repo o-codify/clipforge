@@ -187,6 +187,7 @@ export function when(iso: string | null | undefined): string {
 }
 
 export interface PlatformAccount {
+  disconnectRequestedAt?: string | null;
   id: string;
   platform: string;
   label: string;

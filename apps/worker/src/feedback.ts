@@ -1,8 +1,10 @@
 import { sql } from "drizzle-orm";
 import { feedbackMultiplier, labelTrigger, type Candidate } from "@clipforge/pipeline";
 import type { Context } from "./context.js";
+import { youtubeDerivedMetricsAllowed } from "@clipforge/db";
 
 export async function applyFeedback(ctx: Context, streamer: string, candidates: Candidate[]) {
+  if(!await youtubeDerivedMetricsAllowed(ctx.db))return {candidates,evidence:{samples:0,multipliers:{},mode:"signal-baseline"}};
   const feedback = await ctx.db.execute<{ trigger: string; samples: number; rate: number }>(sql`
     select c.trigger, count(*)::int samples,
       avg(m.views / greatest(1,extract(epoch from (m.collected_at-p.published_at))/3600))::float rate

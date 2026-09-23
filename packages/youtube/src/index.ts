@@ -12,17 +12,19 @@
  * подходят как есть.
  *
  * Два ограничения площадки, о которых надо помнить:
- *  - квота по умолчанию 10 000 единиц в день, загрузка стоит 1600 -
- *    это ~6 роликов в сутки, пока Google не расширит квоту по заявке;
+ *  - фактические квоты проверяются в Google Cloud для своего проекта;
  *  - у непроверенного (не прошедшего аудит) проекта Google Cloud все
  *    загруженные через API ролики принудительно остаются приватными.
  */
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { validateVideoMetadata } from "./metadata.js";
+export * from "./metadata.js";
 
 const OAUTH_BASE = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 const API = "https://www.googleapis.com/youtube/v3";
 const UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos";
 
@@ -87,7 +89,9 @@ async function tokenRequest(body: Record<string, string>): Promise<{
     body: new URLSearchParams(body).toString(),
   });
   if (!response.ok) {
-    throw new Error(`google oauth ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    const error=await response.json().catch(()=>({})) as {error?:string};
+    if(response.status===400&&error.error==="invalid_grant"&&body.grant_type==="refresh_token") throw new YoutubeAccessRevokedError();
+    throw new Error(`Google OAuth: ошибка доступа (${response.status})`);
   }
   return (await response.json()) as { access_token: string; refresh_token?: string };
 }
@@ -166,6 +170,7 @@ export async function uploadVideo(
   const body = options.source?.body ?? createReadStream(options.file!);
   if (!Number.isSafeInteger(size) || size <= 0) throw new Error('Video source must have a positive byte length');
   try {
+  validateVideoMetadata(options);
 
   const init = await fetch(`${UPLOAD}?uploadType=resumable&part=snippet,status`, {
     signal: AbortSignal.timeout(20_000),
@@ -179,8 +184,8 @@ export async function uploadVideo(
     body: JSON.stringify({
       snippet: {
         // Название не длиннее 100 знаков - лимит площадки.
-        title: options.title.slice(0, 100),
-        description: options.description.slice(0, 4800),
+        title: options.title,
+        description: options.description,
         tags: options.tags.slice(0, 30),
         categoryId: "20", // Gaming
         defaultLanguage: "ru",
@@ -216,6 +221,20 @@ export async function uploadVideo(
   const video = (await put.json()) as { id: string };
   return video.id;
   } finally { body.destroy(); }
+}
+
+export class YoutubeAccessRevokedError extends Error {
+  constructor(){super("Разрешение YouTube отозвано или истекло");this.name="YoutubeAccessRevokedError";}
+}
+
+/** Never includes credentials in the URL or error text. Failed requests can be retried. */
+export async function revokeToken(token:string):Promise<void> {
+  const response=await fetch(REVOKE_URL,{method:"POST",signal:AbortSignal.timeout(20_000),
+    headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({token}).toString()});
+  if(response.ok)return;
+  const error=await response.json().catch(()=>({})) as {error?:string};
+  if(response.status===400&&error.error==="invalid_token")return;
+  throw new Error(`Google: не удалось отозвать доступ (${response.status})`);
 }
 
 /** Состояние обработки ролика: залит, обрабатывается, готов. */
