@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import styles from "./PublicPage.module.css";
 
 export { styles as publicStyles };
@@ -20,7 +21,10 @@ export function PublicPage({ children, current }: {
       </header>
       <main id="public-content" className={styles.content}>{children}</main>
       <footer className={styles.footer}>
-        <span>ClipForge</span>
+        <a className={styles.channel} href="https://www.youtube.com/channel/UC-P-55QVYfT8SBtGnCNAtog" aria-label="Наш канал на YouTube — Кузня Клипов">
+          <span>Наш канал</span>
+          <Image src="/branding/youtube-logo-white.png" alt="YouTube" width={1705} height={573} unoptimized />
+        </a>
         <nav aria-label="Информация о ClipForge">
           <Link href="/about" aria-current={current === "/about" ? "page" : undefined}>О платформе</Link>
           <Link href="/privacy" aria-current={current === "/privacy" ? "page" : undefined}>Конфиденциальность</Link>

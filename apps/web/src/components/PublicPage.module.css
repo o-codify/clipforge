@@ -43,8 +43,9 @@
 .article .meta{font-size:12px;color:#a39bb0;margin-bottom:24px}
 .notice{padding:16px 20px;border:1px solid #49345f;border-radius:8px;background:#1c1527;margin:24px 0}
 .article .notice p{font-size:13px;margin:0;color:#c8b5de}
-.footer{border-top:1px solid #2b2536;align-items:flex-start;color:#887f98;font-size:11px;justify-content:space-between}
-.footer>span{font-size:12px;color:#b8afc6}
+.footer{border-top:1px solid #2b2536;align-items:center;color:#887f98;font-size:11px;justify-content:space-between}
+.channel{display:flex;align-items:center;flex-shrink:0;gap:8px;color:#b8afc6}
+.channel img{display:block;width:154px;height:auto}
 .footer nav{display:flex;gap:18px;flex-wrap:wrap}
 .footer a:hover,.footer a[aria-current=page]{color:#e2d2f7}
 @media(max-width:640px){.header,.footer{padding:20px}.header{gap:12px}.status{display:none}.login{margin-left:auto}.content{padding:40px 20px 48px}.hero h1{letter-spacing:-1.2px}.hero p{font-size:15px}.steps,.integration{grid-template-columns:1fr}.step{border-right:0;border-bottom:1px solid #2b2536;padding:20px}.step:last-child{border-bottom:0}.step h2{margin-top:12px}.integration{gap:16px}.footer{flex-direction:column;gap:12px}.footer nav{gap:10px 16px}}
