@@ -1,14 +1,15 @@
 "use client";
 import { Assistant, type AssistantItem, type AssistantMessage, type AssistantReply } from "@clipforge/assistant";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, type ClipRow, type Viewer } from "@/lib/api";
 import { useJobs } from "@/lib/jobs";
 import { jobNarration } from "@/lib/job-description";
+import { WORKSPACE_LINKS } from "@/lib/navigation";
 interface Operations { online:boolean; runtime?: Record<string, any>; autoPublishEnabled?:boolean }
 interface Summary { clips:number; streamers:number; games:number; published:number; vods:number }
 export function PlatformAssistant({ viewer }: { viewer: Viewer }) {
-  const router=useRouter();const path=usePathname();const {jobs}=useJobs();
+  const router=useRouter();const {jobs}=useJobs();
   const [messages,setMessages]=useState<AssistantMessage[]>([]);
   const [operations,setOperations]=useState<Operations|null>(null);
   const [error,setError]=useState(false);
@@ -46,7 +47,7 @@ export function PlatformAssistant({ viewer }: { viewer: Viewer }) {
   const working=pending.find(job=>job.state==="active"&&job.name.startsWith("heavy."))??pending.find(job=>job.state==="active");
   const recentSuccess=jobs.some(job=>job.state==="completed"&&job.completedAt&&Date.now()-new Date(job.completedAt).getTime()<60000);
   const status=error?"Не могу получить свежие сведения. Проверяю связь с сервером.":operations&&!operations.online?"Обработка временно недоступна.":working?jobNarration(working):operations?.runtime?.settings?.paused?"Новые задания на паузе.":pending.length?`Ждут обработки: ${pending.length}.`:"Слежу за платформой. Сейчас активных заданий нет.";
-  const items:AssistantItem[]=[{id:"/",label:"Обзор",icon:"⌂"},{id:"/clips",label:"Клипы",icon:"▤"},{id:"/streamers",label:"Стримеры",icon:"◎"},{id:"/games",label:"Игры",icon:"◇"},{id:"/jobs",label:"Задания",icon:"≡"},{id:"/me",label:viewer.isAdmin?"Управление":"Мой профиль",icon:"⚙"},{id:"logout",label:"Выйти",icon:"↪"}];
+  const items:AssistantItem[]=[...WORKSPACE_LINKS.map(item=>({id:item.href,label:item.label})),{id:"/me",label:viewer.isAdmin?"Управление":"Мой профиль"}];
   const reply=async(text:string):Promise<AssistantReply>=>{
     const q=text.toLocaleLowerCase();
     if(/клип/.test(q)&&!/сколько|статист/.test(q)){
@@ -75,7 +76,7 @@ export function PlatformAssistant({ viewer }: { viewer: Viewer }) {
     if(/дела|происход|работ|статус|сейчас/.test(q))return {text:status, facts:[{label:"Выполняется",value:String(pending.filter(job=>job.state==="active").length)},{label:"В очереди",value:String(pending.filter(job=>job.state!=="active").length)}]};
     return {text:"Могу рассказать, что делаю сейчас, показать результаты, объяснить выбор эфира или состояние публикаций. Сообщения ниже приходят от реальных этапов обработки; новые результаты появятся здесь автоматически."};
   };
-  return <Assistant key={`${viewer.accountId}:${viewer.actingAs??"all"}`} historyKey={`clipforge-chat:${viewer.accountId}:${viewer.actingAs??"all"}`} name="ClipForge" identity={viewer.isAdmin?"Администратор":viewer.role==="moderator"?"Модератор":viewer.displayName} items={items} currentItem={items.find(item=>item.id!=="/"&&path.startsWith(item.id))?.id??"/"}
+  return <Assistant key={`${viewer.accountId}:${viewer.actingAs??"all"}`} historyKey={`clipforge-chat:${viewer.accountId}:${viewer.actingAs??"all"}`} name="ClipForge"
     status={status} pending={pending.length} mood={error||operations&&!operations.online?"error":working?"working":operations?.runtime?.settings?.paused?"paused":recentSuccess?"success":"idle"} messages={messages} onMessage={reply}
     onSelect={async id=>{
       if(id==="show-clips"||id.startsWith("clips:")){
@@ -85,6 +86,6 @@ export function PlatformAssistant({ viewer }: { viewer: Viewer }) {
       }
       const allowed=items.some(item=>item.id===id)||messages.some(message=>message.actions?.some(action=>action.id===id));
       if(!allowed)throw new Error("Неизвестное действие");
-      if(id==="logout"){sessionStorage.removeItem(`clipforge-chat:${viewer.accountId}:${viewer.actingAs??"all"}`);await api.post("/api/auth/logout");window.location.href="/login";}else router.push(id);
+      router.push(id);
     }}/>
 }

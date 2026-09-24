@@ -1,202 +1,35 @@
 "use client";
 
-/**
- * Боковое меню: навигация по содержимому площадки.
- *
- * Устроено как в YouTube: сверху разделы, ниже раскрывающиеся списки -
- * стримеры, игры, задачи. Раскрытие запоминается, потому что
- * переключаться между каналом и игрой приходится постоянно, и
- * схлопывающийся при каждом переходе список злит быстрее всего.
- *
- * Профиля здесь нет: он живёт в верхней полосе. Меню - про содержимое, а
- * не про «я и мои настройки».
- */
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { WORKSPACE_LINKS, activeSection } from "@/lib/navigation";
+import { useSession } from "@/lib/session";
+import { useJobs } from "@/lib/jobs";
 
-import { api, type GameRow, type StreamerRow, type Viewer } from "@/lib/api";
-import { JOB_COLOURS, jobLabel, useJobs } from "@/lib/jobs";
+const icons: Record<string, React.ReactNode> = {
+  overview: <><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></>,
+  clips: <><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4Z"/></>,
+  streamers: <><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></>,
+  games: <><path d="M7 7h10c3 0 5 11 3 12-2 2-5-3-6-3h-4c-1 0-4 5-6 3C2 18 4 7 7 7Z"/><path d="M7 10v4m-2-2h4m7-1h.01m2 3h.01"/></>,
+  jobs: <><path d="M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1"/></>,
+  settings: <><path d="m12 3 3 2 3 .5.5 3 2 3-2 3-.5 3-3 .5-3 2-3-2-3-.5-.5-3-2-3 2-3 .5-3L9 5Z"/><circle cx="12" cy="11.5" r="3"/></>,
+};
 
-const REMEMBER = "clipforge.groups";
-
-interface Groups {
-  streamers: boolean;
-  games: boolean;
-  jobs: boolean;
-}
-
-export function Sidebar({ viewer }: { viewer: Viewer }) {
-  const path = usePathname();
-  const [catalogOpen,setCatalogOpen] = useState(false);
+export function Sidebar() {
+  const { viewer } = useSession();
   const { jobs } = useJobs();
-  const [streamers, setStreamers] = useState<StreamerRow[]>([]);
-  const [games, setGames] = useState<GameRow[]>([]);
-  const [open, setOpen] = useState<Groups>({
-    streamers: true,
-    games: true,
-    jobs: true,
-  });
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(REMEMBER);
-      if (saved) setOpen(JSON.parse(saved));
-    } catch {
-      // Хранилище может быть недоступно - тогда просто всё открыто.
-    }
-  }, []);
-
-  const { version } = useJobs();
-  useEffect(() => {
-    void api.get<StreamerRow[]>("/api/streamers").then(setStreamers).catch(() => {});
-    void api.get<GameRow[]>("/api/games").then(setGames).catch(() => {});
-    // Обновление по общей версии заданий: закончился обход канала -
-    // в меню сразу появляются новые игры и подтягиваются аватарки.
-  }, [viewer.actingAs, version]);
-
-  const toggle = (key: keyof Groups) => {
-    const next = { ...open, [key]: !open[key] };
-    setOpen(next);
-    try {
-      localStorage.setItem(REMEMBER, JSON.stringify(next));
-    } catch {
-      // Не запомнилось - не беда.
-    }
-  };
-
-  const navItem = (href: string, icon: string, label: string) => (
-    <Link href={href} className={`nav-item${path === href ? " on" : ""}`}>
-      <span className="icon">{icon}</span>
-      <span>{label}</span>
-    </Link>
-  );
-
-  const active = jobs.filter((job) => job.state === "active" || job.state === "created");
-
-  return (
-    <aside className={`rail${catalogOpen ? " catalog-open" : ""}`}>
-      <Link href="/" className="rail-head">
-        <img src="/glitch.svg" alt="" />
-        <span>ClipForge</span>
-      </Link>
-
-      <nav className="nav">
-        {navItem("/", "⌂", "Обзор")}
-        {navItem("/clips", "▤", "Клипы")}
-        {viewer.isAdmin && navItem("/discovery", "◎", "Поиск стримеров")}
-        {navItem("/jobs", "⚙", "Задачи")}
-      </nav>
-
-      <button className="btn mobile-catalog" onClick={()=>setCatalogOpen(v=>!v)}>{catalogOpen ? "Скрыть каталог" : "Каналы и категории"}</button>
-      <Group
-        title="Стримеры"
-        count={streamers.length}
-        open={open.streamers}
-        onToggle={() => toggle("streamers")}
-        empty="Пока никого"
-      >
-        {streamers.map((streamer) => (
-          <Link
-            key={streamer.login}
-            href={`/streamers/${streamer.login}`}
-            className={`entry${path === `/streamers/${streamer.login}` ? " on" : ""}`}
-            title={streamer.live ? `в эфире: ${streamer.liveGame ?? ""}` : undefined}
-          >
-            {streamer.avatar ? (
-              <img className="avatar" src={streamer.avatar} alt="" />
-            ) : (
-              <span className="avatar placeholder">
-                {(streamer.displayName ?? streamer.login).slice(0, 1).toUpperCase()}
-              </span>
-            )}
-            <span className="name">{streamer.displayName ?? streamer.login}</span>
-            {streamer.live ? (
-              <span className="live" />
-            ) : (
-              <span className="num">{streamer.clips}</span>
-            )}
-          </Link>
-        ))}
-      </Group>
-
-      <Group
-        title="Игры"
-        count={games.length}
-        open={open.games}
-        onToggle={() => toggle("games")}
-        empty="Пока пусто"
-      >
-        {games.map((game) => (
-          <Link
-            key={game.slug}
-            href={`/games/${game.slug}`}
-            className={`entry${path === `/games/${game.slug}` ? " on" : ""}`}
-          >
-            {game.boxArt ? (
-              <img className="box" src={game.boxArt} alt="" />
-            ) : (
-              <span className="box placeholder">{game.title.slice(0, 1)}</span>
-            )}
-            <span className="name">{game.title}</span>
-            <span className="num">{game.clips}</span>
-          </Link>
-        ))}
-      </Group>
-
-      <Group
-        title="Задачи"
-        count={active.length}
-        open={open.jobs}
-        onToggle={() => toggle("jobs")}
-        empty="Заданий не было"
-      >
-        {jobs.slice(0, 8).map((job) => {
-          const target = String(job.data?.vodId ?? job.data?.login ?? "");
-          return (
-            <Link key={job.id} href="/jobs" className="entry" title={job.name}>
-              <span
-                className={`dot${job.state === "active" ? " dot-active" : ""}`}
-                style={{ background: JOB_COLOURS[job.state] ?? "var(--dimmer)" }}
-              />
-              <span className="name">
-                {jobLabel(job.name)}
-                {target && <span className="muted"> · {target}</span>}
-              </span>
-            </Link>
-          );
-        })}
-      </Group>
-    </aside>
-  );
-}
-
-function Group({
-  title,
-  count,
-  open,
-  onToggle,
-  empty,
-  children,
-}: {
-  title: string;
-  count: number;
-  open: boolean;
-  onToggle: () => void;
-  empty: string;
-  children: React.ReactNode;
-}) {
-  const items = Array.isArray(children) ? children : [children];
-  const isEmpty = items.flat().filter(Boolean).length === 0;
-
-  return (
-    <div className="group">
-      <button className="group-head" onClick={onToggle}>
-        <span className={`chevron${open ? " open" : ""}`}>›</span>
-        {title}
-        <span className="group-count">{count}</span>
-      </button>
-      {open && (isEmpty ? <div className="entry muted">{empty}</div> : children)}
-    </div>
-  );
+  const section = activeSection(usePathname());
+  const pending = jobs.filter(job => ["active", "created", "retry"].includes(job.state)).length;
+  const links = [...WORKSPACE_LINKS, { href: "/me", label: viewer.isAdmin ? "Управление" : "Мой профиль", icon: "settings" }];
+  return <aside className="workspace-sidebar">
+    <Link href="/" className="workspace-brand" aria-label="ClipForge — обзор"><span className="brand-mark" aria-hidden>CF</span><span>ClipForge</span></Link>
+    <div className="sidebar-caption">Рабочее пространство</div>
+    <nav aria-label="Разделы платформы">
+      {links.map(item => <Link key={item.href} href={item.href} className="workspace-nav-link" aria-label={item.label} title={item.label} aria-current={section === item.href ? "page" : undefined}>
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{icons[item.icon]}</svg>
+        <span className="nav-label">{item.label}</span>{item.href === "/jobs" && pending > 0 && <span className="nav-count">{pending}</span>}
+      </Link>)}
+    </nav>
+    <div className="sidebar-footer"><span className="sidebar-caption">Из эфира — в короткий клип</span><Link href="/about" title="О ClipForge"><span aria-hidden>ⓘ</span><span className="nav-label">О платформе</span></Link></div>
+  </aside>;
 }

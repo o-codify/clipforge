@@ -25,7 +25,7 @@ export default function ClipsPage() {
 
   return (
     <>
-      <h1>Клипы</h1>
+
       <p className="sub">{clips.length} последних</p>
 
       <div className="actions">

@@ -1,4 +1,5 @@
 "use client";
+import { useSession } from "@/lib/session";
 
 /**
  * Страница стримера.
@@ -17,7 +18,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button, Card, JobButton, PageSkeleton, Pill, SectionTitle } from "@/components/ui";
-import { api, hhmm, VOD_STATE, when, type Viewer, type VodRow } from "@/lib/api";
+import { api, hhmm, VOD_STATE, when, type VodRow } from "@/lib/api";
 import { useLiveReload } from "@/lib/jobs";
 import { toast } from "@/lib/toast";
 
@@ -43,7 +44,7 @@ export default function StreamerPage() {
   const [vods, setVods] = useState<VodRow[]>([]);
   const [toggling, setToggling] = useState(false);
   const [togglingPublish, setTogglingPublish] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { viewer } = useSession(); const isAdmin = viewer.isAdmin;
   /** null - все игры; слуг - только её эфиры. */
   const [gameFilter, setGameFilter] = useState<string | null>(null);
 
@@ -54,11 +55,6 @@ export default function StreamerPage() {
 
   useLiveReload(load);
 
-  useEffect(() => {
-    void api
-      .get<{ viewer: Viewer | null }>("/api/auth/me")
-      .then(({ viewer }) => setIsAdmin(Boolean(viewer?.isAdmin)));
-  }, []);
 
   const toggleAutomation = async () => {
     if (!streamer) return;
@@ -115,7 +111,7 @@ export default function StreamerPage() {
           </span>
         )}
         <div>
-          <h1 style={{ marginBottom: 4 }}>{name}</h1>
+          <h2 className="detail-title" style={{ marginBottom: 4 }}>{name}</h2>
           <p className="muted" style={{ margin: 0 }}>
             <a href={`https://twitch.tv/${streamer.login}`} target="_blank" rel="noopener">
               twitch.tv/{streamer.login}

@@ -55,7 +55,7 @@ export default function GamePage() {
         <b>{game.title}</b>
       </div>
 
-      <h1>{game.title}</h1>
+      <h2 className="detail-title">{game.title}</h2>
       <p className="sub">
         {game.streamers} стримеров · {game.vods} эфиров · {game.clips} клипов
       </p>

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "./design-system.css";
 import "@clipforge/assistant/styles.css";
+import "./workspace.css";
 import { Shell } from "@/components/Shell";
 
 export const metadata: Metadata = {

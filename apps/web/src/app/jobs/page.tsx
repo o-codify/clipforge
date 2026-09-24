@@ -1,4 +1,5 @@
 "use client";
+import { useSession } from "@/lib/session";
 
 /**
  * Задания: что выполняется и что уже отработало.
@@ -11,7 +12,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { jobAction, jobNarration } from "@/lib/job-description";
 
-import { api, when, type JobRow, type Viewer } from "@/lib/api";
+import { api, when, type JobRow } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
 const STATES: Record<string, [string, string]> = {
@@ -34,14 +35,11 @@ export default function JobsPage() {
   useEffect(()=>{ if(!selected) return; const load=()=>{void api.get<typeof events>(`/api/jobs/${selected}/events`).then(setEvents).catch(e=>setError(String(e)));};load();const t=setInterval(load,2000);return()=>clearInterval(t);},[selected]);
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [filter, setFilter] = useState<"all" | "active" | "done" | "failed">("all");
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { viewer } = useSession(); const isAdmin = viewer.isAdmin;
   /** Уже отправленные отмены - чтобы кнопка не жалась дважды. */
   const [cancelling, setCancelling] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    void api
-      .get<{ viewer: Viewer | null }>("/api/auth/me")
-      .then(({ viewer }) => setIsAdmin(Boolean(viewer?.isAdmin)));
     const load = () => {
       void api.get<JobRow[]>("/api/jobs?limit=60").then(r=>{setJobs(r);setError("");}).catch(e=>setError(String(e)));
     };
@@ -67,7 +65,7 @@ export default function JobsPage() {
   const visibleJobs = jobs.filter(job => filter === "all" || (filter === "active" ? CANCELLABLE.has(job.state) : filter === "done" ? job.state === "completed" : ["failed", "expired"].includes(job.state)));
   return (
     <>
-      <div className="eyebrow">CLIPFORGE / ОБРАБОТКА</div><h1>Задания</h1>
+
       {error && <p role="alert">{error}</p>}
       {isAdmin && selected && <section className="card"><div className="form-row"><b>Журнал задания</b><button className="btn" onClick={()=>setSelected(null)}>Закрыть</button></div><pre style={{whiteSpace:"pre-wrap",maxHeight:360,overflow:"auto"}}>{events.length ? events.map(e=>`${new Date(e.createdAt).toLocaleTimeString()} ${e.message}`).join("\n") : "Сообщений пока нет"}</pre></section>}
       <p className="sub">

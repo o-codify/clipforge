@@ -68,7 +68,7 @@ export default function DiscoveryPage() {
   if (status && !status.available) {
     return (
       <>
-        <h1>Поиск стримеров</h1>
+
         <Card className="empty">
           {status.note}
           <br />
@@ -82,7 +82,7 @@ export default function DiscoveryPage() {
 
   return (
     <>
-      <h1>Поиск стримеров</h1>
+
       <p className="sub">
         Перебор каталога Twitch по игре и языку. Оценка — по зрителям,
         фолловерам и просмотрам архивов.

@@ -8,6 +8,8 @@
  * сессии остаётся своей, и вопрос межисточниковых запросов не встаёт.
  */
 
+export const SESSION_EXPIRED = "clipforge:session-expired";
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -26,6 +28,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   const text = await response.text();
+  if (response.status === 401 && path !== "/api/auth/login" && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SESSION_EXPIRED));
+  }
   let body: any = null;
   try { body = text ? JSON.parse(text) : null; } catch {
     throw new ApiError("Сервис временно недоступен. Повторите попытку позже.", response.status);

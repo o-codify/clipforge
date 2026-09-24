@@ -17,13 +17,13 @@ export interface AssistantProps {
   historyKey?: string;
   name: string; identity?: string; status: string; pending: number;
   mood: "idle" | "working" | "success" | "error" | "paused";
-  items: AssistantItem[]; messages: AssistantMessage[]; currentItem?: string;
+  messages: AssistantMessage[];
   onSelect: (id:string) => void | Promise<void>;
   /** The host resolves messages and validates actions. Models may only suggest allowlisted actions. */
   onMessage: (text:string) => Promise<AssistantReply>;
 }
 
-export function Assistant({historyKey,name,identity,status,pending,mood,items,messages,currentItem,onSelect,onMessage}:AssistantProps) {
+export function Assistant({historyKey,name,status,pending,mood,messages,onSelect,onMessage}:AssistantProps) {
   const [open,setOpen]=useState(false);
   const [query,setQuery]=useState("");
   const [conversation,setConversation]=useState<AssistantMessage[]>([]);
@@ -47,10 +47,9 @@ export function Assistant({historyKey,name,identity,status,pending,mood,items,me
   useEffect(()=>{
     if (!open) return;
     input.current?.focus();
-    const close=(event:PointerEvent)=>{if(!root.current?.contains(event.target as Node))setOpen(false);};
     const key=(event:KeyboardEvent)=>{if(event.key==="Escape"){setOpen(false);launcher.current?.focus();}};
-    document.addEventListener("pointerdown",close);document.addEventListener("keydown",key);
-    return()=>{document.removeEventListener("pointerdown",close);document.removeEventListener("keydown",key);};
+    document.addEventListener("keydown",key);
+    return()=>{document.removeEventListener("keydown",key);};
   },[open]);
   useEffect(()=>{
     if(open && follow.current && chat.current){chat.current.scrollTop=chat.current.scrollHeight;setUnread(false);}
@@ -71,10 +70,6 @@ export function Assistant({historyKey,name,identity,status,pending,mood,items,me
   };
   return <div className={`cfa cfa-${mood}`} ref={root}>
     {open&&<section className="cfa-panel" role="dialog" aria-label={`Помощник ${name}`} id={id}>
-      <aside className="cfa-navigation"><div className="cfa-brand"><Mascot size={64} mood={sending?"working":mood}/><strong>{name}</strong><small>{identity}</small></div>
-        <nav aria-label="Разделы платформы">{items.map(item=><button key={item.id} aria-current={currentItem===item.id?"page":undefined} onClick={()=>void select(item.id,true)}><span aria-hidden>{item.icon??"○"}</span>{item.label}</button>)}</nav>
-        <div className="cfa-presence"><i/>{mood==="working"?"Работаю":mood==="error"?"Нужно внимание":mood==="paused"?"На паузе":"На связи"}{pending>0&&<small>Заданий: {pending}</small>}</div>
-      </aside>
       <div className="cfa-conversation"><div className="cfa-chat-heading"><div><strong>Разговор с {name}</strong><small>Что происходит, почему и что получилось</small></div><button aria-label="Закрыть помощника" onClick={()=>{setOpen(false);launcher.current?.focus();}}>×</button></div>
         <div className="cfa-current" role="status">{status}</div>
         <div ref={chat} className="cfa-chat" role="log" aria-label="Чат с платформой" aria-live="polite" onScroll={()=>{const el=chat.current;if(el)follow.current=el.scrollHeight-el.scrollTop-el.clientHeight<70;}}>

@@ -45,7 +45,7 @@ export default function OverviewPage() {
   useEffect(()=>setPage(v=>Math.min(v,Math.max(0,Math.ceil(proposals.length/pageSize)-1))),[proposals.length,pageSize]);
 
   return <div className="overview">
-    <section className="overview-intro" aria-label="Сводка"><div className="page-intro"><div><div className="eyebrow">CLIPFORGE / WORKSPACE</div><h1>Обзор платформы</h1><p className="sub">От эфира до готового клипа. Работа платформы в одном месте.</p></div><Link className="btn btn-primary" href="/clips">Открыть клипы <span aria-hidden>↗</span></Link></div>
+    <section className="overview-intro" aria-label="Сводка"><div className="page-intro"><div><p className="sub">От эфира до готового клипа. Работа платформы в одном месте.</p></div><Link className="btn btn-primary" href="/clips">Открыть клипы <span aria-hidden>↗</span></Link></div>
     <div className="metric-strip">{[["Готовые клипы",summary?.clips,"Результаты обработки"],["Публичные видео",summary?.published,"Подтверждённые публикации"],["Стримеры",summary?.streamers,"Каналы в каталоге"],["Записи эфиров",summary?.vods,"Материалы для отбора"]].map(([label,value,note])=><div className="metric" key={String(label)}><span>{label}</span><strong>{value??"—"}</strong><small>{note}</small></div>)}</div>
     </section><div className="overview-columns">
       <section className="surface overview-queue" aria-label="Следующие эфиры"><div className="surface-heading"><div><span className="eyebrow">ОБРАБОТКА</span><h2>Следующие эфиры</h2><p>Автоматика выбирает записи по аудитории и доступным ресурсам.</p></div><span className="count-badge">{proposals.length}</span></div>

@@ -4,11 +4,13 @@ import { api, type Viewer } from "@/lib/api";
 import { Select } from "./Select";
 import { Button, Card, SectionTitle } from "./ui";
 import { toast } from "@/lib/toast";
+import { useSession } from "@/lib/session";
 
 const roles = { admin: "Администратор", moderator: "Модератор", user: "Пользователь" };
 const roleOptions = Object.entries(roles).map(([value,label])=>({value:value as keyof typeof roles,label}));
 type Account = {id:string; login:string; displayName:string; role:keyof typeof roles; streamer:string|null};
 export function AccountSettings({viewer}:{viewer:Viewer}) {
+  const { updateViewer } = useSession();
   const [accounts,setAccounts] = useState<Account[]>([]);
   const [name,setName] = useState(viewer.displayName);
   const [current,setCurrent] = useState("");
@@ -24,7 +26,7 @@ export function AccountSettings({viewer}:{viewer:Viewer}) {
     <SectionTitle>Мой аккаунт</SectionTitle>
     <Card><p>{viewer.login} · {roles[viewer.role]}</p>
       <div className="form-row"><input className="field" aria-label="Отображаемое имя" value={name} onChange={e=>setName(e.target.value)}/>
-        <Button busy={busy} onClick={()=>action(()=>api.post("/api/auth/profile",{displayName:name}))}>Сохранить имя</Button></div>
+        <Button busy={busy} onClick={()=>action(async()=>{await api.post("/api/auth/profile",{displayName:name});updateViewer({...viewer,displayName:name.trim()});})}>Сохранить имя</Button></div>
       <div className="form-row"><input className="field" type="password" autoComplete="current-password" placeholder="Текущий пароль" value={current} onChange={e=>setCurrent(e.target.value)}/>
         <input className="field" type="password" autoComplete="new-password" placeholder="Новый пароль (от 8 символов)" value={password} onChange={e=>setPassword(e.target.value)}/>
         <Button busy={busy} disabled={!current||password.length<8} onClick={()=>action(async()=>{await api.post("/api/auth/password",{current,password});window.location.href="/login";})}>Изменить пароль</Button></div>

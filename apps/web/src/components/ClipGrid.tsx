@@ -1,4 +1,5 @@
 "use client";
+import { useSession } from "@/lib/session";
 
 /**
  * Плитка клипов с проигрывателем.
@@ -11,7 +12,7 @@
 import { useEffect, useState } from "react";
 
 import { Button, Pill } from "@/components/ui";
-import { api, hhmm, PUB_STATE, size, TRIGGERS, type ClipRow, type Viewer } from "@/lib/api";
+import { api, hhmm, PUB_STATE, size, TRIGGERS, type ClipRow } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { PublishForm } from "./PublishForm";
 import { displayTranscript } from "@clipforge/contracts/text";
@@ -28,8 +29,7 @@ interface ClipDetail extends ClipRow {
 }
 
 export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () => void }) {
-  const [viewer, setViewer] = useState<Viewer | null>(null);
-  useEffect(() => { void api.get<{viewer:Viewer}>("/api/auth/me").then(r=>setViewer(r.viewer)); }, []);
+  const { viewer } = useSession();
   const [open, setOpen] = useState<ClipDetail | null>(null);
   const [busy, setBusy] = useState(false);
   /** Снятие - в два шага прямо в окне: причина спрашивается на месте,

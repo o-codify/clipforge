@@ -9,17 +9,18 @@
  * с любой страницы, а не только со страницы задач.
  */
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { api, type StreamerRow, type Viewer } from "@/lib/api";
 import { jobLabel, useJobs } from "@/lib/jobs";
+import { useSession } from "@/lib/session";
+import { pageTitle } from "@/lib/navigation";
+import { toast } from "@/lib/toast";
 
-interface Props {
-  viewer: Viewer;
-  onViewerChange: (viewer: Viewer) => void;
-}
-
-export function Header({ viewer, onViewerChange }: Props) {
+export function Header() {
+  const { viewer, updateViewer, logout } = useSession();
+  const path = usePathname();
   const { jobs } = useJobs();
   const [open, setOpen] = useState(false);
   const [streamers, setStreamers] = useState<StreamerRow[]>([]);
@@ -29,8 +30,10 @@ export function Header({ viewer, onViewerChange }: Props) {
     const away = (event: MouseEvent) => {
       if (box.current && !box.current.contains(event.target as Node)) setOpen(false);
     };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", escape); };
   }, []);
 
   useEffect(() => {
@@ -40,22 +43,24 @@ export function Header({ viewer, onViewerChange }: Props) {
   }, [open, viewer.isAdmin, streamers.length]);
 
   const running = jobs.filter((job) => job.state === "active");
-  const waiting = jobs.filter((job) => job.state === "created").length;
+  const waiting = jobs.filter((job) => job.state === "created" || job.state === "retry").length;
 
   const actAs = async (streamer: string | null) => {
-    const { viewer: updated } = await api.post<{ viewer: Viewer }>(
+    try { const { viewer: updated } = await api.post<{ viewer: Viewer }>(
       "/api/auth/act-as",
       { streamer },
     );
-    onViewerChange(updated);
+    updateViewer(updated);
     setOpen(false);
+    } catch (error) { toast.error(String(error)); }
   };
 
   const initials = (viewer.displayName || viewer.login).slice(0, 1).toUpperCase();
 
   return (
     <header className="topbar">
-      <div className="topbar-status">
+      <div className="workspace-heading"><span>ClipForge / Рабочее пространство</span><h1>{pageTitle(path, viewer.isAdmin)}</h1></div>
+      <Link href="/jobs" className="topbar-status" aria-label={running.length ? `Задания: ${running.length} в работе` : "Перейти к заданиям"}>
         {running.length > 0 ? (
           <>
             <span className="dot dot-active" />
@@ -76,10 +81,10 @@ export function Header({ viewer, onViewerChange }: Props) {
         ) : (
           <>
             <span className="dot" />
-            <span className="muted">Заданий нет</span>
+            <span className="muted">{waiting ? `В очереди: ${waiting}` : "Нет активных заданий"}</span>
           </>
         )}
-      </div>
+      </Link>
 
       <div className="topbar-user" ref={box}>
         {viewer.actingAs && viewer.isAdmin && (
@@ -87,7 +92,7 @@ export function Header({ viewer, onViewerChange }: Props) {
             Смотрите как <b>{viewer.actingAs}</b>
           </span>
         )}
-        <button className="avatar-button" onClick={() => setOpen((v) => !v)}>
+        <button className="avatar-button" aria-label="Меню аккаунта" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
           <span className="avatar-initials">{initials}</span>
           <span className="avatar-name">
             <b>{viewer.displayName}</b>
@@ -108,7 +113,7 @@ export function Header({ viewer, onViewerChange }: Props) {
                 <div className="menu-scroll">
                   {viewer.actingAs && (
                     <button className="menu-item" onClick={() => actAs(null)}>
-                      ← вернуться к своему виду
+                      ← Вернуться к своему виду
                     </button>
                   )}
                   {streamers.map((streamer) => (
@@ -127,8 +132,7 @@ export function Header({ viewer, onViewerChange }: Props) {
             <button
               className="menu-item danger"
               onClick={async () => {
-                await api.post("/api/auth/logout");
-                location.href = "/login";
+                try { await logout(); } catch (error) { toast.error(String(error)); }
               }}
             >
               Выйти

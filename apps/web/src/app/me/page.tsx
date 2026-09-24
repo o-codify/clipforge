@@ -1,4 +1,5 @@
 "use client";
+import { useSession } from "@/lib/session";
 
 /**
  * Личная страница.
@@ -16,7 +17,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Button, Card, PageSkeleton, Pill, SectionTitle } from "@/components/ui";
-import { api, type PlatformAccount, type StreamerRow, type Viewer } from "@/lib/api";
+import { api, type PlatformAccount, type StreamerRow } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
 interface DiscoveryStatus {
@@ -30,7 +31,7 @@ interface Summary {
 }
 
 export default function MePage() {
-  const [viewer, setViewer] = useState<Viewer | null>(null);
+  const { viewer } = useSession();
   const [status, setStatus] = useState<DiscoveryStatus | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [streamers, setStreamers] = useState<StreamerRow[]>([]);
@@ -48,7 +49,6 @@ export default function MePage() {
   };
 
   useEffect(() => {
-    void api.get<{ viewer: Viewer }>("/api/auth/me").then((r) => setViewer(r.viewer));
     void api.get<Summary>("/api/summary").then(setSummary);
     void api.get<StreamerRow[]>("/api/streamers").then(setStreamers);
     void api
@@ -112,13 +112,13 @@ export default function MePage() {
 
   // --- взгляд стримера --------------------------------------------------
 
-  if (viewer.role === "moderator") return <><h1>Профиль модератора</h1><AccountSettings viewer={viewer}/><Operations/><p>Доступны каталог, клипы и журнал заданий для поддержки пользователей. Изменение чужих аккаунтов и запуск обработки доступны администратору.</p></>;
+  if (viewer.role === "moderator") return <><AccountSettings viewer={viewer}/><Operations/><p>Доступны каталог, клипы и журнал заданий для поддержки пользователей. Изменение чужих аккаунтов и запуск обработки доступны администратору.</p></>;
 
   if (!viewer.isAdmin) {
     const mine = streamers[0];
     return (
       <>
-        <h1>Мой профиль</h1>
+
         <AccountSettings viewer={viewer} />
         <p className="sub">Что площадка знает о канале и что с ним делает.</p>
 
@@ -166,7 +166,7 @@ export default function MePage() {
 
   return (
     <>
-      <h1>Настройки площадки</h1>
+
       <p className="sub">Что подключено и кто имеет доступ.</p>
 
       <SectionTitle>Состояние</SectionTitle>

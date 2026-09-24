@@ -1,4 +1,5 @@
 "use client";
+import { useSession } from "@/lib/session";
 
 /**
  * Общие элементы интерфейса.
@@ -15,7 +16,6 @@
  */
 import { useEffect, useState } from "react";
 
-import { api, type Viewer } from "@/lib/api";
 import { useJobs } from "@/lib/jobs";
 import { toast } from "@/lib/toast";
 
@@ -118,8 +118,7 @@ export function JobButton({
   children: React.ReactNode;
 }) {
   const { activeFor, refresh } = useJobs();
-  const [viewer, setViewer] = useState<Viewer | null>(null);
-  useEffect(()=>{void api.get<{viewer:Viewer}>("/api/auth/me").then(r=>setViewer(r.viewer)).catch(()=>{});},[]);
+  const { viewer } = useSession();
   disabled = disabled || !viewer || viewer.role === "moderator";
   const [pending, setPending] = useState(false);
   const job = activeFor(target, kinds);

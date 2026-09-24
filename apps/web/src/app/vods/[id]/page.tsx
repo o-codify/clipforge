@@ -1,4 +1,5 @@
 "use client";
+import { useSession } from "@/lib/session";
 
 /**
  * Страница эфира.
@@ -20,7 +21,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Card, JobButton, PageSkeleton, Pill, SectionTitle } from "@/components/ui";
-import { api, hhmm, runTime, TRIGGERS, when, type Viewer } from "@/lib/api";
+import { api, hhmm, runTime, TRIGGERS, when } from "@/lib/api";
 import { useJobs, useLiveReload } from "@/lib/jobs";
 
 interface VodDetail {
@@ -67,8 +68,7 @@ export default function VodPage() {
 
   const [vod, setVod] = useState<VodDetail | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [viewer,setViewer]=useState<Viewer|null>(null);
-  useEffect(()=>{void api.get<{viewer:Viewer}>("/api/auth/me").then(value=>setViewer(value.viewer));},[]);
+  const { viewer } = useSession();
 
   // Есть ли вообще работа по эфиру: пока идёт одна, вторую не начать.
   const anyJob = activeFor(id);
@@ -121,7 +121,7 @@ export default function VodPage() {
 
       <div className="page-head">
         <div>
-          <h1>{vod.title ?? "Эфир без названия"}</h1>
+          <h2 className="detail-title">{vod.title ?? "Эфир без названия"}</h2>
           <p className="sub">
             {hhmm(vod.duration)} · эфир {when(vod.publishedAt)}
             {vod.game && (

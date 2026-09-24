@@ -46,11 +46,11 @@ export default function RunPage() {
         <b>{runTime(run.id)}</b>
       </div>
 
-      <h1>Прогон {runTime(run.id)}</h1>
+      <h2 className="detail-title">Прогон {runTime(run.id)}</h2>
       <p className="sub">
         {clips.length} клипов из {run.candidates} кандидатов
-        
-        
+
+
       </p>
 
       <ClipGrid clips={clips} onChange={load} />
