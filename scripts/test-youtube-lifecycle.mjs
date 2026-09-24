@@ -41,7 +41,7 @@ try{
   await db.sql`insert into clips(id,run_id,vod_id,streamer,segment_key,file,state,text,media_storage) values(${clip},${prefix},${prefix},${prefix},${prefix},'test.mp4','ready','Test clip',${JSON.stringify({videoKey:'test/video',posterKey:'test/poster'})}::jsonb)`;
   await db.sql`insert into platform_accounts(id,platform,external_id,label,credentials) values(${account},'youtube',${channel},'Test channel',${JSON.stringify({refreshToken:'test-refresh'})}::jsonb)`;
   const draft=await service.preview(clip);assert.equal(draft.accounts[0].id,account);assert.equal(draft.privacy,'private');
-  const metadata={accountId:account,title:'Сохранить  пробелы!',description:'Точное описание\nСо второй строкой',privacy:'public'};
+  const metadata={accountId:account,title:'Пинг -то  меньше , блядь!',description:'Точное описание\n\nСо второй строкой',privacy:'public'};
   const [a,b]=await Promise.all([service.publish(clip,metadata),service.publish(clip,metadata)]);
   assert.equal(a.publicationId,b.publicationId);assert.equal(queued.length,1);
   await assert.rejects(publishClip(testCtx,{publicationId:a.publicationId},{log:()=>{}}));
@@ -50,8 +50,9 @@ try{
   await service.publish(clip,metadata);
   await publishClip(testCtx,{publicationId:a.publicationId},{log:()=>{}});
   assert.equal((await db.sql`select * from youtube_upload_sessions where publication_id=${a.publicationId}`).length,0);
-  assert.equal(captured.snippet.title,metadata.title);assert.equal(captured.snippet.description,metadata.description);assert.equal(captured.status.privacyStatus,'public');assert.equal(uploads,1);
-  const [published]=await db.sql`select privacy,status from publications where id=${a.publicationId}`;
+  assert.equal(captured.snippet.title,'Пинг-то меньше, б****!');assert.equal(captured.snippet.description,metadata.description);assert.equal(captured.status.privacyStatus,'public');assert.equal(uploads,1);
+  const [published]=await db.sql`select privacy,status,title,caption from publications where id=${a.publicationId}`;
+  assert.equal(published.title,captured.snippet.title);assert.equal(published.caption,captured.snippet.description);
   assert.equal(published.privacy,'private');assert.equal(published.status,'uploaded','Requested public is not proof of actual public visibility');
   await collectMetrics(testCtx);
   assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,1);
