@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$RuntimeHome)
+param([Parameter(Mandatory=$true)][string]$RuntimeHome, [switch]$CheckOnly)
 $ErrorActionPreference = 'Stop'
 try {
     $health = Invoke-RestMethod -Uri 'https://clipforge.clanvelt.com/api/health/ready' -TimeoutSec 20
@@ -9,12 +9,29 @@ try {
         $current = Get-Content -Raw -LiteralPath $currentFile | ConvertFrom-Json
         if ($current.release -eq $release) { exit 0 }
     }
-    gh release view "media-$release" --repo o-codify/clipforge --json tagName 2>$null | Out-Null
+    $releaseInfo = gh api "repos/o-codify/clipforge/releases/tags/media-$release" 2>$null | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { exit 0 }
+    if ($CheckOnly) { exit 10 }
     $releaseRoot = Join-Path $RuntimeHome "releases\$release"
     New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
-    gh release download "media-$release" --repo o-codify/clipforge --pattern 'clipforge-media.zip*' --dir $releaseRoot --clobber
-    if ($LASTEXITCODE -ne 0) { throw 'Could not download the prepared media runtime' }
+    $networkKbps = 10000
+    foreach ($line in Get-Content -LiteralPath (Join-Path $RuntimeHome '.env')) {
+        if ($line -match '^MEDIA_NETWORK_KBPS=(\d+)$') { $networkKbps = [int]$Matches[1] }
+    }
+    if ($networkKbps -lt 100 -or $networkKbps -gt 40000) { throw 'Invalid media bandwidth limit' }
+    $githubToken = gh auth token
+    if ($LASTEXITCODE -ne 0) { throw 'GitHub authentication unavailable' }
+    foreach ($name in @('clipforge-media.zip', 'clipforge-media.zip.sha256')) {
+        $asset = @($releaseInfo.assets | Where-Object name -eq $name)
+        if ($asset.Count -ne 1 -or $asset[0].url -notmatch '^https://api.github.com/repos/o-codify/clipforge/releases/assets/\d+$') { throw 'Invalid prepared release asset' }
+        # Keep the token off the command line and do not forward it to redirect hosts.
+        $curlConfig = 'url = "' + $asset[0].url + '"' + "`n" +
+            'header = "Accept: application/octet-stream"' + "`n" +
+            'header = "Authorization: Bearer ' + $githubToken.Trim() + '"'
+        $curlConfig | curl.exe --config - --location --fail --silent --show-error --max-time 160 --limit-rate ([int]($networkKbps * 1000 / 8)) --output (Join-Path $releaseRoot $name)
+        if ($LASTEXITCODE -ne 0) { throw 'Could not download the prepared media runtime' }
+    }
+    $githubToken = $null
     $archive = Join-Path $releaseRoot 'clipforge-media.zip'
     $expected = ((Get-Content -Raw -LiteralPath "$archive.sha256").Trim() -split '\s+')[0]
     if ($expected -notmatch '^[a-f0-9]{64}$' -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Runtime checksum mismatch' }

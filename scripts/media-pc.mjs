@@ -21,15 +21,14 @@ const guard=createServer();
 await new Promise((ok,fail)=>{guard.once('error',fail);guard.listen(18423,'127.0.0.1',ok);});
 let stopping=false;
 let updating=false;
-async function updateRuntime(){
+async function updateRuntime(checkOnly=false){
  if(updating||stopping||process.platform!=='win32')return;
  updating=true;
- try{await exec('powershell.exe',['-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',join(home,'update-media.ps1'),'-RuntimeHome',home],{windowsHide:true,timeout:180000});}
- catch{log('Prepared runtime update unavailable; will retry');}
+ try{await exec('powershell.exe',['-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',join(home,'update-media.ps1'),'-RuntimeHome',home,...(checkOnly?['-CheckOnly']:[])],{windowsHide:true,timeout:180000});return false;}
+ catch(error){if(checkOnly&&error.code===10)return true;log('Prepared runtime update unavailable; will retry');return false;}
  finally{updating=false;}
 }
-const updateTimer=setInterval(()=>void updateRuntime(),5*60_000);
-void updateRuntime();
+const supervisorRelease=JSON.parse(await readFile(join(home,'current.json'),'utf8')).release;
 let wakeStop;
 const stopRequested=new Promise(resolveStop=>{wakeStop=resolveStop;});
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{stopping=true;wakeStop();});
@@ -56,9 +55,13 @@ async function portReady(){
  return false;
 }
 while(!stopping){
- let tunnel,worker,watch,healthWatch,replaced=false;
+ let tunnel,worker,watch,healthWatch,updateWatch,replaced=false;
  try{
+  // Download updates only at a stopped-worker boundary. A second transfer
+  // must not double the PC's bandwidth budget during a stream/S3 transfer.
+  await updateRuntime();
   const current=JSON.parse(await readFile(join(home,'current.json'),'utf8'));
+  if(current.release!==supervisorRelease){stopping=true;process.exitCode=75;break;}
   const {stdout}=await exec(ssh,[...sshArgs,config.SSH_HOST,`docker inspect ${config.POSTGRES_CONTAINER} --format '{{(index .NetworkSettings.Networks "coolify").IPAddress}}'`],{windowsHide:true,timeout:20000});
   const ip=stdout.trim();if(!/^\d+\.\d+\.\d+\.\d+$/.test(ip))throw Error('Database network address unavailable');
   tunnel=spawn(ssh,[...sshArgs,'-N','-T','-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3','-L',`127.0.0.1:${port}:${ip}:5432`,config.SSH_HOST],{windowsHide:true,stdio:['ignore','ignore','pipe']});
@@ -74,16 +77,17 @@ while(!stopping){
   const unhealthy=new Promise(resolveHealth=>{healthWatch=setInterval(()=>{
    if(Date.now()-lastHeartbeat>(hasHeartbeat?60_000:180_000))resolveHealth('worker heartbeat timed out');
   },5000);});
-  const update=new Promise(resolveUpdate=>{watch=setInterval(async()=>{
+  const update=new Promise(resolveUpdate=>{
+   updateWatch=setInterval(async()=>{if(await updateRuntime(true))resolveUpdate();},5*60_000);
+   watch=setInterval(async()=>{
    try{const next=JSON.parse(await readFile(join(home,'current.json'),'utf8'));if(next.release!==current.release){replaced=true;resolveUpdate();}}catch{log('Could not inspect pending worker release');}
   },15000);});
   const reason=await Promise.race([exited(worker).then(code=>`worker exited (${code})`),tunnelExit.then(()=> 'database tunnel closed'),update.then(()=> 'prepared release changed'),stopRequested.then(()=> 'stop requested'),unhealthy]);
   log(`Restart boundary: ${reason}`);
  }catch(error){log(`Supervisor: ${error.message}`);}
- finally{clearInterval(watch);clearInterval(healthWatch);await terminate(worker);await terminate(tunnel);}
+ finally{clearInterval(watch);clearInterval(healthWatch);clearInterval(updateWatch);await terminate(worker);await terminate(tunnel);}
  if(replaced){stopping=true;process.exitCode=75;}
  if(!stopping)await Promise.race([sleep(10000),stopRequested]);
 }
 guard.close();
-clearInterval(updateTimer);
 log('Media supervisor stopped');

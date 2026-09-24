@@ -15,6 +15,26 @@ export function validateVideoMetadata(value: VideoMetadata): void {
   if (!["private", "unlisted", "public"].includes(value.privacy)) throw new Error("Выберите видимость видео");
 }
 
+function hashtag(value: string): string {
+  return [...value.normalize("NFKC").replace(/[^\p{L}\p{N}_]/gu, "")].slice(0, 64).join("");
+}
+
+/** A small set of relevant, clickable tags, shared by manual and scheduled uploads. */
+export function descriptionHashtags(login: string, gameTitle: string | null): string[] {
+  const aliases: Record<string, string> = {
+    "dota 2": "Dota2", "pubg: battlegrounds": "PUBG", "counter-strike 2": "CS2",
+  };
+  const game = gameTitle?.trim() ?? "";
+  const values = [game ? aliases[game.toLowerCase()] ?? game : "", login, "Twitch", "Shorts"];
+  const seen = new Set<string>();
+  return values.map(hashtag).filter(tag => {
+    const key = tag.toLowerCase();
+    if (!tag || key === "безкатегории" || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).map(tag => `#${tag}`);
+}
+
 /** Suggestions only; accepted metadata is never regenerated on the worker. */
 export function suggestVideoMetadata(row: {
   text: string | null; trigger: string | null; displayName: string; login: string; gameTitle: string | null;
@@ -24,7 +44,7 @@ export function suggestVideoMetadata(row: {
   const lead = [...hook].slice(0, 55).join("") || triggers[row.trigger ?? ""] || "Момент";
   return {
     title: [...`${lead} — ${row.displayName}${row.gameTitle ? ` | ${row.gameTitle}` : ""}`.replace(/[<>]/g, "")].slice(0, 100).join(""),
-    description: `Клип со стрима ${row.displayName}\nTwitch: https://twitch.tv/${row.login}${row.gameTitle ? `\nИгра: ${row.gameTitle}` : ""}`.replace(/[<>]/g, ""),
+    description: `${descriptionHashtags(row.login, row.gameTitle).join(" ")}\n\nКлип со стрима ${row.displayName}\nTwitch: https://twitch.tv/${row.login}`.replace(/[<>]/g, ""),
     privacy: "private",
   };
 }

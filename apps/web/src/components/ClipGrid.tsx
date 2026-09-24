@@ -37,6 +37,26 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
   const [reason, setReason] = useState("");
   const [publishing,setPublishing] = useState(false);
 
+  const pendingPublication = open?.publications.some(p => ['queued', 'uploading', 'processing'].includes(p.status));
+  useEffect(() => {
+    if (!open?.id || !pendingPublication) return;
+    const id = open.id;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try {
+        const latest = await api.get<ClipDetail>(`/api/clips/${id}`);
+        if (active) setOpen(current => current?.id === id ? {...current, publications: latest.publications} : current);
+      } catch {
+        // Preserve the last confirmed state during a short network outage.
+      } finally {
+        if (active) timer = setTimeout(refresh, 3000);
+      }
+    };
+    timer = setTimeout(refresh, 3000);
+    return () => { active = false; clearTimeout(timer); };
+  }, [open?.id, pendingPublication]);
+
   const show = async (id: string) => {
     setBlocking(false);
     setPublishing(false);
