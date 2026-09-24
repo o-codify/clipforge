@@ -16,7 +16,7 @@ import {
   clips, games, platformAccounts, publications, runs, streamers, type Database,
 } from "@clipforge/db";
 import type { PayloadOf, QUEUES } from "@clipforge/jobs";
-import { refreshAccessToken, uploadVideo, videoStatus, suggestVideoMetadata, validateVideoMetadata } from "@clipforge/youtube";
+import { refreshAccessToken, uploadVideo, videoStatus, suggestVideoMetadata, validateVideoMetadata, UploadSessionExpiredError } from "@clipforge/youtube";
 
 import type { Context } from "./context.js";
 import type { JobReport } from "./handlers.js";
@@ -63,7 +63,8 @@ export async function publishClip(
   if (row.publication.mediaId) {
     return { message: "уже опубликован" };
   }
-  if (row.publication.status === "uploading" || row.publication.error?.startsWith("[upload-uncertain]")) {
+  const [savedSession]=await ctx.db.execute<{url:string;size:string}>(sql`select url,size from youtube_upload_sessions where publication_id=${row.publication.id}`);
+  if ((!savedSession && row.publication.status === "uploading") || row.publication.error?.startsWith("[upload-uncertain]")) {
     throw new Error("Исход предыдущей загрузки неизвестен. Проверьте YouTube-канал перед повторной отправкой.");
   }
   if (row.state !== "ready" || row.archivedAt) {
@@ -105,14 +106,16 @@ export async function publishClip(
     error: null,
   });
 
-  let uploadMayExist = false;
   try {
     const accessToken = await refreshAccessToken(ctx.youtube, refreshToken);
     const source = row.storage && ctx.storage ? await ctx.storage.openVideo(row.storage.videoKey) : undefined;
     if (ctx.config.role === 'control' && !source) throw new Error('Клип ещё не загружен в S3');
-    uploadMayExist = true;
     const videoId = await uploadVideo(accessToken, {
-      ...(source ? {source} : {file:join(row.outDir, row.file)}),
+      ...(source ? {source:{...source,reopen:(offset:number)=>ctx.storage!.openVideoRange(row.storage!.videoKey,offset)}} : {file:join(row.outDir, row.file)}),
+      session:savedSession ? {url:savedSession.url,size:Number(savedSession.size)} : undefined,
+      saveSession:async session=>{
+        await ctx.db.execute(sql`insert into youtube_upload_sessions(publication_id,url,size) values(${row.publication.id},${session.url},${session.size})`);
+      },
       ...metadata,
       tags: [row.login, row.gameTitle ?? "", "twitch", "shorts"].filter(Boolean),
     });
@@ -124,7 +127,7 @@ export async function publishClip(
       mediaId: videoId,
       url,
     });
-    uploadMayExist = false;
+    await ctx.db.execute(sql`delete from youtube_upload_sessions where publication_id=${row.publication.id}`);
     report.log("Файл принят YouTube");
 
     // Обработка обычно занимает меньше минуты - подождать её здесь
@@ -155,7 +158,7 @@ export async function publishClip(
   } catch (error) {
     await setStatus(ctx.db, row.publication.id, {
       status: "failed",
-      error: `${uploadMayExist ? "[upload-uncertain] Проверьте канал перед повторной отправкой. " : ""}${String(error)}`.slice(0, 500),
+      error: `${error instanceof UploadSessionExpiredError ? "[upload-uncertain] " : ""}${String(error)}`.slice(0, 500),
     });
     throw error;
   }

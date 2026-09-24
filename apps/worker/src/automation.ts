@@ -38,7 +38,7 @@ export const automationDefaults = (env: NodeJS.ProcessEnv): AutomationOptions =>
   autoAddScore: numberEnv(env, "AUTO_ADD_SCORE", 0.55, 0, 1),
   autoAddLimit: numberEnv(env, "AUTO_ADD_LIMIT", 1, 0, 20),
   language: (env.LANGUAGES ?? "ru").split(",")[0]?.trim() || "ru",
-  publishDailyLimit: numberEnv(env, "YOUTUBE_DAILY_LIMIT", 5, 0, 100),
+  publishDailyLimit: numberEnv(env, "YOUTUBE_DAILY_LIMIT", 100, 0, 100),
 });
 
 export function startAutomation(
@@ -53,7 +53,7 @@ export function startAutomation(
     const key = singletonKey(queue, parsed as never);
     await enqueueUnique(ctx.db, queue, key, () => boss.send(queue, parsed as object, {
       singletonKey: singletonKey(queue, parsed as never),
-      retryLimit: queue === QUEUES.publishClip ? 0 : 2, retryDelay: 60, retryBackoff: true,
+      retryLimit: 2, retryDelay: 60, retryBackoff: true,
       expireInSeconds: 6 * 3600,
     }));
   };

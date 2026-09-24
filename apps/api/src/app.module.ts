@@ -21,11 +21,12 @@ import { JobsService } from "./jobs/jobs.service.js";
 import { MediaController } from "./media/media.controller.js";
 import { PlatformsController } from "./platforms/platforms.controller.js";
 import { PlatformsService } from "./platforms/platforms.service.js";
+import { WebAssetsController } from "./web-assets.controller.js";
 
 @Module({
   controllers: [
     HealthController, TwitchController, OperationsController, AuthController, CatalogController, JobsController,
-    MediaController, DiscoveryController, PlatformsController,
+    MediaController, DiscoveryController, PlatformsController, WebAssetsController,
   ],
   providers: [
     { provide: CONFIG, useFactory: loadConfig },

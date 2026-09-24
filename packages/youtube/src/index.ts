@@ -146,7 +146,9 @@ export async function myChannel(
 
 export interface UploadOptions {
   file?: string;
-  source?: { body: Readable; size: number };
+  source?: { body: Readable; size: number; reopen?: (offset:number)=>Promise<Readable> };
+  session?: {url:string;size:number};
+  saveSession?: (session:{url:string;size:number})=>Promise<void>;
   title: string;
   description: string;
   tags: string[];
@@ -156,10 +158,8 @@ export interface UploadOptions {
 /**
  * Загрузить ролик. Возвращает id видео.
  *
- * Возобновляемая загрузка в один приём: сначала метаданные, в ответ
- * приходит адрес сессии, туда уходит сам файл. Резюмирование по кускам
- * не делается - клипы весят десятки мегабайт, при обрыве дешевле
- * повторить целиком, чем возить состояние сессии.
+ * Сессия сохраняется до отправки байтов. После обрыва сначала проверяем
+ * её состояние и продолжаем с подтверждённого Google смещения.
  */
 export async function uploadVideo(
   accessToken: string,
@@ -167,11 +167,15 @@ export async function uploadVideo(
 ): Promise<string> {
   if ((!options.file && !options.source) || (options.file && options.source)) throw new Error('Exactly one video source is required');
   const size = options.source?.size ?? (await stat(options.file!)).size;
-  const body = options.source?.body ?? createReadStream(options.file!);
+  let body = options.source?.body ?? createReadStream(options.file!);
   if (!Number.isSafeInteger(size) || size <= 0) throw new Error('Video source must have a positive byte length');
   try {
   validateVideoMetadata(options);
 
+  let session=options.session?.url;
+  let offset=0;
+  if(options.session && options.session.size!==size)throw new Error('Upload source size changed');
+  if(!session) {
   const init = await fetch(`${UPLOAD}?uploadType=resumable&part=snippet,status`, {
     signal: AbortSignal.timeout(20_000),
     method: "POST",
@@ -201,14 +205,33 @@ export async function uploadVideo(
   if (!init.ok) {
     throw new Error(`youtube upload init ${init.status}: ${(await init.text()).slice(0, 400)}`);
   }
-  const session = init.headers.get("location");
+  session = init.headers.get("location") ?? undefined;
   if (!session) throw new Error("youtube не вернул адрес сессии загрузки");
+  validateSession(session);
+  await options.saveSession?.({url:session,size});
+  } else {
+    validateSession(session);
+    const status=await fetch(session,{method:'PUT',redirect:'manual',signal:AbortSignal.timeout(20_000),
+      headers:{authorization:`Bearer ${accessToken}`,'content-length':'0','content-range':`bytes */${size}`}});
+    if(status.ok) return uploadedId(await status.json());
+    if(status.status===404 || status.status===410)throw new UploadSessionExpiredError();
+    if(status.status!==308)throw new Error(`YouTube upload status ${status.status}`);
+    const range=status.headers.get('range');
+    if(range && !/^bytes=0-\d+$/.test(range))throw new Error('Invalid upload offset');
+    offset=range ? Number(range.slice(8))+1 : 0;
+    if(!Number.isSafeInteger(offset)||offset<0||offset>=size)throw new Error('Invalid upload offset');
+    body.destroy();
+    body=options.source ? await options.source.reopen?.(offset) ?? (()=>{throw new Error('Source cannot be resumed');})() : createReadStream(options.file!,{start:offset});
+  }
 
   const put = await fetch(session, {
     signal: AbortSignal.timeout(600_000),
     method: "PUT",
+    redirect:'manual',
     headers: {
-      "content-length": String(size),
+      authorization:`Bearer ${accessToken}`,
+      "content-length": String(size-offset),
+      "content-range":`bytes ${offset}-${size-1}/${size}`,
       "content-type": "video/mp4",
     },
     // Файл уходит потоком: клип целиком в памяти держать незачем.
@@ -218,9 +241,21 @@ export async function uploadVideo(
   if (!put.ok) {
     throw new Error(`youtube upload ${put.status}: ${(await put.text()).slice(0, 400)}`);
   }
-  const video = (await put.json()) as { id: string };
-  return video.id;
+  return uploadedId(await put.json());
   } finally { body.destroy(); }
+}
+
+function validateSession(value:string):void {
+  const url=new URL(value);
+  if(url.origin!=='https://www.googleapis.com' || url.pathname!=='/upload/youtube/v3/videos')throw new Error('Invalid YouTube upload session');
+}
+function uploadedId(value:unknown):string {
+  const id=(value as {id?:unknown})?.id;
+  if(typeof id!=='string'||!id)throw new Error('YouTube did not return a video ID');
+  return id;
+}
+export class UploadSessionExpiredError extends Error {
+  constructor(){super('Сессия YouTube истекла. Проверьте канал перед новой отправкой.');this.name='UploadSessionExpiredError';}
 }
 
 export class YoutubeAccessRevokedError extends Error {
@@ -244,7 +279,7 @@ export async function videoStatus(
 ): Promise<{ uploadStatus: string; privacyStatus: string } | null> {
   const response = await fetch(
     `${API}/videos?part=status&id=${encodeURIComponent(videoId)}`,
-    { headers: { authorization: `Bearer ${accessToken}` } },
+    { signal:AbortSignal.timeout(20_000),headers: { authorization: `Bearer ${accessToken}` } },
   );
   if (!response.ok) {
     throw new Error(`youtube videos ${response.status}: ${(await response.text()).slice(0, 300)}`);

@@ -7,6 +7,8 @@ COPY apps ./apps
 COPY packages ./packages
 RUN pnpm install --frozen-lockfile
 ENV NEXT_TELEMETRY_DISABLED=1 API_URL=http://127.0.0.1:8420
+ARG RELEASE_SHA=local
+ENV RELEASE_SHA=$RELEASE_SHA
 RUN pnpm build
 # Installation timestamps are irrelevant at runtime and would invalidate the
 # dependency layer on every otherwise identical GitHub build.

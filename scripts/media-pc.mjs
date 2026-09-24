@@ -14,7 +14,7 @@ if(!/^[a-zA-Z0-9_-]+$/.test(config.POSTGRES_CONTAINER))throw Error('Invalid Post
 const port=Number(config.TUNNEL_PORT || 55433);
 if(!Number.isInteger(port)||port<1024||port>65535)throw Error('Invalid tunnel port');
 await mkdir(join(home,'logs'),{recursive:true});
-const log=message=>void appendFile(join(home,'logs',`media-${new Date().toISOString().slice(0,10)}.log`),`${new Date().toISOString()} ${message}\n`);
+const log=message=>void appendFile(join(home,'logs',`media-${new Date().toISOString().slice(0,10)}.log`),`${new Date().toISOString()} ${message}\n`).catch(()=>{});
 const guard=createServer();
 await new Promise((ok,fail)=>{guard.once('error',fail);guard.listen(18423,'127.0.0.1',ok);});
 let stopping=false;
@@ -54,7 +54,7 @@ async function portReady(){
  return false;
 }
 while(!stopping){
- let tunnel,worker,watch;
+ let tunnel,worker,watch,healthWatch;
  try{
   const current=JSON.parse(await readFile(join(home,'current.json'),'utf8'));
   const {stdout}=await exec(ssh,[...sshArgs,config.SSH_HOST,`docker inspect ${config.POSTGRES_CONTAINER} --format '{{(index .NetworkSettings.Networks "coolify").IPAddress}}'`],{windowsHide:true,timeout:20000});
@@ -65,12 +65,18 @@ while(!stopping){
   worker=spawn(process.execPath,[current.entry || 'apps/worker/dist/main.js'],{cwd:current.path,env:{...process.env,...config,WORKER_ROLE:'media'},windowsHide:true,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe','ipc']});
   worker.stdout.on('data',buf=>log(buf.toString().trim()));worker.stderr.on('data',buf=>log(buf.toString().trim()));
   log(`Media worker started, release ${current.release}`);
+  let lastHeartbeat=Date.now(),hasHeartbeat=false;
+  worker.on('message',message=>{if(message?.type==='heartbeat'){lastHeartbeat=Date.now();hasHeartbeat=true;}});
+  const unhealthy=new Promise(resolveHealth=>{healthWatch=setInterval(()=>{
+   if(Date.now()-lastHeartbeat>(hasHeartbeat?60_000:180_000))resolveHealth('worker heartbeat timed out');
+  },5000);});
   const update=new Promise(resolveUpdate=>{watch=setInterval(async()=>{
    try{const next=JSON.parse(await readFile(join(home,'current.json'),'utf8'));if(next.release!==current.release)resolveUpdate();}catch{log('Could not inspect pending worker release');}
   },15000);});
-  await Promise.race([exited(worker),tunnelExit,update,stopRequested]);
+  const reason=await Promise.race([exited(worker).then(code=>`worker exited (${code})`),tunnelExit.then(()=> 'database tunnel closed'),update.then(()=> 'prepared release changed'),stopRequested.then(()=> 'stop requested'),unhealthy]);
+  log(`Restart boundary: ${reason}`);
  }catch(error){log(`Supervisor: ${error.message}`);}
- finally{clearInterval(watch);await terminate(worker);await terminate(tunnel);}
+ finally{clearInterval(watch);clearInterval(healthWatch);await terminate(worker);await terminate(tunnel);}
  if(!stopping)await Promise.race([sleep(10000),stopRequested]);
 }
 guard.close();

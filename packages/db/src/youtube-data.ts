@@ -24,6 +24,7 @@ export async function clearYoutubePublications(db: Database, ids: string[]): Pro
   if (!ids.length) return;
   const selected=sql.join(ids.map(id=>sql`${id}`),sql`, `);
   await db.transaction(async tx => {
+    await tx.execute(sql`delete from youtube_upload_sessions where publication_id in (${selected})`);
     await tx.delete(publicationMetrics).where(inArray(publicationMetrics.publicationId,ids));
     await tx.update(publications).set({account:sql`'removed:' || ${publications.id}`,status:"takedown",
       operationId:null,mediaId:null,url:null,title:null,caption:null,privacy:null,publishedAt:null,error:null,updatedAt:new Date(),
@@ -47,6 +48,12 @@ export async function forgetYoutubeAccount(db: Database, id: string): Promise<vo
 
 /** Live data expires before backups, so their combined retention stays below 30 days. */
 export async function pruneYoutubeData(db: Database): Promise<void> {
+  await db.transaction(async tx=>{
+    await tx.execute(sql`update publications set status='failed',error='[upload-uncertain] Сессия загрузки истекла; проверьте канал.',updated_at=now()
+      where media_id is null and status<>'takedown' and id in
+      (select publication_id from youtube_upload_sessions where created_at < now()-${YOUTUBE_DATA_RETENTION_DAYS}*interval '1 day')`);
+    await tx.execute(sql`delete from youtube_upload_sessions where created_at < now()-${YOUTUBE_DATA_RETENTION_DAYS}*interval '1 day'`);
+  });
   await db.delete(publicationMetrics).where(sql`${publicationMetrics.collectedAt} < now() - ${YOUTUBE_DATA_RETENTION_DAYS} * interval '1 day'`);
   const stale=await db.select({id:publications.id}).from(publications).where(and(eq(publications.platform,"youtube"),
     sql`${publications.mediaId} is not null`,sql`${publications.updatedAt} < now() - ${YOUTUBE_DATA_RETENTION_DAYS} * interval '1 day'`));

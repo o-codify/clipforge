@@ -188,7 +188,8 @@ export class PlatformsService {
     }
 
     const [existing] = await tx
-      .select({ id: publications.id, status: publications.status, error: publications.error })
+      .select({ id: publications.id, status: publications.status, error: publications.error,
+        title:publications.title,caption:publications.caption,privacy:publications.privacy })
       .from(publications)
       .where(
         and(
@@ -206,6 +207,10 @@ export class PlatformsService {
       // Уже в работе или вышла - просто вернуть, кнопка не дублирует.
       return { publicationId: existing.id, send:false };
     } else if (existing) {
+      const [session]=await tx.execute(sql`select 1 from youtube_upload_sessions where publication_id=${existing.id}`);
+      if(session && (existing.title!==metadata.title || existing.caption!==metadata.description || existing.privacy!==metadata.privacy)) {
+        throw new BadRequestException('Загрузка уже началась. Продолжите её с прежними названием, описанием и видимостью.');
+      }
       publicationId = existing.id;
       await tx
         .update(publications)

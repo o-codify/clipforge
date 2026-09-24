@@ -12,13 +12,16 @@ const API = process.env.API_URL ?? "http://127.0.0.1:8420";
 
 const config: NextConfig = {
   devIndicators: false,
+  deploymentId: process.env.RELEASE_SHA,
   transpilePackages: ["@clipforge/assistant"],
   distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
   async rewrites() {
-    return [
+    return {beforeFiles: process.env.NODE_ENV === 'production' ? [
+      {source:'/_next/static/:path*',destination:`${API}/api/web-assets/:path*`},
+    ] : [], afterFiles: [
       { source: "/api/:path*", destination: `${API}/api/:path*` },
       { source: "/media/:path*", destination: `${API}/media/:path*` },
-    ];
+    ], fallback: []};
   },
   images: {
     // Аватарки и обложки игр приходят с CDN Twitch.

@@ -70,7 +70,7 @@ export class JobsService implements OnModuleDestroy {
     const key = singletonKey(queue, parsed as never);
     const id = await enqueueUnique(this.db, queue, key, () => boss.send(queue, parsed as object, {
       singletonKey: singletonKey(queue, parsed as never),
-      retryLimit: queue === QUEUES.publishClip ? 0 : 2,
+      retryLimit: 2,
       retryDelay: 60, retryBackoff: true,
       expireInSeconds: 6 * 3600,
     }));

@@ -78,7 +78,8 @@ async function releaseStaleJobs(boss: PgBoss, ctx: Context): Promise<void> {
     if (job.name === QUEUES.publishClip && job.data.publicationId) {
       await ctx.db.execute(sql`update publications set status = 'failed',
         error = '[upload-uncertain] Процесс прервался во время загрузки. Проверьте канал перед повторной отправкой.'
-        where id = ${job.data.publicationId} and status = 'uploading' and media_id is null`);
+        where id = ${job.data.publicationId} and status = 'uploading' and media_id is null
+          and not exists(select 1 from youtube_upload_sessions s where s.publication_id=publications.id)`);
     }
     await boss.fail(job.name, job.id, {
       message: "воркер был перезапущен во время выполнения",
@@ -162,6 +163,7 @@ async function main(): Promise<void> {
       }
       await runtimeValue(ctx.db, runtimeKey, { pid: process.pid, state: "online", role, freeGb });
       await localHeartbeat("online");
+      if (process.connected) process.send?.({type:'heartbeat'});
     } catch (error) {
       ctx.log(`потеря работоспособности воркера: ${String(error)}`);
       // A lost session lock must never leave a scheduler running without a lease.

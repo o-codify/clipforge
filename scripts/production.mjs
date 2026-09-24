@@ -4,6 +4,7 @@ import { mkdir, access, copyFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { retainWebAssets } from './web-assets.mjs';
 
 process.chdir(fileURLToPath(new URL("..", import.meta.url)));
 process.env.NODE_ENV = "production";
@@ -77,6 +78,7 @@ try {
       resolve(process.env.MODELS_ROOT, "face_detection_yunet_2023mar.onnx"), constants.COPYFILE_EXCL)
       .catch(error => { if (error.code !== "EEXIST") throw error; });
   }
+  await retainWebAssets(resolve('apps/web/.next/static'), resolve(process.env.DATA_ROOT,'web-assets'));
   await run("migrations", ["packages/db/dist/migrate.js"], process.cwd(), true);
   if (!stopping) {
     void run("api", ["apps/api/dist/main.js"]);

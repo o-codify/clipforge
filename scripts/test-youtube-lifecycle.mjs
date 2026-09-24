@@ -12,11 +12,11 @@ const ctx=createContext(),db=ctx.db;
 const prefix=`audit-test-${randomUUID()}`;
 const channel=`channel-${prefix}`,account=`account-${prefix}`,clip=`clip-${prefix}`;
 const original=globalThis.fetch;
-let failure=null,revokeFailure=false,uploads=0,captured;
+let failure=null,revokeFailure=false,uploads=0,captured,interrupted=false;
 const queued=[];
 const app={clientId:'test-client',clientSecret:'test-secret'};
 const service=new PlatformsService(db,{youtube:app,apiOrigin:'http://localhost',webOrigin:'http://localhost'}, {enqueue:async(name,payload)=>queued.push(payload)});
-const testCtx={...ctx,youtube:app,storage:{openVideo:async()=>({body:Readable.from([Buffer.from('video')]),size:5})}};
+const testCtx={...ctx,youtube:app,storage:{openVideo:async()=>({body:Readable.from([Buffer.from('video')]),size:5}),openVideoRange:async(key,offset)=>{assert.equal(offset,2);return Readable.from([Buffer.from('deo')]);}}};
 globalThis.fetch=async(url,init)=>{
   const address=String(url);
   if(address.startsWith('http://127.0.0.1:8420/'))return original(url,init);
@@ -24,8 +24,13 @@ globalThis.fetch=async(url,init)=>{
   if(failure)return Response.json({error:failure},{status:failure==='invalid_grant'?400:503});
   if(address==='https://oauth2.googleapis.com/token')return Response.json({access_token:'test-access'});
   if(address.includes('/channels?'))return Response.json({items:[{id:channel,snippet:{title:'Test channel'}}]});
-  if(address.includes('/upload/youtube/')){uploads++;captured=JSON.parse(init.body);return new Response('',{headers:{location:'https://www.googleapis.com/test-upload'}});}
-  if(address==='https://www.googleapis.com/test-upload'){await new Response(init.body).arrayBuffer();return Response.json({id:'test-video'});}
+  if(address.includes('/upload/youtube/') && init.method==='POST'){uploads++;captured=JSON.parse(init.body);return new Response('',{headers:{location:'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test'}});}
+  if(address.includes('upload_id=test')){
+    if(init.headers['content-range']==='bytes */5')return new Response(null,{status:308,headers:{range:'bytes=0-1'}});
+    const body=await new Response(init.body).text();
+    if(!interrupted){interrupted=true;throw new Error('Simulated network loss after accepted bytes');}
+    assert.equal(body,'deo');assert.equal(init.headers['content-range'],'bytes 2-4/5');return Response.json({id:'test-video'});
+  }
   if(address.includes('/videos?'))return Response.json({items:[{id:'test-video',status:{uploadStatus:'processed',privacyStatus:'private'},statistics:{viewCount:'3',likeCount:'1',commentCount:'0'}}]});
   throw new Error(`Unmocked provider URL: ${address}`);
 };
@@ -39,7 +44,12 @@ try{
   const metadata={accountId:account,title:'Сохранить  пробелы!',description:'Точное описание\nСо второй строкой',privacy:'public'};
   const [a,b]=await Promise.all([service.publish(clip,metadata),service.publish(clip,metadata)]);
   assert.equal(a.publicationId,b.publicationId);assert.equal(queued.length,1);
+  await assert.rejects(publishClip(testCtx,{publicationId:a.publicationId},{log:()=>{}}));
+  assert.equal((await db.sql`select * from youtube_upload_sessions where publication_id=${a.publicationId}`).length,1);
+  await assert.rejects(service.publish(clip,{...metadata,title:'Changed during upload'}));
+  await service.publish(clip,metadata);
   await publishClip(testCtx,{publicationId:a.publicationId},{log:()=>{}});
+  assert.equal((await db.sql`select * from youtube_upload_sessions where publication_id=${a.publicationId}`).length,0);
   assert.equal(captured.snippet.title,metadata.title);assert.equal(captured.snippet.description,metadata.description);assert.equal(captured.status.privacyStatus,'public');assert.equal(uploads,1);
   const [published]=await db.sql`select privacy,status from publications where id=${a.publicationId}`;
   assert.equal(published.privacy,'private');assert.equal(published.status,'uploaded','Requested public is not proof of actual public visibility');

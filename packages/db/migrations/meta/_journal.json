@@ -22,6 +22,13 @@
       "when": 1790211600000,
       "tag": "0002_youtube_access_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790254800000,
+      "tag": "0003_youtube_upload_sessions",
+      "breakpoints": true
     }
   ]
 }

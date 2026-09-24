@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { createHash } from 'node:crypto';
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -20,11 +21,20 @@ export class MediaStorage {
     this.checkKey(key);
     const size = (await stat(file)).size;
     if (!size) throw new Error("Cannot upload an empty media file");
+    const hash=createHash('sha256');
+    for await (const chunk of createReadStream(file)) hash.update(chunk);
+    const sha256=hash.digest('hex');
+    const existing=await this.client.send(new HeadObjectCommand({Bucket:this.bucket,Key:key})).catch(error=>{
+      if(error.$metadata?.httpStatusCode===404)return null;
+      throw error;
+    });
+    if(existing?.ContentLength===size && existing.Metadata?.sha256===sha256)return;
     await this.client.send(new PutObjectCommand({
       Bucket: this.bucket, Key: key, Body: createReadStream(file), ContentLength: size, ContentType: contentType,
+      Metadata:{sha256},
     }));
     const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
-    if (head.ContentLength !== size) throw new Error("Stored object size differs from the local file");
+    if (head.ContentLength !== size || head.Metadata?.sha256!==sha256) throw new Error("Stored object differs from the local file");
   }
 
   async readUrl(key: string, expiresIn = 300): Promise<string> {
@@ -37,6 +47,14 @@ export class MediaStorage {
     const object = await this.client.send(new GetObjectCommand({Bucket:this.bucket,Key:key}));
     if (!(object.Body instanceof Readable) || !object.ContentLength) throw new Error('Stored video is empty or unreadable');
     return {body:object.Body,size:object.ContentLength};
+  }
+
+  async openVideoRange(key:string,offset:number):Promise<Readable> {
+    this.checkKey(key);
+    if(!Number.isSafeInteger(offset)||offset<0)throw new Error('Invalid media offset');
+    const object=await this.client.send(new GetObjectCommand({Bucket:this.bucket,Key:key,Range:`bytes=${offset}-`}));
+    if(!(object.Body instanceof Readable) || !object.ContentRange?.startsWith(`bytes ${offset}-`))throw new Error('Stored video range is unavailable');
+    return object.Body;
   }
 
   async removeProbe(key: string): Promise<void> {

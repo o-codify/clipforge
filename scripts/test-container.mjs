@@ -41,6 +41,11 @@ try {
   }
   assert.equal((await fetch(origin + "/api/clips")).status, 401);
   assert.equal((await fetch(origin + "/api/platforms")).status, 401);
+  const html=await (await fetch(origin+'/login')).text();
+  const assets=[...html.matchAll(/(?:src|href)="([^" ]*\/_next\/static\/[^" ]+)"/g)].map(m=>m[1].replaceAll('&amp;','&'));
+  assert(assets.length>0);
+  for(const path of assets)assert.equal((await fetch(origin+path)).status,200,path);
+  assert.equal((await fetch(origin+'/api/web-assets/%2e%2e%2f%2e%2e%2fetc%2fpasswd')).status,404);
   console.log("PASS: production UI, public pages, private API protection and fresh migrations");
   console.log(docker(["exec",app,"node","scripts/test-migration-upgrade.mjs"]));
   console.log(docker(["exec",app,"node","scripts/test-youtube-lifecycle.mjs"]));
@@ -75,6 +80,19 @@ try {
   await until(() => nextState().State.Health?.Status === "healthy", "rolling replacement ready while original stays online");
   assert.equal(nextExec(heartbeatState), "standby");
   assert.equal(execNode(heartbeatState), "online");
+  // Distinct release-only chunks: each instance must serve the other version's
+  // assets, even though they are absent from its own compiled .next directory.
+  const addAsset=(name,body)=>`import{writeFile}from'node:fs/promises';import{retainWebAssets}from'./scripts/web-assets.mjs';await writeFile('apps/web/.next/static/chunks/${name}.js',${JSON.stringify(body)});await retainWebAssets('apps/web/.next/static','/storage/data/web-assets')`;
+  execNode(addAsset('previous-release-only','window.previousRelease=true;'));
+  nextExec(addAsset('next-release-only','window.nextRelease=true;'));
+  for(const target of [inspect(),nextState()]) {
+    const url='http://127.0.0.1:'+target.NetworkSettings.Ports['3000/tcp'][0].HostPort;
+    for(const [name,body] of [['previous-release-only','window.previousRelease=true;'],['next-release-only','window.nextRelease=true;']]) {
+      const response=await fetch(url+'/_next/static/chunks/'+name+'.js');
+      assert.equal(response.status,200);assert.equal(await response.text(),body);
+    }
+  }
+  console.log('PASS: both rolling instances serve old and new release-only chunks');
   assert.equal(execNode(dbCode("const rows=await ctx.db.sql`select count(*) as n from pg_locks where locktype='advisory' and classid=0 and objid=740021 and objsubid=1 and granted`;console.log(rows[0].n)")), "1");
   // Docker can allocate a different ephemeral host port after restart.
   const activePort = inspect().NetworkSettings.Ports["3000/tcp"][0].HostPort;

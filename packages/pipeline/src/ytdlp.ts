@@ -10,9 +10,9 @@
  * десятки мегабайт против десятков гигабайт видео. Картинка нужна позже
  * и только под те куски, что пойдут в рендер.
  */
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, stat } from "node:fs/promises";
+import { mkdir, readdir, stat, rename, unlink } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { dirname, extname, join } from "node:path";
 
@@ -24,7 +24,7 @@ export interface YtDlpOptions {
 
 const base = (options: YtDlpOptions = {}): [string, string[]] => [
   options.command ?? "yt-dlp",
-  [...(options.args ?? []), "--no-update"],
+  [...(options.args ?? []), "--ignore-config", "--no-update"],
 ];
 
 export interface RunResult {
@@ -54,10 +54,12 @@ function run(
     createInterface({ input: child.stderr }).on("line", (line) => {
       const trimmed = line.trim();
       if (trimmed) tail.push(trimmed);
+      if (tail.length > 200) tail.shift();
     });
 
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      if(process.platform==='win32' && child.pid) execFile('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true},()=>{});
+      else child.kill("SIGKILL");
       reject(new Error(`таймаут yt-dlp (${timeoutMs} мс)`));
     }, timeoutMs);
 
@@ -263,36 +265,44 @@ export interface DownloadOptions extends YtDlpOptions {
   section?: [number, number];
 }
 
+// All callers in this process share the cap, including independent downloads.
+// The media role lease prevents another production worker on the same database.
+let downloadLane: Promise<unknown> = Promise.resolve();
+function serialDownload<T>(task:()=>Promise<T>):Promise<T> {
+  const next=downloadLane.then(task,task);
+  downloadLane=next.catch(()=>{});
+  return next;
+}
+function downloadArgs(options:DownloadOptions):string[] {
+  const kbps=options.rateLimitKbps ?? 40000;
+  if(!Number.isFinite(kbps)||kbps<=0)throw new Error('Invalid download rate');
+  return ['--limit-rate',String(Math.floor(Math.min(40000,kbps)*1000/8)),'-N','1',
+    '--downloader','m3u8:native','--abort-on-unavailable-fragments'];
+}
+
 /** Скачать аудиодорожку эфира в m4a. */
 export async function downloadAudio(
   video: string,
   target: string,
   options: DownloadOptions = {},
 ): Promise<string> {
+  return serialDownload(async()=>{
   const existing = await fileIfReady(target);
   if (existing) return existing;
 
   await mkdir(dirname(target), { recursive: true });
   const [command, args] = base(options);
-  const stem = target.replace(/\.[^.]+$/, "");
-
-  const extra: string[] = [];
-  if (options.section) {
-    const [from, to] = options.section;
-    extra.push("--download-sections", `*${from}-${to}`, "--force-keyframes-at-cuts");
-  }
+  const stem = target.replace(/\.[^.]+$/, options.section ? '.source' : '.pending');
 
   const result = await run(
     command,
     [
       ...args,
       "-f", "bestaudio",
-      "--limit-rate", String(Math.floor((options.rateLimitKbps ?? 40000) * 1000 / 8)),
-      "-N", "1",
+      ...downloadArgs(options),
       "--extract-audio", "--audio-format", "m4a",
       "-o", `${stem}.%(ext)s`,
       "--newline",
-      ...extra,
       vodUrl(video),
     ],
     (line) => {
@@ -302,11 +312,23 @@ export async function downloadAudio(
     },
   );
 
-  const found = await findDownloaded(target, [".m4a", ".mp4", ".webm", ".opus", ".aac"]);
-  if (!found) {
+  const found = await findDownloaded(`${stem}.m4a`, [".m4a", ".mp4", ".webm", ".opus", ".aac"]);
+  if (result.code!==0 || !found || !(await fileIfReady(found))) {
+    if(found)await unlink(found);
     throw new Error(`не удалось скачать аудио ${video}:\n${result.lines.slice(-5).join("\n")}`);
   }
-  return found;
+  if(options.section) {
+    // yt-dlp sections invoke ffmpeg, which does not enforce --limit-rate.
+    // Download audio with the native limiter first, then trim locally.
+    const [from,to]=options.section;
+    if(!Number.isFinite(from)||!Number.isFinite(to)||from<0||to<=from)throw new Error('Invalid audio section');
+    const pending=target.replace(/\.[^.]+$/,'.pending.m4a');
+    const trimmed=await run('ffmpeg',['-v','error','-y','-ss',String(from),'-i',found,'-t',String(to-from),'-vn','-c:a','aac',pending]);
+    if(trimmed.code!==0)throw new Error('Audio section conversion failed');
+    await rename(pending,target);
+  } else await rename(found,target);
+  return target;
+  });
 }
 
 /**
@@ -323,11 +345,13 @@ export async function downloadVideo(
   _concurrentFragments = 1,
   options: DownloadOptions = {},
 ): Promise<string> {
+  return serialDownload(async()=>{
   const existing = await fileIfReady(target);
   if (existing) return existing;
 
   await mkdir(dirname(target), { recursive: true });
   const [command, args] = base(options);
+  const pending=target.replace(/\.[^.]+$/,'.pending')+extname(target);
 
   const result = await run(
     command,
@@ -335,9 +359,8 @@ export async function downloadVideo(
       ...args,
       "-f", format,
       // Один фрагмент за раз: лимит скорости не умножается числом соединений.
-      "-N", "1",
-      "--limit-rate", String(Math.floor((options.rateLimitKbps ?? 40000) * 1000 / 8)),
-      "-o", target,
+      ...downloadArgs(options),
+      "-o", pending,
       "--newline",
       vodUrl(video),
     ],
@@ -348,13 +371,16 @@ export async function downloadVideo(
     },
   );
 
-  const found = await findDownloaded(target, [".mp4", ".mkv", ".ts", ".webm"]);
-  if (!found) {
+  const found = await findDownloaded(pending, [".mp4", ".mkv", ".ts", ".webm"]);
+  if (result.code!==0 || !found || !(await fileIfReady(found))) {
+    if(found)await unlink(found);
     throw new Error(
       `не удалось скачать видео ${video} в формате ${format}:\n${result.lines.slice(-5).join("\n")}`,
     );
   }
-  return found;
+  await rename(found,target);
+  return target;
+  });
 }
 
 /** Файл уже скачан и не пуст? */

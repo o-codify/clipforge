@@ -33,6 +33,8 @@ jobs:
         env:
           RELEASE_SHA: ${{ github.sha }}
         run: docker build --target server --build-arg "RELEASE_SHA=$RELEASE_SHA" -t clipforge:ci .
+      - name: Verify retained deployment assets
+        run: node --test scripts/test-web-assets.mjs
       - name: Verify startup, persistence and recovery
         run: node scripts/test-container.mjs clipforge:ci
       - name: Publish tested image
@@ -86,6 +88,8 @@ jobs:
         run: pnpm exec turbo run build --filter=@clipforge/worker...
       - name: Verify streamed publication transport without uploading to YouTube
         run: node --test packages/youtube/test/source.test.mjs
+      - name: Verify download cap and partial-file recovery
+        run: node --experimental-strip-types --test packages/pipeline/test/download-recovery.test.ts
       - name: Package portable media runtime
         run: node scripts/package-media.mjs
       - name: Verify portable bundle and queue isolation

@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { uploadVideo, refreshAccessToken, YoutubeAccessRevokedError, revokeToken, validateVideoMetadata } from '../dist/index.js';
 
+test('recovers a completed upload after its response was lost, without sending bytes twice',async()=>{
+  const original=globalThis.fetch;
+  const body=Readable.from([Buffer.from('abc')]);let calls=0;
+  globalThis.fetch=async(url,init)=>{
+    calls++;assert.equal(init.method,'PUT');assert.equal(init.headers['content-range'],'bytes */3');
+    return Response.json({id:'already-uploaded'});
+  };
+  try {
+    const result=await uploadVideo('token',{source:{body,size:3},session:{url:'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test',size:3},title:'Test',description:'',tags:[],privacy:'private'});
+    assert.equal(result,'already-uploaded');assert.equal(calls,1);assert(body.destroyed);
+  }finally{globalThis.fetch=original;}
+});
+
 test('uploads a private S3 stream with its byte length and closes it on failure', async () => {
   const fetchOriginal=globalThis.fetch;
   const bytes=Buffer.from('prepared-video-content');
@@ -11,7 +24,7 @@ test('uploads a private S3 stream with its byte length and closes it on failure'
   let requests=0;
   globalThis.fetch=async (url,init)=>{
     requests++;
-    if(requests===1){assert.equal(init.headers['x-upload-content-length'],String(bytes.length));return new Response('',{status:200,headers:{location:'https://www.googleapis.com/test-session'}});}
+    if(requests===1){assert.equal(init.headers['x-upload-content-length'],String(bytes.length));return new Response('',{status:200,headers:{location:'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test'}});}
     assert.equal(init.headers['content-length'],String(bytes.length));
     assert.deepEqual(Buffer.from(await new Response(init.body).arrayBuffer()),bytes);
     return Response.json({id:'test-only-id'});
@@ -32,7 +45,7 @@ test('preserves complete uploader metadata and rejects invalid input before send
   let calls=0;
   globalThis.fetch=async(url,init)=>{
     calls++;
-    if(calls===1){const payload=JSON.parse(init.body);assert.equal(payload.snippet.title,metadata.title);assert.equal(payload.snippet.description,metadata.description);assert.equal(payload.status.privacyStatus,'unlisted');return new Response('',{headers:{location:'https://www.googleapis.com/test-session'}});}
+    if(calls===1){const payload=JSON.parse(init.body);assert.equal(payload.snippet.title,metadata.title);assert.equal(payload.snippet.description,metadata.description);assert.equal(payload.status.privacyStatus,'unlisted');return new Response('',{headers:{location:'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test'}});}
     await new Response(init.body).arrayBuffer();return Response.json({id:'test-id'});
   };
   try{
