@@ -352,6 +352,11 @@ export async function downloadVideo(
   await mkdir(dirname(target), { recursive: true });
   const [command, args] = base(options);
   const pending=target.replace(/\.[^.]+$/,'.pending')+extname(target);
+  // Preserve native HLS checkpoints from the previous downloader layout.
+  if(!existsSync(`${pending}.part`) && existsSync(`${target}.part`)) {
+    await rename(`${target}.part`,`${pending}.part`);
+    if(existsSync(`${target}.ytdl`))await rename(`${target}.ytdl`,`${pending}.ytdl`);
+  }
 
   const result = await run(
     command,

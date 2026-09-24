@@ -4,10 +4,12 @@ import { parseEnv } from 'node:util';
 import { readFile, mkdir, appendFile } from 'node:fs/promises';
 import { createServer, createConnection } from 'node:net';
 import { resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const home=resolve(process.argv[2] || process.env.CLIPFORGE_MEDIA_HOME || '.media-runtime');
 const config=parseEnv(await readFile(join(home,'.env'),'utf8'));
 const exec=promisify(execFile);
+const treeStop=fileURLToPath(new URL('./stop-media-tree.ps1',import.meta.url));
 const ssh=process.platform==='win32'?'C:/Windows/System32/OpenSSH/ssh.exe':'ssh';
 const sshArgs=['-F',config.SSH_CONFIG,'-o','BatchMode=yes','-o','ConnectTimeout=15'];
 if(!/^[a-zA-Z0-9_-]+$/.test(config.POSTGRES_CONTAINER))throw Error('Invalid PostgreSQL container name');
@@ -42,7 +44,7 @@ async function terminate(child){
   await Promise.race([done,sleep(40000)]);
  }
  // Python/ffmpeg must never be orphaned, including after an abrupt Node exit.
- if(process.platform==='win32')await exec('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true}).catch(()=>{});
+ if(process.platform==='win32')await exec('powershell.exe',['-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',treeStop,'-ParentProcess',String(child.pid),'-StartedMilliseconds',String(child.startedAt)],{windowsHide:true,timeout:15000}).catch(()=>{});
  else {try{process.kill(-child.pid,'SIGKILL');}catch{}}
 }
 async function portReady(){
@@ -54,15 +56,17 @@ async function portReady(){
  return false;
 }
 while(!stopping){
- let tunnel,worker,watch,healthWatch;
+ let tunnel,worker,watch,healthWatch,replaced=false;
  try{
   const current=JSON.parse(await readFile(join(home,'current.json'),'utf8'));
   const {stdout}=await exec(ssh,[...sshArgs,config.SSH_HOST,`docker inspect ${config.POSTGRES_CONTAINER} --format '{{(index .NetworkSettings.Networks "coolify").IPAddress}}'`],{windowsHide:true,timeout:20000});
   const ip=stdout.trim();if(!/^\d+\.\d+\.\d+\.\d+$/.test(ip))throw Error('Database network address unavailable');
   tunnel=spawn(ssh,[...sshArgs,'-N','-T','-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3','-L',`127.0.0.1:${port}:${ip}:5432`,config.SSH_HOST],{windowsHide:true,stdio:['ignore','ignore','pipe']});
+  tunnel.startedAt=Date.now();
   const tunnelExit=exited(tunnel);tunnel.stderr.on('data',buf=>log(`SSH: ${buf.toString().trim()}`));
   if(!await portReady())throw Error('Database tunnel did not become ready');
   worker=spawn(process.execPath,[current.entry || 'apps/worker/dist/main.js'],{cwd:current.path,env:{...process.env,...config,WORKER_ROLE:'media'},windowsHide:true,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe','ipc']});
+  worker.startedAt=Date.now();
   worker.stdout.on('data',buf=>log(buf.toString().trim()));worker.stderr.on('data',buf=>log(buf.toString().trim()));
   log(`Media worker started, release ${current.release}`);
   let lastHeartbeat=Date.now(),hasHeartbeat=false;
@@ -71,12 +75,13 @@ while(!stopping){
    if(Date.now()-lastHeartbeat>(hasHeartbeat?60_000:180_000))resolveHealth('worker heartbeat timed out');
   },5000);});
   const update=new Promise(resolveUpdate=>{watch=setInterval(async()=>{
-   try{const next=JSON.parse(await readFile(join(home,'current.json'),'utf8'));if(next.release!==current.release)resolveUpdate();}catch{log('Could not inspect pending worker release');}
+   try{const next=JSON.parse(await readFile(join(home,'current.json'),'utf8'));if(next.release!==current.release){replaced=true;resolveUpdate();}}catch{log('Could not inspect pending worker release');}
   },15000);});
   const reason=await Promise.race([exited(worker).then(code=>`worker exited (${code})`),tunnelExit.then(()=> 'database tunnel closed'),update.then(()=> 'prepared release changed'),stopRequested.then(()=> 'stop requested'),unhealthy]);
   log(`Restart boundary: ${reason}`);
  }catch(error){log(`Supervisor: ${error.message}`);}
  finally{clearInterval(watch);clearInterval(healthWatch);await terminate(worker);await terminate(tunnel);}
+ if(replaced){stopping=true;process.exitCode=75;}
  if(!stopping)await Promise.race([sleep(10000),stopRequested]);
 }
 guard.close();
