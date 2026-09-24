@@ -14,6 +14,7 @@ import { Button, Pill } from "@/components/ui";
 import { api, hhmm, PUB_STATE, size, TRIGGERS, type ClipRow, type Viewer } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { PublishForm } from "./PublishForm";
+import { displayTranscript } from "@clipforge/contracts/text";
 
 interface ClipDetail extends ClipRow {
   publications: {
@@ -110,7 +111,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
               <div className="name">
                 {TRIGGERS[clip.trigger ?? ""] ?? clip.trigger} · {hhmm(clip.start)}
               </div>
-              <div className="txt">{clip.text || "—"}</div>
+              <div className="txt">{clip.text ? displayTranscript(clip.text) : "—"}</div>
             </div>
           </button>
         ))}
@@ -157,7 +158,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                   ))}
                 </div>
                 </details>}
-                <p style={{ marginTop: 12 }}>{open.text}</p>
+                <p style={{ marginTop: 12 }}>{open.text ? displayTranscript(open.text) : ""}</p>
 
                 <h2>Публикации</h2>
                 {open.publications.length === 0 ? (

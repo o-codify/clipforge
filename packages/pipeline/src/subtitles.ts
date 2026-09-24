@@ -25,7 +25,7 @@
  * Штатный караоке-тег ASS (\k) не подошёл: он закрашивает всё уже
  * сказанное, а выделить нужно ровно одно текущее слово.
  */
-import { isProfane, mask } from "./profanity.js";
+import { maskProfanity } from "@clipforge/contracts/text";
 import type { Transcript, TranscriptWord } from "./transcript.js";
 import { allWords } from "./transcript.js";
 import {
@@ -259,10 +259,10 @@ function phraseText(
   words.forEach((word, i) => {
     let text = clean(word.text);
     if (!text) return;
-    if (style.censor && isProfane(text)) {
+    if (style.censor) {
       // Первая буква остаётся: полностью скрытое слово читается как
       // ошибка распознавания, а не как цензура.
-      text = mask(text);
+      text = maskProfanity(text);
     }
     chunks.push(
       active !== null && i === active

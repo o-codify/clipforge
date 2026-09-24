@@ -90,6 +90,8 @@ jobs:
         run: node --test packages/youtube/test/source.test.mjs
       - name: Verify download cap and partial-file recovery
         run: node --experimental-strip-types --test packages/pipeline/test/download-recovery.test.ts
+      - name: Verify transcript typography and subtitle masking
+        run: node --experimental-strip-types --test packages/pipeline/test/text.test.ts packages/pipeline/test/subtitles.test.ts packages/pipeline/test/port.test.ts
       - name: Verify bounded speech windows and interrupted recognition
         run: PYTHONPATH=workers/python python3 -m unittest discover -s workers/python/tests -p test_resource_windows.py
       - name: Package portable media runtime

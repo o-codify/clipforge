@@ -2,6 +2,41 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { uploadVideo, refreshAccessToken, YoutubeAccessRevokedError, revokeToken, validateVideoMetadata } from '../dist/index.js';
+import { suggestVideoMetadata, descriptionHashtags, videoTags, prepareVideoMetadata } from '../dist/index.js';
+
+test('publication copy contains only source facts and exact topic tags, never a transcript or trigger',()=>{
+  const metadata=suggestVideoMetadata({displayName:'Recrent',login:'recrent',gameTitle:'PUBG: BATTLEGROUNDS',vodId:'v2881047555',start:7220.7,text:'Пинг -то меньше, но какая нахуй разница',trigger:'combat'});
+  assert.equal(metadata.title,'Recrent | PUBG: BATTLEGROUNDS #PUBG #recrent');
+  assert.equal(metadata.description,'#PUBG #Пабг #recrent #Twitch #Shorts\n\nСтример: Recrent\nИгра: PUBG: BATTLEGROUNDS\nTwitch: https://twitch.tv/recrent');
+  assert.doesNotMatch(JSON.stringify(metadata),/Пинг|нахуй|Бой|combat|Громк|Источник|twitch\.tv\/videos\/|2881047555/);
+  assert.deepEqual(videoTags('just_ns','Dota 2'),['Dota2','Дота2','Dota','Дота','just_ns','Twitch','Shorts']);
+  assert.deepEqual(descriptionHashtags('just_ns',null),['#just_ns','#Twitch','#Shorts']);
+  assert.deepEqual(descriptionHashtags('just_ns','Без категории'),descriptionHashtags('just_ns',null));
+  for (const gameTitle of ['PUBG: BATTLEGROUNDS','Dota 2','Counter-Strike 2','x'.repeat(150),null]) {
+    validateVideoMetadata(suggestVideoMetadata({displayName:'Стример',login:'streamer',gameTitle}));
+  }
+});
+
+test('edited metadata uses subtitle masking without breaking links or paragraphs',()=>{
+  const clean=prepareVideoMetadata({title:'Пинг -то меньше , нахуй!',description:'Блядь!\n\nTwitch: https://twitch.tv/streamer',privacy:'private'});
+  assert.equal(clean.title,'Пинг-то меньше, н****!');
+  assert.equal(clean.description,'Б****!\n\nTwitch: https://twitch.tv/streamer');
+  assert.deepEqual(prepareVideoMetadata(clean),clean);
+});
+
+test('upload boundary masks profanity even when bypassing the draft API',async()=>{
+  const original=globalThis.fetch;let metadata;
+  globalThis.fetch=async(url,init)=>{
+    if(init.method==='POST') {metadata=JSON.parse(init.body);return new Response('',{headers:{location:'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test'}});}
+    await new Response(init.body).arrayBuffer();return Response.json({id:'test-id'});
+  };
+  try {
+    await uploadVideo('token',{source:{body:Readable.from([Buffer.from('x')]),size:1},title:'Пинг -то, блядь',description:'',tags:[],privacy:'private'});
+    assert.equal(metadata.snippet.title,'Пинг-то, б****');
+    assert.equal(metadata.status.selfDeclaredMadeForKids,false);
+    assert.equal(metadata.contentDetails,undefined);
+  }finally{globalThis.fetch=original;}
+});
 
 test('recovers a completed upload after its response was lost, without sending bytes twice',async()=>{
   const original=globalThis.fetch;

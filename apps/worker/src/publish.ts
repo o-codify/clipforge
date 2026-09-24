@@ -16,7 +16,7 @@ import {
   clips, games, platformAccounts, publications, runs, streamers, type Database,
 } from "@clipforge/db";
 import type { PayloadOf, QUEUES } from "@clipforge/jobs";
-import { refreshAccessToken, uploadVideo, videoStatus, suggestVideoMetadata, validateVideoMetadata, UploadSessionExpiredError } from "@clipforge/youtube";
+import { refreshAccessToken, uploadVideo, videoStatus, suggestVideoMetadata, prepareVideoMetadata, videoTags, validateVideoMetadata, UploadSessionExpiredError } from "@clipforge/youtube";
 
 import type { Context } from "./context.js";
 import type { JobReport } from "./handlers.js";
@@ -43,8 +43,6 @@ export async function publishClip(
       file: clips.file,
       storage: clips.mediaStorage,
       outDir: runs.outDir,
-      text: clips.text,
-      trigger: clips.trigger,
       state: clips.state,
       archivedAt: clips.archivedAt,
       login: clips.streamer,
@@ -83,17 +81,15 @@ export async function publishClip(
   if (!refreshToken || account.disconnectRequestedAt) throw new Error("YouTube не подключён");
 
   const suggestion = suggestVideoMetadata({
-    text: row.text,
-    trigger: row.trigger,
     displayName: row.displayName ?? row.login,
     login: row.login,
     gameTitle: row.gameTitle,
   });
-  const metadata = {
+  const metadata = prepareVideoMetadata({
     title: row.publication.title ?? suggestion.title,
     description: row.publication.caption ?? suggestion.description,
     privacy: (row.publication.privacy ?? (process.env.YOUTUBE_PRIVACY === "public" ? "public" : process.env.YOUTUBE_PRIVACY === "unlisted" ? "unlisted" : "private")) as "private"|"unlisted"|"public",
-  };
+  });
   validateVideoMetadata(metadata);
   const { title } = metadata;
   report.log(`«${title}» -> ${account.label}`);
@@ -117,7 +113,7 @@ export async function publishClip(
         await ctx.db.execute(sql`insert into youtube_upload_sessions(publication_id,url,size) values(${row.publication.id},${session.url},${session.size})`);
       },
       ...metadata,
-      tags: [row.login, row.gameTitle ?? "", "twitch", "shorts"].filter(Boolean),
+      tags: videoTags(row.login, row.gameTitle),
     });
 
     const url = `https://www.youtube.com/shorts/${videoId}`;

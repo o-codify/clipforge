@@ -19,7 +19,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
-import { validateVideoMetadata } from "./metadata.js";
+import { prepareVideoMetadata, validateVideoMetadata } from "./metadata.js";
 export * from "./metadata.js";
 
 const OAUTH_BASE = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -165,6 +165,7 @@ export async function uploadVideo(
   accessToken: string,
   options: UploadOptions,
 ): Promise<string> {
+  options = prepareVideoMetadata(options);
   if ((!options.file && !options.source) || (options.file && options.source)) throw new Error('Exactly one video source is required');
   const size = options.source?.size ?? (await stat(options.file!)).size;
   let body = options.source?.body ?? createReadStream(options.file!);

@@ -13,6 +13,7 @@ import { smooth } from "./signals.js";
 import type { Signals } from "./signals.js";
 import type { Transcript, TranscriptWord } from "./transcript.js";
 import { allWords } from "./transcript.js";
+import { normalizeRussianText } from "@clipforge/contracts/text";
 
 /**
  * Слова-маркеры. Вес - насколько сильно слово намекает на интересный
@@ -608,10 +609,10 @@ export function textBetween(
   start: number,
   end: number,
 ): string {
-  return words
+  return normalizeRussianText(words
     .filter((w) => start <= w.start && w.start <= end)
     .map((w) => w.text)
-    .join(" ");
+    .join(" "));
 }
 
 export interface DetectOptions extends SnapOptions {

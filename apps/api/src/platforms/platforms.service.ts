@@ -18,7 +18,7 @@ import {
   exchangeCode,
   myChannel,
   refreshAccessToken,
-  suggestVideoMetadata, validateVideoMetadata, type VideoMetadata,
+  suggestVideoMetadata, validateVideoMetadata, prepareVideoMetadata, type VideoMetadata,
   revokeToken, YoutubeAccessRevokedError,
   type YoutubeApp,
 } from "@clipforge/youtube";
@@ -155,7 +155,7 @@ export class PlatformsService {
    * (клип, площадка, аккаунт) одно место.
    */
   async preview(clipId: string) {
-    const [clip] = await this.db.select({ text:clips.text, trigger:clips.trigger, login:clips.streamer,
+    const [clip] = await this.db.select({ login:clips.streamer,
       displayName:streamers.displayName, gameTitle:games.title })
       .from(clips).innerJoin(streamers,eq(clips.streamer,streamers.login)).leftJoin(games,eq(clips.game,games.slug))
       .where(and(eq(clips.id,clipId),eq(clips.state,"ready"),sql`${clips.archivedAt} is null`));
@@ -165,6 +165,7 @@ export class PlatformsService {
   }
 
   async publish(clipId: string, metadata: VideoMetadata & {accountId:string}): Promise<{ publicationId: string }> {
+    metadata = prepareVideoMetadata(metadata);
     try { validateVideoMetadata(metadata); } catch(error) { throw new BadRequestException((error as Error).message); }
     const [clip] = await this.db
       .select({ id: clips.id, state: clips.state, archivedAt: clips.archivedAt })

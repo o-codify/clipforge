@@ -4,6 +4,7 @@ import Link from "next/link";
 import { api, type PlatformAccount } from "@/lib/api";
 import { Button } from "./ui";
 import { Select } from "./Select";
+import { displayTranscript } from "@clipforge/contracts/text";
 
 interface Draft { title:string; description:string; privacy:"private"|"unlisted"|"public"; accounts:PlatformAccount[] }
 
@@ -33,11 +34,11 @@ export function PublishForm({clipId,onDone,onCancel}:{clipId:string;onDone:()=>v
       <div className="publish-field"><span>Канал</span><Select label="Канал YouTube" value={accountId} onValueChange={setAccountId} disabled={busy}
         options={draft.accounts.map(account=>({value:account.id,label:account.label}))}/></div>
       <label className="publish-field">Название
-        <input className="field" value={draft.title} required disabled={busy} onChange={event=>setDraft({...draft,title:event.target.value})}/>
+        <input className="field" value={draft.title} required disabled={busy} onChange={event=>setDraft({...draft,title:event.target.value})} onBlur={()=>setDraft({...draft,title:displayTranscript(draft.title)})}/>
         <small>{[...draft.title].length} / 100 символов</small>
       </label>
       <label className="publish-field">Описание
-        <textarea className="field" rows={5} value={draft.description} disabled={busy} onChange={event=>setDraft({...draft,description:event.target.value})}/>
+        <textarea className="field" rows={5} value={draft.description} disabled={busy} onChange={event=>setDraft({...draft,description:event.target.value})} onBlur={()=>setDraft({...draft,description:draft.description.split(/\r?\n/).map(displayTranscript).join("\n")})}/>
       </label>
       <div className="publish-field"><span>Видимость</span><Select<Draft["privacy"]> label="Видимость видео" value={draft.privacy} onValueChange={privacy=>setDraft({...draft,privacy})} disabled={busy}
         options={[{value:"private",label:"Приватно"},{value:"unlisted",label:"По ссылке"},{value:"public",label:"Публично"}]}/></div>

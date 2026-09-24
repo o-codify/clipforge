@@ -6,6 +6,7 @@
  * плоский список слов, куски по времени, доля речи.
  */
 import type { TranscribeResult } from "@clipforge/contracts";
+import { normalizeRussianText } from "@clipforge/contracts/text";
 
 export interface TranscriptWord {
   start: number;
@@ -32,14 +33,33 @@ export const fromWorker = (result: TranscribeResult): Transcript => ({
   segments: result.segments.map((s) => ({
     start: s.start,
     end: s.end,
-    text: s.text,
-    words: s.words.map((w) => ({ start: w.start, end: w.end, text: w.text })),
+    text: normalizeRussianText(s.text),
+    words: normalizeTranscriptWords(s.words),
   })),
 });
 
 /** Плоский список слов. Считается один раз и передаётся дальше. */
 export const allWords = (transcript: Transcript): TranscriptWord[] =>
-  transcript.segments.flatMap((s) => s.words);
+  normalizeTranscriptWords(transcript.segments.flatMap((s) => s.words));
+
+/** Join detached ASR suffixes before wrapping/highlighting, preserving their time span. */
+export function normalizeTranscriptWords(words: readonly TranscriptWord[]): TranscriptWord[] {
+  const result: TranscriptWord[] = [];
+  for (const source of words) {
+    const word = {...source, text: normalizeRussianText(source.text)};
+    if (!word.text) continue;
+    const previous = result.at(-1);
+    if (previous && word.start - previous.end <= 0.3 && (
+      (/[\p{L}\p{N}]$/u.test(previous.text) && /^-(?:то|либо|нибудь|ка|таки)(?:[,.!?…])?$/iu.test(word.text)) ||
+      (/[\p{L}\p{N}]-$/u.test(previous.text) && /^(?:то|либо|нибудь|ка|таки)(?:[,.!?…])?$/iu.test(word.text)) ||
+      /^[,.;:!?…»)]+$/u.test(word.text)
+    )) {
+      previous.text += word.text;
+      previous.end = Math.max(previous.end, word.end);
+    } else result.push(word);
+  }
+  return result;
+}
 
 /** Сколько секунд из записи вообще занята речь. */
 export const speechSeconds = (transcript: Transcript): number =>

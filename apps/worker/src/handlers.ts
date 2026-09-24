@@ -595,6 +595,7 @@ export async function renderRun(
   const { version, parts: versionParts } = fingerprint({
     cameraPolicy: "per-clip-roi-v6-verified-window",
     layoutPolicy: "fixed-crop-minimap-v1",
+    subtitleTextPolicy: "ru-spacing-and-shared-masking-v1",
     grid, subtitles: style, header, outro,
     render: { crf: 20, preset: "veryfast", fps: 30, audioBitrate: "160k" },
     censor: { enabled: true, audio: "off", maskSubtitles: true },

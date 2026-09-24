@@ -11,7 +11,10 @@
  * python-версии, эталон о нём не знает. Само поведение проверяется
  * отдельным тестом ниже.
  *
- * Осознанных расхождений два. Первое - время конца строк концовки:
+ * Исправленные дефисы в ASR меняют разбиение и подсветку слов.
+ * Для двух затронутых записей сохранены отдельные ASS-эталоны.
+ *
+ * Других осознанных расхождений два. Первое - время конца строк концовки:
  * поколение рендера 2 держит их до последнего кадра, а python обрывал
  * ровно на расчётной длительности, из-за чего последние кадры оставались
  * с одним логотипом. Конец Outro-событий поэтому не сравнивается.
@@ -106,7 +109,10 @@ describe("субтитры", () => {
           want.transcript, want.start, want.end, 1080, 1920,
           { style, header, outro, assets },
         ).split("\n");
-        const theirs = want.ass.split("\n");
+        const corrected = ({ "с речью": "speech", "длинный клип": "long" } as Record<string, string>)[name];
+        const theirs = (corrected
+          ? readFileSync(new URL(`./fixtures/${corrected}.normalized.ass`, import.meta.url), "utf8")
+          : want.ass).split("\n");
 
         assert.equal(mine.length, theirs.length, "число строк");
 
