@@ -13,7 +13,7 @@ const secret = randomBytes(24).toString("base64url");
 function docker(args, optional = false) {
   const result = spawnSync("docker", args, { encoding: "utf8", timeout: 180_000, windowsHide: true });
   if (result.status !== 0 && !optional) throw new Error(`Docker ${args[0]} failed: ${result.stderr || "process failed"}`);
-  return result.stdout?.trim() ?? "";
+  return args[0]==='logs' ? `${result.stdout??''}\n${result.stderr??''}`.trim() : result.stdout?.trim() ?? "";
 }
 async function until(fn, label, timeout = 180_000) {
   const end = Date.now() + timeout;

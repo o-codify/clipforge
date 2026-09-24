@@ -11,8 +11,8 @@ export class WebAssetsController {
   constructor(@Inject(CONFIG) private readonly config: ApiConfig) {}
 
   @Public()
-  @Get('*path')
-  async asset(@Param('path') path: string, @Res() reply: FastifyReply): Promise<void> {
+  @Get('*')
+  async asset(@Param('*') path: string, @Res() reply: FastifyReply): Promise<void> {
     const root=resolve(this.config.data,'web-assets');
     const file=await realpath(resolve(root,path)).catch(()=>null);
     const part=file && relative(root,file);
