@@ -2,11 +2,20 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+
+async function* pacedFile(file:string,bytesPerSecond:number) {
+  for await(const chunk of createReadStream(file,{highWaterMark:64*1024})) {
+    // Delay every block, including the first: no uncapped initial burst.
+    await delay(Math.ceil(chunk.length*1000/bytesPerSecond));
+    yield chunk;
+  }
+}
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export class MediaStorage {
-  constructor(readonly client: S3Client, readonly bucket: string, readonly prefix: string) {}
+  constructor(readonly client: S3Client, readonly bucket: string, readonly prefix: string, readonly bytesPerSecond=0) {}
 
   key(clipId: string, asset: "video.mp4" | "poster.jpg") {
     if (!/^[a-zA-Z0-9._-]+$/.test(clipId)) throw new Error("Invalid clip ID");
@@ -30,7 +39,9 @@ export class MediaStorage {
     });
     if(existing?.ContentLength===size && existing.Metadata?.sha256===sha256)return;
     await this.client.send(new PutObjectCommand({
-      Bucket: this.bucket, Key: key, Body: createReadStream(file), ContentLength: size, ContentType: contentType,
+      Bucket: this.bucket, Key: key,
+      Body: this.bytesPerSecond ? Readable.from(pacedFile(file,this.bytesPerSecond),{objectMode:false}) : createReadStream(file),
+      ContentLength: size, ContentType: contentType,
       Metadata:{sha256},
     }));
     const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
@@ -70,10 +81,12 @@ export function storageFromEnv(env: NodeJS.ProcessEnv = process.env): MediaStora
   if (new URL(endpoint).protocol !== "https:") throw new Error("S3_ENDPOINT must use HTTPS");
   const prefix = (env.S3_PREFIX || "clipforge").replace(/^\/+|\/+$/g, "");
   if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(prefix)) throw new Error("Invalid S3_PREFIX");
+  const kbps=Number(env.MEDIA_NETWORK_KBPS || (env.WORKER_ROLE==='media' ? 10000 : 0));
+  if(!Number.isFinite(kbps)||kbps<0||kbps>40000)throw new Error('Invalid MEDIA_NETWORK_KBPS');
   return new MediaStorage(new S3Client({
     endpoint, region: required("S3_REGION"), forcePathStyle: true,
     credentials: { accessKeyId: required("S3_ACCESS_KEY_ID"), secretAccessKey: required("S3_SECRET_ACCESS_KEY") },
     requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED",
     maxAttempts: 3,
-  }), required("S3_BUCKET"), prefix);
+  }), required("S3_BUCKET"), prefix, Math.floor(kbps*1000/8));
 }

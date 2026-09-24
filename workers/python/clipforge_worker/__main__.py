@@ -124,7 +124,7 @@ def op_transcribe(params: dict[str, Any], ctx: Context) -> dict[str, Any]:
         on_progress=lambda seconds: ctx.progress(f"распознано {seconds / 60:.1f} мин"),
         model_name=model_name,
         language=params.get("language", "ru"),
-        batch_size=int(params.get("batchSize", os.environ.get("SPEECH_BATCH_SIZE", "32"))),
+        batch_size=int(params.get("batchSize", os.environ.get("SPEECH_BATCH_SIZE", "1"))),
         beam_size=int(params.get("beamSize", 1)),
         glossary=list(params.get("glossary") or []),
     )

@@ -14,7 +14,8 @@ RUN pnpm build
 # dependency layer on every otherwise identical GitHub build.
 RUN CI=true pnpm install --prod --frozen-lockfile --ignore-scripts \
     && rm -f node_modules/.modules.yaml node_modules/.pnpm-workspace-state-v1.json \
-    && rm -rf apps/web/.next/cache
+    && rm -rf apps/web/.next/cache \
+    && find node_modules apps/api/node_modules apps/worker/node_modules apps/web/node_modules -exec touch -h -t 202001010000.00 {} +
 
 FROM node:22-bookworm-slim AS cpu-worker
 RUN apt-get update && apt-get install --no-install-recommends -y \

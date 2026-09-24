@@ -324,6 +324,7 @@ export async function fetchVod(
     report.log("аудио");
     const audio = await downloadAudio(row.id, workspace.audio, {
       ...ytdlp,
+      rateLimitKbps: ctx.config.mediaNetworkKbps,
       onProgress: onProgress("аудио"),
     });
 
@@ -336,7 +337,7 @@ export async function fetchVod(
         workspace.video(ctx.config.videoFormat),
         ctx.config.videoFormat,
         8,
-        { ...ytdlp, onProgress: onProgress("видео") },
+        { ...ytdlp, rateLimitKbps: ctx.config.mediaNetworkKbps, onProgress: onProgress("видео") },
       );
     }
 

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,12 +42,16 @@ def decode_audio(path: Path | str, sample_rate: int = SAMPLE_RATE) -> np.ndarray
         "-ac", "1", "-ar", str(sample_rate),
         "-",
     ]
-    proc = subprocess.run(cmd, capture_output=True, check=False)
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"ffmpeg не смог прочитать {path}: {proc.stderr.decode(errors='replace')[:300]}"
-        )
-    return np.frombuffer(proc.stdout, dtype=np.float32)
+    with tempfile.TemporaryDirectory(prefix="clipforge-audio-") as temporary:
+        decoded = Path(temporary) / "audio.f32"
+        cmd[-1] = str(decoded)
+        proc = subprocess.run(cmd, capture_output=True, check=False,
+                              creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg не смог прочитать {path}: {proc.stderr.decode(errors='replace')[:300]}"
+            )
+        return np.fromfile(decoded, dtype=np.float32)
 
 
 def rolling_baseline(values: np.ndarray, window_frames: int, percentile: float = 50.0) -> np.ndarray:
@@ -120,7 +125,11 @@ def _stft_magnitudes(samples: np.ndarray, hop: int) -> np.ndarray:
         writeable=False,
     )
     window = np.hanning(FFT_SIZE).astype(np.float32)
-    return np.abs(np.fft.rfft(frames * window, axis=1)).astype(np.float32)
+    result = np.empty((n_frames, FFT_SIZE // 2 + 1), dtype=np.float32)
+    for start in range(0, n_frames, 4096):
+        block = frames[start:start + 4096]
+        result[start:start + len(block)] = np.abs(np.fft.rfft(block * window, axis=1)).astype(np.float32)
+    return result
 
 
 def analyze(

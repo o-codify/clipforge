@@ -7,8 +7,8 @@
   3. темп речи - косвенный признак возбуждения;
   4. субтитры для будущего рендера.
 
-Модель тяжёлая (large-v3), потому что обработка идёт после стрима, когда
-игра закрыта и видеокарта свободна целиком. turbo быстрее втрое, но чаще
+Модель large-v3 работает короткими окнами и небольшими пакетами,
+чтобы фоновая обработка не занимала всю память ПК. turbo быстрее, но чаще
 срывается в петлю повторов на игровом звуке - на тестовом VOD выдал 210
 одинаковых слов подряд.
 
@@ -21,6 +21,9 @@ import json
 import logging
 import os
 import re
+import hashlib
+import subprocess
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -29,7 +32,7 @@ from clipforge_worker import cuda_setup  # noqa: F401  - регистрируе�
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "large-v3"
-DEFAULT_BATCH = 32
+DEFAULT_BATCH = 1
 
 
 @dataclass(slots=True)
@@ -155,7 +158,7 @@ def load_model(model_name: str = DEFAULT_MODEL):
     return BatchedInferencePipeline(model=model)
 
 
-def transcribe(
+def _transcribe_window(
     audio_path: Path | str,
     model_name: str = DEFAULT_MODEL,
     language: str = "ru",
@@ -222,3 +225,62 @@ def transcribe(
         segments=segments,
         dropped_loops=removed,
     )
+
+
+def transcribe(audio_path, model_name=DEFAULT_MODEL, language="ru", batch_size=DEFAULT_BATCH,
+               beam_size=1, glossary=None, on_progress=None, engine=None) -> Transcript:
+    """Decode bounded windows; checkpoint completed speech after every window."""
+    path = Path(audio_path)
+    window = int(os.environ.get("SPEECH_WINDOW_SECONDS", "300"))
+    if not 30 <= window <= 600:
+        raise ValueError("SPEECH_WINDOW_SECONDS must be between 30 and 600")
+    duration = float(subprocess.check_output([
+        "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path),
+    ], creationflags=0x08000000 if os.name == "nt" else 0, text=True).strip())
+    if engine is None:
+        engine = load_model(model_name)
+    signature = hashlib.sha256(json.dumps({
+        "version": 1, "size": path.stat().st_size, "mtime": path.stat().st_mtime_ns,
+        "model": model_name, "language": language, "batch": batch_size,
+        "beam": beam_size, "glossary": glossary, "window": window,
+        "compute": os.environ.get("SPEECH_COMPUTE_TYPE"),
+    }, sort_keys=True).encode()).hexdigest()
+    checkpoint = path.with_suffix(path.suffix + ".speech-checkpoint.json")
+    through, segments, removed = 0.0, [], 0
+    try:
+        saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+        if saved.get("signature") == signature and 0 <= saved["through"] <= duration:
+            cached = Transcript.load(checkpoint)
+            through, segments, removed = saved["through"], cached.segments, saved.get("dropped_loops", 0)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    if on_progress and through:
+        on_progress(through)
+    with tempfile.TemporaryDirectory(prefix="clipforge-speech-") as temporary:
+        chunk = Path(temporary) / "window.wav"
+        while through < duration:
+            end = min(duration, through + window)
+            offset = max(0.0, through - 2.0)
+            subprocess.run([
+                "ffmpeg", "-nostdin", "-v", "error", "-y", "-threads", "2",
+                "-ss", str(offset), "-i", str(path), "-t", str(min(duration, end + 2) - offset),
+                "-ac", "1", "-ar", "16000", str(chunk),
+            ], check=True, creationflags=0x08000000 if os.name == "nt" else 0)
+            result = _transcribe_window(chunk, model_name, language, batch_size, beam_size,
+                                        glossary, engine=engine)
+            for segment in result.segments:
+                words = [Word(max(0, w.start + offset), min(duration, w.end + offset), w.text)
+                         for w in segment.words if through <= (w.start + w.end) / 2 + offset < end]
+                if words:
+                    text = segment.text if len(words) == len(segment.words) else " ".join(w.text for w in words)
+                    segments.append(Segment(words[0].start, words[-1].end, text, words))
+            removed += result.dropped_loops
+            through = end
+            payload = {"signature": signature, "through": through, "language": language,
+                       "duration": duration, "segments": [asdict(s) for s in segments], "dropped_loops": removed}
+            partial = checkpoint.with_suffix(checkpoint.suffix + ".tmp")
+            partial.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            os.replace(partial, checkpoint)
+            if on_progress:
+                on_progress(through)
+    return Transcript(language, duration, segments, removed)

@@ -6,7 +6,6 @@
  * переменная, которой нет.
  */
 import { config as loadEnv } from "dotenv";
-import { cpus } from "node:os";
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +48,7 @@ export interface WorkerConfig {
   assets: string;
   models: string;
   videoFormat: string;
+  mediaNetworkKbps: number;
   /** Сколько клипов рендерить одновременно. */
   renderConcurrency: number;
   speechModel: string;
@@ -71,19 +71,11 @@ export function loadConfig(): WorkerConfig {
     assets: join(underRoot(process.env.ASSETS_ROOT ?? "assets"), "twitch"),
     models: underRoot(process.env.MODELS_ROOT ?? "models"),
     videoFormat: process.env.VIDEO_FORMAT ?? "720p60",
-    // Рендер - CPU-работа, и очередь по одному оставляла бы ядра
-    // простаивать. По умолчанию четверть логических ядер процессами:
-    // внутри каждого ffmpeg ещё свои потоки кодирования.
-    renderConcurrency: Math.max(
-      1,
-      Number(
-        process.env.RENDER_CONCURRENCY ??
-          Math.min(4, Math.floor(cpus().length / 4)),
-      ),
-    ),
+    mediaNetworkKbps: numberEnv(process.env, 'MEDIA_NETWORK_KBPS', 10000, 100, 40000),
+    renderConcurrency: Math.floor(numberEnv(process.env, 'RENDER_CONCURRENCY', 1, 1, 4)),
     speechModel: process.env.SPEECH_MODEL ?? "large-v3",
     speechLanguage: process.env.SPEECH_LANGUAGE ?? "ru",
-    speechBatchSize: Math.floor(numberEnv(process.env, "SPEECH_BATCH_SIZE", 32, 1, 64)),
+    speechBatchSize: Math.floor(numberEnv(process.env, "SPEECH_BATCH_SIZE", 1, 1, 64)),
     glossary: (process.env.SPEECH_GLOSSARY ?? "")
       .split("|")
       .map((s) => s.trim())
