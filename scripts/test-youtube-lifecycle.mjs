@@ -7,7 +7,12 @@ import {PlatformsService} from '../apps/api/dist/platforms/platforms.service.js'
 import {collectMetrics} from '../apps/worker/dist/metrics.js';
 import {publishClip} from '../apps/worker/dist/publish.js';
 import {pruneYoutubeData,forgetYoutubeAccount,youtubeDerivedMetricsAllowed,sanitizeRestoredYoutubeData} from '../packages/db/dist/index.js';
-assert.match(new URL(process.env.DATABASE_URL).hostname,/^clipforge-test-db-/,'Disposable CI database required');
+const databaseUrl=new URL(process.env.DATABASE_URL);
+assert.ok(/^clipforge-test-db-/.test(databaseUrl.hostname) ||
+  (process.env.CLIPFORGE_ISOLATED_LIFECYCLE==='1' && databaseUrl.hostname==='127.0.0.1' && databaseUrl.port==='55432' && /^\/clipforge_lifecycle_qa_[a-f0-9]{32}$/.test(databaseUrl.pathname)),
+  'Disposable test database required');
+const apiOrigin=process.env.TEST_API_ORIGIN??'http://127.0.0.1:8420';
+assert.equal(new URL(apiOrigin).hostname,'127.0.0.1');
 const ctx=createContext(),db=ctx.db;
 const prefix=`audit-test-${randomUUID()}`;
 const channel=`channel-${prefix}`,account=`account-${prefix}`,clip=`clip-${prefix}`;
@@ -15,11 +20,18 @@ const original=globalThis.fetch;
 let failure=null,revokeFailure=false,uploads=0,captured,interrupted=false;
 const queued=[];
 const app={clientId:'test-client',clientSecret:'test-secret'};
-const service=new PlatformsService(db,{youtube:app,apiOrigin:'http://localhost',webOrigin:'http://localhost'}, {enqueue:async(name,payload)=>queued.push(payload)});
+// Repeated requests repair a missing queue submission. Match the durable queue's
+// singleton behavior; the real coalescing is also exercised by platform-tools.isolated.
+const service=new PlatformsService(db,{youtube:app,apiOrigin:'http://localhost',webOrigin:'http://localhost'}, {enqueue:async(name,payload)=>{
+  let entry=queued.find(entry=>entry.name===name&&entry.payload.publicationId===payload.publicationId);
+  const created=!entry;
+  if(!entry){entry={id:randomUUID(),name,payload};queued.push(entry);}
+  return {id:entry.id,queued:created};
+}});
 const testCtx={...ctx,youtube:app,storage:{openVideo:async()=>({body:Readable.from([Buffer.from('video')]),size:5}),openVideoRange:async(key,offset)=>{assert.equal(offset,2);return Readable.from([Buffer.from('deo')]);}}};
 globalThis.fetch=async(url,init)=>{
   const address=String(url);
-  if(address.startsWith('http://127.0.0.1:8420/'))return original(url,init);
+  if(address.startsWith(apiOrigin+'/'))return original(url,init);
   if(address==='https://oauth2.googleapis.com/revoke')return revokeFailure?new Response('',{status:503}):new Response('');
   if(failure)return Response.json({error:failure},{status:failure==='invalid_grant'?400:503});
   if(address==='https://oauth2.googleapis.com/token')return Response.json({access_token:'test-access'});
@@ -56,8 +68,9 @@ try{
   const [published]=await db.sql`select privacy,status,title,caption from publications where id=${a.publicationId}`;
   assert.equal(published.title,captured.snippet.title);assert.equal(published.caption,captured.snippet.description);
   assert.equal(published.privacy,'private');assert.equal(published.status,'uploaded','Requested public is not proof of actual public visibility');
+  assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,1,'Upload records the initial analytics snapshot');
   await collectMetrics(testCtx);
-  assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,1);
+  assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,2,'Scheduled collection adds a subsequent snapshot');
   failure='unavailable';await collectMetrics(testCtx);
   assert.equal((await service.accounts()).length,1,'An outage must not erase consent');failure=null;
   await db.sql`insert into publication_metrics(id,publication_id,collected_at,views) values(${prefix},${a.publicationId},now()-interval '22 days',999),(${prefix+'-recent'},${a.publicationId},now()-interval '20 days',100)`;
@@ -68,12 +81,12 @@ try{
     const id=`${prefix}-${role}`,token=randomUUID();
     await db.sql`insert into accounts(id,login,password_hash,role,streamer) values(${id},${id},'test-only',${role},${prefix})`;
     await db.sql`insert into sessions(token,account_id,expires_at) values(${token},${id},now()+interval '10 minutes')`;
-    const request=path=>fetch(`http://127.0.0.1:8420${path}`,{headers:{cookie:`clipforge_session=${token}`}});
+    const request=path=>fetch(`${apiOrigin}${path}`,{headers:{cookie:`clipforge_session=${token}`}});
     const detail=await (await request(`/api/clips/${clip}`)).json();
     assert.equal('file' in detail,role==='admin');assert.equal('account' in detail.publications[0],role==='admin');
     const ops=await (await request('/api/operations')).json();assert.equal('runtime' in ops,role==='admin');
     assert.equal((await request(`/api/platforms/publish/${clip}`)).status,role==='admin'?200:403);
-    const denied=await fetch(`http://127.0.0.1:8420/api/platforms/publish/${clip}`,{method:'POST',headers:{cookie:`clipforge_session=${token}`,'content-type':'application/json'},body:'{}'});
+    const denied=await fetch(`${apiOrigin}/api/platforms/publish/${clip}`,{method:'POST',headers:{cookie:`clipforge_session=${token}`,'content-type':'application/json'},body:'{}'});
     assert.equal(denied.status,role==='admin'?400:403);
   }
   revokeFailure=true;assert.equal((await service.disconnect(account)).state,'pending');
