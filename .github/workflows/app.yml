@@ -34,7 +34,7 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
         run: docker build --target server --build-arg "RELEASE_SHA=$RELEASE_SHA" -t clipforge:ci .
       - name: Verify retained deployment assets
-        run: node --test scripts/test-web-assets.mjs
+        run: node --test scripts/test-web-assets.mjs scripts/test-readiness-policy.mjs
       - name: Verify startup, persistence and recovery
         run: node scripts/test-container.mjs clipforge:ci
       - name: Publish tested image
@@ -92,6 +92,8 @@ jobs:
         run: node --experimental-strip-types --test packages/pipeline/test/download-recovery.test.ts
       - name: Verify transcript typography and subtitle masking
         run: node --experimental-strip-types --test packages/pipeline/test/text.test.ts packages/pipeline/test/subtitles.test.ts packages/pipeline/test/port.test.ts
+      - name: Verify protection gates and pre-crop masking
+        run: node --experimental-strip-types --test packages/pipeline/test/protection.test.ts apps/worker/test/media-review.test.mjs apps/worker/test/render-options.test.mjs
       - name: Verify bounded speech windows and interrupted recognition
         run: PYTHONPATH=workers/python python3 -m unittest discover -s workers/python/tests -p test_resource_windows.py
       - name: Package portable media runtime

@@ -4,6 +4,10 @@ import "./globals.css";
 import "./design-system.css";
 import "@clipforge/assistant/styles.css";
 import "./workspace.css";
+import "./editorial.css";
+import "./site-frame.css";
+import "./workspace-components.css";
+import './media-cleanup.css';
 import { Shell } from "@/components/Shell";
 
 export const metadata: Metadata = {

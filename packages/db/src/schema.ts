@@ -56,6 +56,15 @@ export const platformRuntime = pgTable("platform_runtime", {
   value: jsonb("value").notNull().default({}),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+export const automationRuns = pgTable("automation_runs", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  state: text("state").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  output: jsonb("output"),
+}, t => [index("automation_runs_name_started_idx").on(t.name, t.startedAt)]);
+
 export const jobEvents = pgTable("job_events", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   jobId: uuid("job_id").notNull(),
@@ -191,6 +200,8 @@ export const streamers = pgTable(
      * и включаются они в разные моменты жизни канала.
      */
     autoPublish: boolean("auto_publish").notNull().default(false),
+    /** Default for existing and future VODs without their own audio override. */
+    audioMode: text("audio_mode").$type<"original" | "dtln">().notNull().default("original"),
     /** manual - завёл админ; discovery - нашла площадка. */
     source: text("source").notNull().default("manual"),
 
@@ -256,6 +267,9 @@ export const vods = pgTable(
     duration: doublePrecision("duration"),
     /** Главы VOD: во что играли и когда. На эфире игр может быть несколько. */
     chapters: jsonb("chapters").$type<VodChapter[]>().notNull().default([]),
+    /** null inherits the streamer's setting; original explicitly disables DTLN. */
+    audioMode: text("audio_mode").$type<"original" | "dtln" | null>(),
+    adProtection: jsonb("ad_protection").$type<Record<string, unknown> | null>(),
 
     state: vodState("state").notNull().default("known"),
     error: text("error"),

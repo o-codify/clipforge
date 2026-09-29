@@ -1,28 +1,39 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { PublicPage, publicStyles as s } from "@/components/PublicPage";
 
 export const metadata: Metadata = {
   title: "О платформе — ClipForge",
-  description: "ClipForge анализирует эфиры Twitch, находит интересные моменты и готовит короткие клипы для публикации.",
+  description: "Моменты игровых эфиров Twitch в коротких клипах с субтитрами.",
   alternates: { canonical: "https://clipforge.clanvelt.com/about" },
 };
 
+function Placeholder({ className = "" }: { className?: string }) {
+  return <div className={[s.placeholder, className].join(" ")} role="img" aria-label="Место для изображения">
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0 100 100M100 0 0 100"/></svg>
+    <span>Изображение</span>
+  </div>;
+}
+
 export default function AboutPage() {
   return <PublicPage current="/about">
-    <section className={s.hero}>
-      <p className={s.eyebrow}>Из эфира — в короткий клип</p>
-      <h1>У интересного момента<br />должно быть продолжение.</h1>
-      <p>Яркие реакции, неожиданные победы и запоминающиеся разговоры из эфиров Twitch. ClipForge находит интересные моменты и превращает их в короткие видео с субтитрами.</p>
-      <div className={s.actions}>
-        <Link href="/login" className={s.primary}>Войти в платформу <span aria-hidden="true">↗</span></Link>
-        <a href="mailto:admin@clanvelt.com" className={s.secondary}>Связаться</a>
-      </div>
-    </section>
-    <section className={s.steps} aria-label="Что есть в ClipForge">
-      <article className={s.step}><span>01 / Моменты</span><h2>Самое интересное из эфиров</h2><p>Короткие истории, ради которых не нужно пересматривать многочасовую запись.</p></article>
-      <article className={s.step}><span>02 / Стримеры</span><h2>Знакомые и новые лица</h2><p>Любимые авторы и стримеры, которых вы ещё не открыли для себя.</p></article>
-      <article className={s.step}><span>03 / Игры</span><h2>Разные игры и эмоции</h2><p>Решающий раунд, смешной диалог или неожиданная развязка — у каждого эфира свои моменты.</p></article>
-    </section>
+    <div className={s.landing}>
+      <section className={s.intro} aria-labelledby="intro-title">
+        <div className={s.introTitle}><span>Twitch / YouTube</span><h1 id="intro-title"><span>Из эфира</span><span>в клип</span></h1></div>
+        <Placeholder className={s.introMedia}/>
+        <p className={s.introCopy}>Моменты игровых эфиров.<br/>Короткие видео с субтитрами.</p>
+        <a className={s.watch} href="https://www.youtube.com/channel/UC-P-55QVYfT8SBtGnCNAtog"><span aria-hidden="true">▶</span><span>Смотреть на YouTube</span></a>
+      </section>
+      <section className={s.creators} aria-labelledby="creators-title">
+        <div className={s.sectionHeading}><span>01 / Стримеры</span><h2 id="creators-title">Знакомые<br/><em>и новые лица</em></h2></div>
+        <p className={s.creatorsCopy}>Любимые авторы и те, кого вы ещё не открыли для себя. Ссылка на Twitch — рядом с каждым клипом.</p>
+        <div className={s.portraits}><Placeholder/><Placeholder/></div>
+      </section>
+      <section className={s.games} aria-labelledby="games-title">
+        <div className={s.sectionHeading}><span>02 / Игры</span><h2 id="games-title">Разные игры.<br/><em>Живые эмоции.</em></h2></div>
+        <Placeholder className={s.gamesMedia}/>
+        <p className={s.gamesCopy}>Решающие раунды, неожиданные повороты и разговоры между матчами.</p>
+        <span className={s.gamesCaption}>Dota 2 / PUBG / Counter-Strike</span>
+      </section>
+    </div>
   </PublicPage>;
 }

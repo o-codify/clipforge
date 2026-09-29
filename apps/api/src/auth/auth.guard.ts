@@ -59,7 +59,11 @@ export class AuthGuard implements CanActivate {
         !["/api/auth/logout", "/api/auth/profile", "/api/auth/password"].includes(request.url.split("?")[0]!)) {
       throw new ForbiddenException("Модератор имеет доступ только для поддержки и просмотра");
     }
-    if (adminOnly && !viewer.isAdmin) {
+    const previewControl = viewer.isPreview && request.url.split("?")[0] === "/api/auth/act-as";
+    if (viewer.isPreview && !["GET", "HEAD"].includes(request.method) && !previewControl && request.url.split("?")[0] !== "/api/auth/logout") {
+      throw new ForbiddenException("Режим просмотра: изменения недоступны");
+    }
+    if (adminOnly && !viewer.isAdmin && !previewControl) {
       throw new ForbiddenException("только для администратора");
     }
     return true;

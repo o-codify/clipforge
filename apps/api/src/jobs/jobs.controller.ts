@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
-import { QUEUES } from "@clipforge/jobs";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query } from "@nestjs/common";
+import { QUEUES, cleanClipPayload, renderRunPayload } from "@clipforge/jobs";
 import { z } from "zod";
 
 import { AdminOnly, CurrentViewer } from "../auth/auth.guard.js";
@@ -24,6 +24,32 @@ export class JobsController {
     return this.jobs.active(viewer);
   }
 
+  @AdminOnly()
+  @Post('clean-clip/:clipId')
+  async cleanClip(@CurrentViewer() viewer:Viewer, @Param('clipId') id:string, @Body() body:unknown) {
+    const clip = await this.catalog.clip(viewer,id);
+    const input = cleanClipPayload.omit({clipId:true,vodId:true}).parse(body ?? {});
+    return this.jobs.enqueue(QUEUES.cleanClip, {...input, clipId:id, vodId:clip.vodId});
+  }
+
+  @Get("groups")
+  groups(@CurrentViewer() viewer: Viewer) {
+    return this.jobs.groups(viewer);
+  }
+
+  @AdminOnly()
+  @Post('inspect-ads/:vodId')
+  async inspectAds(@CurrentViewer() viewer:Viewer,@Param('vodId') vodId:string) {
+    await this.catalog.vod(viewer,vodId);
+    return this.jobs.enqueue(QUEUES.inspectAds,{vodId});
+  }
+
+  @Get("group-runs")
+  groupRuns(@CurrentViewer() viewer: Viewer, @Query() query: unknown) {
+    const input = z.object({name:z.string().min(1).max(100),streamer:z.string().max(64).default(""),offset:z.coerce.number().int().min(0).default(0)}).parse(query);
+    return this.jobs.groupRuns(viewer, input);
+  }
+
   @Get("conversation")
   conversation(@CurrentViewer() viewer: Viewer) {
     return this.jobs.conversation(viewer);
@@ -32,6 +58,11 @@ export class JobsController {
   @Get(":id/events")
   events(@CurrentViewer() viewer: Viewer, @Param("id") id: string) {
     return this.jobs.events(viewer, z.string().uuid().parse(id));
+  }
+
+  @Get(':id/status')
+  status(@CurrentViewer() viewer:Viewer, @Param('id') id:string) {
+    return this.jobs.status(viewer,z.string().uuid().parse(id));
   }
 
   @AdminOnly()
@@ -90,10 +121,11 @@ export class JobsController {
     @Param("vodId") vodId: string,
     @Body() body: unknown,
   ) {
+    const input = renderRunPayload.omit({vodId:true}).strict().parse(body??{});
+    if (input.testBatch && !viewer?.isAdmin) throw new ForbiddenException('Тестовая подборка доступна администратору');
+    if (input.testBatch && (input.count ?? 1) > 20) throw new BadRequestException('В тестовой подборке не больше 20 клипов');
     await this.catalog.vod(viewer, vodId);
-    const { count } = z
-      .object({ count: z.number().int().min(1).max(200).optional() })
-      .parse(body ?? {});
-    return this.jobs.enqueue(QUEUES.renderRun, { vodId, ...(count ? { count } : {}) });
+    const queue=input.audioMode!==undefined || input.skipExisting || input.testBatch ? QUEUES.renderVariant : QUEUES.renderRun;
+    return this.jobs.enqueue(queue, {vodId,...input});
   }
 }

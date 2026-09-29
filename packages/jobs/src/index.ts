@@ -40,12 +40,17 @@ export const QUEUES = {
   analyzeVod: "heavy.analyze-vod",
   facecamVod: "heavy.facecam-vod",
   renderRun: "heavy.render-run",
+  // Separate queue: older workers silently strip unknown render options.
+  renderVariant: "heavy.render-variant",
+  cleanClip: "heavy.clean-clip",
+  inspectAds: "heavy.inspect-ads",
 
   /**
    * Публикация клипа на площадку. Лёгкая очередь: загрузка ждёт сеть,
    * а не видеокарту, и не должна стоять за часовым рендером.
    */
   publishClip: "light.publish-clip",
+  refreshYoutube: "light.refresh-youtube",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -104,6 +109,11 @@ export const facecamVodPayload = z.object({
 export const renderRunPayload = z.object({
   vodId: z.string().min(1),
   count: z.number().int().min(1).max(500).optional(),
+  skipExisting: z.boolean().optional(),
+  /** Optional per-run override; otherwise resolve VOD, then streamer settings. */
+  audioMode: z.enum(['original','dtln']).optional(),
+  /** Explicit administrator preview, bounded independently of development mode. */
+  testBatch: z.boolean().optional(),
 });
 
 export const pipelinePayload = z.object({
@@ -117,6 +127,14 @@ export const publishClipPayload = z.object({
   /** Ряд publications: создаётся бэкендом до постановки задания. */
   publicationId: z.string().min(1),
 });
+export const refreshYoutubePayload = z.object({
+  publicationId: z.string().min(1).max(200).optional(),
+}).strict();
+export const cleanClipPayload = z.object({
+  clipId:z.string().min(1), vodId:z.string().min(1),
+  regions:z.array(z.object({x:z.number().int().nonnegative(),y:z.number().int().nonnegative(),
+    w:z.number().int().positive(),h:z.number().int().positive()})).max(32).default([]),
+});
 
 export const PAYLOADS = {
   [QUEUES.pipeline]: pipelinePayload,
@@ -128,7 +146,11 @@ export const PAYLOADS = {
   [QUEUES.analyzeVod]: analyzeVodPayload,
   [QUEUES.facecamVod]: facecamVodPayload,
   [QUEUES.renderRun]: renderRunPayload,
+  [QUEUES.renderVariant]: renderRunPayload,
   [QUEUES.publishClip]: publishClipPayload,
+  [QUEUES.refreshYoutube]: refreshYoutubePayload,
+  [QUEUES.cleanClip]: cleanClipPayload,
+  [QUEUES.inspectAds]: z.object({vodId:z.string().min(1)}),
 } as const;
 
 export type PayloadOf<Q extends QueueName> = z.infer<(typeof PAYLOADS)[Q]>;
@@ -144,8 +166,12 @@ export function singletonKey<Q extends QueueName>(
   queue: Q,
   payload: PayloadOf<Q>,
 ): string {
+  if((queue===QUEUES.renderRun || queue===QUEUES.renderVariant) && 'vodId' in payload && ('audioMode' in payload || 'skipExisting' in payload || 'testBatch' in payload)) {
+    const render=payload as PayloadOf<typeof QUEUES.renderRun>;
+    return `${queue}:${render.vodId}:${render.audioMode??'inherit'}:${render.skipExisting?'fresh':'all'}:${render.count??'default'}:${render.testBatch?'test':'normal'}`;
+  }
   const target =
-    "vodId" in payload
+    "clipId" in payload ? `${payload.clipId}:ads-only:${'regions' in payload ? JSON.stringify(payload.regions) : ''}` : "vodId" in payload
       ? payload.vodId
       : "login" in payload
         ? payload.login

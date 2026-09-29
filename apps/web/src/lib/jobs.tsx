@@ -47,8 +47,11 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const stopped = useRef(false);
   const signature = useRef("");
+  const inFlight = useRef(false);
 
   const tick = useCallback(async () => {
+    if (stopped.current || inFlight.current) return;
+    inFlight.current = true;
     try {
       const [recent, active] = await Promise.all([api.get<JobRow[]>("/api/jobs?limit=20"), api.get<JobRow[]>("/api/jobs/active")]);
       const list = [...active, ...recent.filter(job => !active.some(item => item.id === job.id))];
@@ -66,9 +69,11 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
         setVersion((value) => value + 1);
       }
 
-      timer.current = setTimeout(tick, nowBusy ? 1500 : 8000);
+      timer.current = setTimeout(tick, nowBusy ? 3000 : 15000);
     } catch {
-      if (!stopped.current) timer.current = setTimeout(tick, 8000);
+      if (!stopped.current) timer.current = setTimeout(tick, 15000);
+    } finally {
+      inFlight.current = false;
     }
   }, []);
 
@@ -133,6 +138,9 @@ export const JOB_LABELS: Record<string, string> = {
   "heavy.analyze-vod": "Сигналы звука",
   "heavy.facecam-vod": "Поиск камеры",
   "heavy.render-run": "Рендер",
+  "heavy.render-variant": "Монтаж клипов",
+  "heavy.clean-clip": "Скрытие QR-кодов и рекламы",
+  "heavy.inspect-ads": "Проверка рекламы эфира",
   "light.index-channel": "Обход архивов",
   "light.fetch-vod-info": "Метаданные",
   "light.refresh-streamer": "Профиль",

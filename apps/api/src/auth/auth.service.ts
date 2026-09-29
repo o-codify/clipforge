@@ -33,8 +33,9 @@ export interface Viewer {
    * от его лица.
    */
   actingAs: string | null;
-  /** Настоящая роль не меняется при просмотре от чужого лица. */
+  /** Действующие права: в режиме просмотра административный доступ отключён. */
   isAdmin: boolean;
+  isPreview: boolean;
 }
 
 @Injectable()
@@ -100,7 +101,7 @@ export class AuthService {
       .set({ lastSeen: new Date() })
       .where(eq(accounts.id, account.id));
 
-    return { token, viewer: this.toViewer(account, account.streamer) };
+    return { token, viewer: this.toViewer(account, account.role === "user" ? account.streamer : null) };
   }
 
   async logout(token: string): Promise<void> {
@@ -128,7 +129,9 @@ export class AuthService {
         if (owner) throw new BadRequestException("Канал уже связан с другим аккаунтом");
       }
       await tx.update(accounts).set(patch).where(eq(accounts.id, id));
-      if (patch.role || patch.streamer !== undefined) await tx.delete(sessions).where(eq(sessions.accountId, id));
+      if ((patch.role !== undefined && patch.role !== account.role) || (patch.streamer !== undefined && patch.streamer !== account.streamer)) {
+        await tx.delete(sessions).where(eq(sessions.accountId, id));
+      }
     });
     return { ok: true };
   }
@@ -168,7 +171,7 @@ export class AuthService {
   async actAs(token: string, streamer: string | null): Promise<Viewer> {
     const viewer = await this.viewerFor(token);
     if (!viewer) throw new UnauthorizedException("нет сессии");
-    if (!viewer.isAdmin) throw new UnauthorizedException("только для администратора");
+    if (!viewer.isAdmin && !viewer.isPreview) throw new UnauthorizedException("только для администратора");
 
     if (streamer) {
       const [exists] = await this.db
@@ -183,7 +186,7 @@ export class AuthService {
       .set({ actingAs: streamer })
       .where(eq(sessions.token, token));
 
-    return { ...viewer, actingAs: streamer };
+    return (await this.viewerFor(token))!;
   }
 
   /** Завести аккаунт стримеру. Доступно только администратору. */
@@ -192,6 +195,7 @@ export class AuthService {
     password: string,
     streamer: string | null,
     role: "admin" | "moderator" | "user" = "user",
+    displayName?: string,
   ): Promise<void> {
     const passwordHash = await hashPassword(password);
     await this.db.transaction(async tx => {
@@ -210,7 +214,7 @@ export class AuthService {
       passwordHash,
       role,
       streamer: role === "user" ? streamer : null,
-      displayName: login,
+      displayName: displayName ?? login,
     });
     });
   }
@@ -231,12 +235,13 @@ export class AuthService {
     return {
       accountId: account.id,
       login: account.login,
-      role: account.role === "streamer" ? "user" : account.role,
+      role: account.role === "admin" && actingAs ? "user" : account.role === "streamer" ? "user" : account.role,
       displayName: account.displayName ?? account.login,
       // Стример не может смотреть ничей канал, кроме своего, что бы ни
       // лежало в сессии.
       actingAs: account.role === "admin" ? actingAs : account.role === "moderator" ? null : (account.streamer ?? "__unlinked_account__"),
-      isAdmin: account.role === "admin",
+      isAdmin: account.role === "admin" && !actingAs,
+      isPreview: account.role === "admin" && !!actingAs,
     };
   }
 }

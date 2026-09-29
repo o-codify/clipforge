@@ -181,20 +181,47 @@ export const minimapResultSchema = z.object({
 });
 
 // --- реестр операций --------------------------------------------------
+export const prepareMediaParamsSchema = z.object({
+  video:z.string(), start:z.number().nonnegative(), end:z.number().positive(), transcript:z.string().default(''),
+  regions:z.array(rectSchema).max(32).default([]),
+  adProfile:z.record(z.unknown()).optional(),
+  audioMode:z.enum(['original','dtln']).optional(),
+  audioOut:z.string().optional(), models:z.string().optional(),
+});
+export const prepareMediaResultSchema = z.object({
+  audio:z.discriminatedUnion('method',[
+    z.object({method:z.literal('original')}),
+    z.object({method:z.literal('dtln'),file:z.string().min(1),speechGated:z.literal(false),
+      duration:z.number(),rmsBefore:z.number(),rmsAfter:z.number()}),
+  ]),
+  ads:z.object({regions:z.array(rectSchema),qrHits:z.number(),bannerHits:z.number(),frames:z.number(),coverage:z.number(),
+    reject:z.boolean(),reason:z.string().nullable(),requiresReview:z.boolean(),sampleFps:z.number(),ocrFps:z.number(),
+    profileId:z.string().optional(),profileFrames:z.number().optional(),automatic:z.boolean().optional()}),
+});
+
+export const adProfileSchema = z.object({signature:z.string(),version:z.string(),model:z.string(),
+  reviewVersion:z.number().int(),
+  complete:z.literal(true),width:z.number(),height:z.number(),duration:z.number(),
+  samples:z.number().int().min(6),regions:z.array(rectSchema).max(32),
+  qrHits:z.number(),bannerHits:z.number(),coverage:z.number().max(.3),
+  evidence:z.array(z.unknown()),framesDirectory:z.string()});
 
 export const workerOps = {
+  profileAds: {params:z.object({video:z.string(),directory:z.string(),cached:z.record(z.unknown()).nullable().optional()}),result:adProfileSchema},
   ping: { params: z.object({}), result: pingResultSchema },
   transcribe: { params: transcribeParamsSchema, result: transcribeResultSchema },
   audioSignals: { params: audioSignalsParamsSchema, result: audioSignalsResultSchema },
   facecam: { params: facecamParamsSchema, result: facecamResultSchema },
   minimap: { params: minimapParamsSchema, result: minimapResultSchema },
+  prepareMedia: { params: prepareMediaParamsSchema, result: prepareMediaResultSchema },
+  cleanClip: { params:prepareMediaParamsSchema.extend({out:z.string()}), result:prepareMediaResultSchema.extend({file:z.string()}) },
 } as const;
 
 export type WorkerOp = keyof typeof workerOps;
 
 export const workerRequestSchema = z.object({
   id: z.string(),
-  op: z.enum(["ping", "transcribe", "audioSignals", "facecam", "minimap"]),
+  op: z.enum(["ping", "transcribe", "audioSignals", "facecam", "minimap", "prepareMedia", "cleanClip", "profileAds"]),
   params: z.record(z.unknown()),
 });
 export type WorkerRequest = z.infer<typeof workerRequestSchema>;

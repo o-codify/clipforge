@@ -11,8 +11,8 @@ import { randomUUID } from "node:crypto";
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
-import { clips, games, streamers, platformAccounts, publications, runtimeValue, beginYoutubeDisconnect, forgetYoutubeAccount, type Database } from "@clipforge/db";
-import { QUEUES } from "@clipforge/jobs";
+import { clips, games, streamers, runs, platformAccounts, publications, runtimeValue, beginYoutubeDisconnect, forgetYoutubeAccount, type Database } from "@clipforge/db";
+import { QUEUES, type PayloadOf } from "@clipforge/jobs";
 import {
   authUrl,
   exchangeCode,
@@ -62,9 +62,41 @@ export class PlatformsService {
         label: platformAccounts.label,
         externalId: platformAccounts.externalId,
         createdAt: platformAccounts.createdAt,
+        verifiedAt: platformAccounts.verifiedAt,
         disconnectRequestedAt: platformAccounts.disconnectRequestedAt,
       })
       .from(platformAccounts);
+  }
+
+  /** Stored facts only: reading this endpoint never uploads or contacts Google. */
+  async publication(id:string) {
+    const [row] = await this.db.execute<{id:string;videoId:string|null;status:string;collectedAt:Date|null}>(sql`
+      select p.id,p.clip_id as "clipId",p.media_id as "videoId",p.url,p.status,p.title,p.caption as description,
+        p.privacy as "storedPrivacy",p.error,p.published_at as "publishedAt",p.updated_at as "updatedAt",
+        a.id as "accountId",a.label as channel,c.streamer,
+        m.extended->>'privacy' as "actualPrivacy",m.collected_at as "collectedAt",
+        m.views,m.likes,m.comments,m.extended as restrictions,
+        j.id::text as "jobId",j.state as "jobState"
+      from publications p join clips c on c.id=p.clip_id
+      join platform_accounts a on a.platform=p.platform and a.external_id=p.account
+      left join lateral (select * from publication_metrics where publication_id=p.id
+        order by collected_at desc,id desc limit 1) m on true
+      left join lateral (select id,state from jobs.job where name=${QUEUES.publishClip}
+        and data->>'publicationId'=p.id order by created_on desc limit 1) j on true
+      where p.id=${id} and p.platform='youtube' and a.disconnect_requested_at is null`);
+    if(!row) throw new NotFoundException('Публикация недоступна');
+    return {...row,stale:!row.collectedAt||Date.now()-new Date(row.collectedAt).getTime()>75*60000,
+      // videos.list reports regional/age restrictions, not Content ID claim details.
+      copyrightClaim:'unknown' as const};
+  }
+
+  async refresh(payload:PayloadOf<'light.refresh-youtube'>) {
+    if(payload.publicationId) {
+      const publication = await this.publication(payload.publicationId);
+      if(!publication.videoId || publication.status==='takedown') throw new BadRequestException('Видео ещё не загружено или больше недоступно');
+    }
+    const job = await this.jobs.enqueue(QUEUES.refreshYoutube,payload);
+    return {jobId:job.id,queued:job.queued};
   }
 
   async check(accountId?: string) {
@@ -157,23 +189,25 @@ export class PlatformsService {
   async preview(clipId: string) {
     const [clip] = await this.db.select({ login:clips.streamer,
       displayName:streamers.displayName, gameTitle:games.title })
-      .from(clips).innerJoin(streamers,eq(clips.streamer,streamers.login)).leftJoin(games,eq(clips.game,games.slug))
-      .where(and(eq(clips.id,clipId),eq(clips.state,"ready"),sql`${clips.archivedAt} is null`));
+      .from(clips).innerJoin(runs,eq(clips.runId,runs.id)).innerJoin(streamers,eq(clips.streamer,streamers.login)).leftJoin(games,eq(clips.game,games.slug))
+      .where(and(eq(clips.id,clipId),eq(clips.state,"ready"),sql`${clips.archivedAt} is null`,
+        sql`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt']) is not null`));
     if(!clip) throw new NotFoundException("Клип недоступен для публикации");
     return { ...suggestVideoMetadata({...clip,displayName:clip.displayName ?? clip.login}),
       accounts:(await this.accounts()).filter(account=>account.platform==="youtube"&&!account.disconnectRequestedAt) };
   }
 
-  async publish(clipId: string, metadata: VideoMetadata & {accountId:string}): Promise<{ publicationId: string }> {
+  async publish(clipId: string, metadata: VideoMetadata & {accountId:string}) {
     metadata = prepareVideoMetadata(metadata);
     try { validateVideoMetadata(metadata); } catch(error) { throw new BadRequestException((error as Error).message); }
     const [clip] = await this.db
-      .select({ id: clips.id, state: clips.state, archivedAt: clips.archivedAt })
-      .from(clips)
+      .select({ id: clips.id, state: clips.state, archivedAt: clips.archivedAt,
+        reviewedAt: sql<string | null>`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'])` })
+      .from(clips).innerJoin(runs,eq(clips.runId,runs.id))
       .where(eq(clips.id, clipId));
     if (!clip) throw new NotFoundException("клип не найден");
-    if (clip.state !== "ready" || clip.archivedAt) {
-      throw new BadRequestException("клип снят с публикации");
+    if (clip.state !== "ready" || clip.archivedAt || !clip.reviewedAt) {
+      throw new BadRequestException("Для публикации нужна завершённая обработка рекламы");
     }
 
     const access = await this.check(metadata.accountId);
@@ -189,7 +223,7 @@ export class PlatformsService {
     }
 
     const [existing] = await tx
-      .select({ id: publications.id, status: publications.status, error: publications.error,
+      .select({ id: publications.id, status: publications.status, error: publications.error,mediaId:publications.mediaId,
         title:publications.title,caption:publications.caption,privacy:publications.privacy })
       .from(publications)
       .where(
@@ -204,9 +238,9 @@ export class PlatformsService {
     if (existing?.error?.startsWith("[upload-uncertain]")) {
       throw new BadRequestException("Исход предыдущей загрузки неизвестен. Проверьте канал: повторная отправка может создать дубль.");
     }
-    if (existing && IN_FLIGHT.has(existing.status)) {
+    if (existing && (existing.mediaId || IN_FLIGHT.has(existing.status))) {
       // Уже в работе или вышла - просто вернуть, кнопка не дублирует.
-      return { publicationId: existing.id, send:false };
+      return { publicationId: existing.id, send:existing.status==='queued'&&!existing.mediaId,existing:true };
     } else if (existing) {
       const [session]=await tx.execute(sql`select 1 from youtube_upload_sessions where publication_id=${existing.id}`);
       if(session && (existing.title!==metadata.title || existing.caption!==metadata.description || existing.privacy!==metadata.privacy)) {
@@ -229,16 +263,21 @@ export class PlatformsService {
       });
     }
 
-    return {publicationId,send:true};
+    return {publicationId,send:true,existing:false};
     });
     const {publicationId}=queued;
-    if(!queued.send) return {publicationId};
+    if(!queued.send) {
+      const [job] = await this.db.execute<{id:string}>(sql`select id::text from jobs.job
+        where name=${QUEUES.publishClip} and data->>'publicationId'=${publicationId} order by created_on desc limit 1`);
+      return {publicationId,jobId:job?.id??null,queued:false,existing:true};
+    }
     try {
-      await this.jobs.enqueue(QUEUES.publishClip, { publicationId });
+      const job = await this.jobs.enqueue(QUEUES.publishClip, { publicationId });
+      return {publicationId,jobId:job.id,queued:job.queued,existing:queued.existing};
     } catch(error) {
-      await this.db.update(publications).set({status:"failed",error:"Не удалось поставить в очередь"}).where(eq(publications.id,publicationId));
+      await this.db.update(publications).set({status:"failed",error:"Не удалось поставить в очередь"})
+        .where(and(eq(publications.id,publicationId),eq(publications.status,'queued')));
       throw error;
     }
-    return { publicationId };
   }
 }

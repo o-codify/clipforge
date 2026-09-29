@@ -1,59 +1,30 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type Viewer } from "@/lib/api";
-import { Select } from "./Select";
-import { Button, Card, SectionTitle } from "./ui";
+import { Button, Card } from "./ui";
 import { toast } from "@/lib/toast";
 import { useSession } from "@/lib/session";
+import { StreamerBadge } from "./StreamerBadge";
 
-const roles = { admin: "Администратор", moderator: "Модератор", user: "Пользователь" };
-const roleOptions = Object.entries(roles).map(([value,label])=>({value:value as keyof typeof roles,label}));
-type Account = {id:string; login:string; displayName:string; role:keyof typeof roles; streamer:string|null};
 export function AccountSettings({viewer}:{viewer:Viewer}) {
   const { updateViewer } = useSession();
-  const [accounts,setAccounts] = useState<Account[]>([]);
   const [name,setName] = useState(viewer.displayName);
   const [current,setCurrent] = useState("");
   const [password,setPassword] = useState("");
-  const [login,setLogin] = useState("");
-  const [newPassword,setNewPassword] = useState("");
-  const [role,setRole] = useState<keyof typeof roles>("user");
-  const [busy,setBusy] = useState(false);
-  const load = () => { if(viewer.isAdmin) void api.get<Account[]>("/api/auth/accounts").then(setAccounts).catch(e=>toast.error(String(e))); };
-  useEffect(load,[viewer.isAdmin]);
-  const action = async(fn:()=>Promise<unknown>) => {setBusy(true);try{await fn();toast.info("Сохранено");load();}catch(e){toast.error(String(e));}finally{setBusy(false);}};
-  return <>
-    <SectionTitle>Мой аккаунт</SectionTitle>
-    <Card><p>{viewer.login} · {roles[viewer.role]}</p>
-      <div className="form-row"><input className="field" aria-label="Отображаемое имя" value={name} onChange={e=>setName(e.target.value)}/>
-        <Button busy={busy} onClick={()=>action(async()=>{await api.post("/api/auth/profile",{displayName:name});updateViewer({...viewer,displayName:name.trim()});})}>Сохранить имя</Button></div>
-      <div className="form-row"><input className="field" type="password" autoComplete="current-password" placeholder="Текущий пароль" value={current} onChange={e=>setCurrent(e.target.value)}/>
-        <input className="field" type="password" autoComplete="new-password" placeholder="Новый пароль (от 8 символов)" value={password} onChange={e=>setPassword(e.target.value)}/>
-        <Button busy={busy} disabled={!current||password.length<8} onClick={()=>action(async()=>{await api.post("/api/auth/password",{current,password});window.location.href="/login";})}>Изменить пароль</Button></div>
-      {viewer.role === "user" && <><p>Twitch: {viewer.actingAs === "__unlinked_account__" ? "Не подключён" : viewer.actingAs}</p>
-        <Button onClick={()=>action(async()=>{const r=await api.post<{url:string}>("/api/twitch/connect");window.location.href=r.url;})}>Подтвердить свой Twitch</Button></>}
-    </Card>
-    {viewer.isAdmin && <><SectionTitle>Аккаунты · регистрация закрыта</SectionTitle>
-      <Card><div className="form-row"><input className="field" placeholder="Логин нового аккаунта" value={login} onChange={e=>setLogin(e.target.value)}/>
-        <input className="field" type="password" autoComplete="new-password" placeholder="Пароль (от 8 символов)" value={newPassword} onChange={e=>setNewPassword(e.target.value)}/>
-        <Select label="Роль нового аккаунта" value={role} onValueChange={setRole} options={roleOptions}/>
-        <Button busy={busy} disabled={login.length<3||newPassword.length<8} onClick={()=>action(async()=>{await api.post("/api/auth/accounts",{login,password:newPassword,role});setLogin("");setNewPassword("");})}>Создать</Button>
-      </div><p className="muted">Пользователю не нужен канал при создании аккаунта. Он подтвердит Twitch в своём профиле.</p></Card>
-      {accounts.map(account=><AccountRow key={account.id} account={account} save={action}/>)}
-    </>}
-  </>;
-}
-function AccountRow({account,save}:{account:Account;save:(fn:()=>Promise<unknown>)=>Promise<void>}) {
-  const [role,setRole]=useState(account.role);
-  const [name,setName]=useState(account.displayName??account.login);
-  const [channel,setChannel]=useState(account.streamer??"");
-  const [password,setPassword]=useState("");
-  return <Card><b>{account.login}</b><div className="form-row">
-    <input className="field" aria-label={`Имя ${account.login}`} value={name} onChange={e=>setName(e.target.value)}/>
-    <Select label={`Роль ${account.login}`} value={role} onValueChange={setRole} options={roleOptions}/>
-    <input className="field" aria-label={`Twitch ${account.login}`} placeholder="Twitch-канал пользователя" value={channel} onChange={e=>setChannel(e.target.value)}/>
-    <Button onClick={()=>save(()=>api.post(`/api/auth/accounts/${account.id}`,{displayName:name,role,streamer:channel||null}))}>Сохранить</Button>
-    <input className="field" type="password" autoComplete="new-password" placeholder="Новый пароль" value={password} onChange={e=>setPassword(e.target.value)}/>
-    <Button disabled={password.length<8} onClick={()=>save(async()=>{await api.post(`/api/auth/accounts/${account.id}/password`,{password});setPassword("");})}>Сбросить пароль</Button>
-  </div></Card>;
+  const [busy,setBusy] = useState("");
+  const action = async(key:string, fn:()=>Promise<unknown>) => {setBusy(key);try{await fn();toast.info("Сохранено");}catch(e){toast.error(String(e));}finally{setBusy("");}};
+  if(viewer.isPreview) return <Card><h2>Профиль стримера</h2><StreamerBadge login={viewer.actingAs!}/><p className="muted">Изменение личных данных недоступно в режиме просмотра.</p></Card>;
+  return <div className="profile-settings-grid">
+    <Card><h2>Личные данные</h2><form className="settings-form" onSubmit={e=>{e.preventDefault();void action("name",async()=>{await api.post("/api/auth/profile",{displayName:name});updateViewer({...viewer,displayName:name.trim()});});}}>
+      <label>Логин<input className="field" value={viewer.login} readOnly autoComplete="username"/></label>
+      <label>Имя<input className="field" minLength={1} maxLength={100} required value={name} onChange={e=>setName(e.target.value)}/><small>От 1 до 100 символов</small></label>
+      <Button type="submit" busy={busy==="name"} disabled={!name.trim() || name.trim()===viewer.displayName}>Сохранить</Button>
+    </form></Card>
+    <Card><h2>Пароль</h2><form className="settings-form" onSubmit={e=>{e.preventDefault();void action("password",async()=>{await api.post("/api/auth/password",{current,password});window.location.assign("/login");});}}>
+      <label>Текущий пароль<input className="field" type="password" autoComplete="current-password" required maxLength={200} value={current} onChange={e=>setCurrent(e.target.value)}/></label>
+      <label>Новый пароль<input className="field" type="password" autoComplete="new-password" required minLength={8} maxLength={200} value={password} onChange={e=>setPassword(e.target.value)}/><small>От 8 до 200 символов</small></label>
+      <Button type="submit" busy={busy==="password"} disabled={!current||password.length<8}>Изменить пароль</Button>
+    </form></Card>
+    {viewer.role==="user"&&<Card><h2>Twitch</h2><p>{!viewer.actingAs||viewer.actingAs==="__unlinked_account__"?"Канал не подключён":<StreamerBadge login={viewer.actingAs} external/>}</p><Button busy={busy==="twitch"} onClick={()=>action("twitch",async()=>{const result=await api.post<{url:string}>("/api/twitch/connect");window.location.assign(result.url);})}>Подтвердить свой Twitch</Button></Card>}
+  </div>;
 }

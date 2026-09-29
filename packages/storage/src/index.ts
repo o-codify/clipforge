@@ -1,16 +1,9 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { stat, rename, rm } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { pipeline } from 'node:stream/promises';
 import { createHash } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
-
-async function* pacedFile(file:string,bytesPerSecond:number) {
-  for await(const chunk of createReadStream(file,{highWaterMark:64*1024})) {
-    // Delay every block, including the first: no uncapped initial burst.
-    await delay(Math.ceil(chunk.length*1000/bytesPerSecond));
-    yield chunk;
-  }
-}
+import { pacedStream, waitForResources, resourceRequest, ResourcePauseError } from '@clipforge/resources';
 import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -27,6 +20,7 @@ export class MediaStorage {
   }
 
   async uploadFile(key: string, file: string, contentType: string): Promise<void> {
+    await waitForResources();
     this.checkKey(key);
     const size = (await stat(file)).size;
     if (!size) throw new Error("Cannot upload an empty media file");
@@ -38,12 +32,19 @@ export class MediaStorage {
       throw error;
     });
     if(existing?.ContentLength===size && existing.Metadata?.sha256===sha256)return;
-    await this.client.send(new PutObjectCommand({
+    for (;;) {
+    const body = pacedStream(createReadStream(file,{highWaterMark:16384}), 'upload', this.bytesPerSecond);
+    try {
+    await resourceRequest(signal=>this.client.send(new PutObjectCommand({
       Bucket: this.bucket, Key: key,
-      Body: this.bytesPerSecond ? Readable.from(pacedFile(file,this.bytesPerSecond),{objectMode:false}) : createReadStream(file),
+      Body: body,
       ContentLength: size, ContentType: contentType,
       Metadata:{sha256},
-    }));
+    }),{abortSignal:signal}));
+    break;
+    } catch(error) { if (!(error instanceof ResourcePauseError))throw error; }
+    finally {body.destroy();}
+    }
     const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
     if (head.ContentLength !== size || head.Metadata?.sha256!==sha256) throw new Error("Stored object differs from the local file");
   }
@@ -53,19 +54,50 @@ export class MediaStorage {
     return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn });
   }
 
+  /** Desktop downloads checkpoint bytes and close sockets during activity. */
+  async downloadFile(key:string,file:string):Promise<void> {
+    this.checkKey(key);
+    await waitForResources();
+    const head=await this.client.send(new HeadObjectCommand({Bucket:this.bucket,Key:key}));
+    const size=head.ContentLength;
+    if(!size)throw new Error('Stored video is empty');
+    const pending=`${file}.part`;
+    for (;;) {
+      let offset=await stat(pending).then(s=>s.size).catch(()=>0);
+      if(offset>size){await rm(pending);offset=0;}
+      if(offset===size)break;
+      try {
+        await resourceRequest(async signal=>{
+          const object=await this.client.send(new GetObjectCommand({Bucket:this.bucket,Key:key,
+            ...(offset ? {Range:`bytes=${offset}-`} : {}),IfMatch:head.ETag}),{abortSignal:signal});
+          if(!(object.Body instanceof Readable) || (offset && !object.ContentRange?.startsWith(`bytes ${offset}-`)))throw new Error('Stored video range is unavailable');
+          await pipeline(pacedStream(object.Body,'download'),createWriteStream(pending,{flags:offset?'a':'w'}),{signal});
+        });
+      } catch(error) {if(!(error instanceof ResourcePauseError))throw error;}
+    }
+    if(head.Metadata?.sha256) {
+      const hash=createHash('sha256');
+      for await(const chunk of createReadStream(pending))hash.update(chunk);
+      if(hash.digest('hex')!==head.Metadata.sha256){await rm(pending);throw new Error('Downloaded video checksum differs');}
+    }
+    await rename(pending,file);
+  }
+
   async openVideo(key: string): Promise<{ body: Readable; size: number }> {
+    await waitForResources();
     this.checkKey(key);
     const object = await this.client.send(new GetObjectCommand({Bucket:this.bucket,Key:key}));
     if (!(object.Body instanceof Readable) || !object.ContentLength) throw new Error('Stored video is empty or unreadable');
-    return {body:object.Body,size:object.ContentLength};
+    return {body:process.env.MEDIA_RESOURCE_STATE ? pacedStream(object.Body,'download') : object.Body,size:object.ContentLength};
   }
 
   async openVideoRange(key:string,offset:number):Promise<Readable> {
+    await waitForResources();
     this.checkKey(key);
     if(!Number.isSafeInteger(offset)||offset<0)throw new Error('Invalid media offset');
     const object=await this.client.send(new GetObjectCommand({Bucket:this.bucket,Key:key,Range:`bytes=${offset}-`}));
     if(!(object.Body instanceof Readable) || !object.ContentRange?.startsWith(`bytes ${offset}-`))throw new Error('Stored video range is unavailable');
-    return object.Body;
+    return process.env.MEDIA_RESOURCE_STATE ? pacedStream(object.Body,'download') : object.Body;
   }
 
   async removeProbe(key: string): Promise<void> {
@@ -81,7 +113,7 @@ export function storageFromEnv(env: NodeJS.ProcessEnv = process.env): MediaStora
   if (new URL(endpoint).protocol !== "https:") throw new Error("S3_ENDPOINT must use HTTPS");
   const prefix = (env.S3_PREFIX || "clipforge").replace(/^\/+|\/+$/g, "");
   if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(prefix)) throw new Error("Invalid S3_PREFIX");
-  const kbps=Number(env.MEDIA_NETWORK_KBPS || (env.WORKER_ROLE==='media' ? 10000 : 0));
+  const kbps=Number(env.MEDIA_UPLOAD_KBPS || env.MEDIA_NETWORK_KBPS || (env.WORKER_ROLE==='media' ? 5000 : 0));
   if(!Number.isFinite(kbps)||kbps<0||kbps>40000)throw new Error('Invalid MEDIA_NETWORK_KBPS');
   return new MediaStorage(new S3Client({
     endpoint, region: required("S3_REGION"), forcePathStyle: true,

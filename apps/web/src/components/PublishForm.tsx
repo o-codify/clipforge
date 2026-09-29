@@ -44,7 +44,7 @@ export function PublishForm({clipId,onDone,onCancel}:{clipId:string;onDone:()=>v
         options={[{value:"private",label:"Приватно"},{value:"unlisted",label:"По ссылке"},{value:"public",label:"Публично"}]}/></div>
       <p className="muted">Эти название, описание и настройки будут отправлены на YouTube вместе с клипом. Фактическую видимость покажу после обработки видео.</p>
       <Button type="submit" variant="primary" busy={busy} disabled={!accountId}>Отправить на YouTube</Button>
-    </>:<p>Сначала <Link href="/me">подключите канал в управлении</Link>.</p>)}
+    </>:<p>Сначала <Link href="/settings/publication">подключите канал в управлении</Link>.</p>)}
     <Button type="button" variant="ghost" disabled={busy} onClick={onCancel}>Отмена</Button>
   </form>;
 }

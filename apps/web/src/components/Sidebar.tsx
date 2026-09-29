@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { WORKSPACE_LINKS, activeSection } from "@/lib/navigation";
+import { workspaceLinks, activeSection, sectionNumber } from "@/lib/navigation";
+import { SiteBrand } from "./SiteFrame";
 import { useSession } from "@/lib/session";
 import { useJobs } from "@/lib/jobs";
 
@@ -20,13 +21,14 @@ export function Sidebar() {
   const { jobs } = useJobs();
   const section = activeSection(usePathname());
   const pending = jobs.filter(job => ["active", "created", "retry"].includes(job.state)).length;
-  const links = [...WORKSPACE_LINKS, { href: "/me", label: viewer.isAdmin ? "Управление" : "Мой профиль", icon: "settings" }];
+  const links = workspaceLinks(viewer);
   return <aside className="workspace-sidebar">
-    <Link href="/" className="workspace-brand" aria-label="ClipForge — обзор"><span className="brand-mark" aria-hidden>CF</span><span>ClipForge</span></Link>
+    <SiteBrand />
     <div className="sidebar-caption">Рабочее пространство</div>
     <nav aria-label="Разделы платформы">
-      {links.map(item => <Link key={item.href} href={item.href} className="workspace-nav-link" aria-label={item.label} title={item.label} aria-current={section === item.href ? "page" : undefined}>
-        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{icons[item.icon]}</svg>
+      {links.map(item => <Link key={item.href} href={item.href} className="workspace-nav-link" aria-label={item.label} title={item.label} aria-current={section === (item.href.startsWith("/streamers/") ? "/streamers" : item.href) ? "page" : undefined}>
+        <span className="nav-index" aria-hidden="true">{sectionNumber(item.href)}</span>
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{icons[item.icon] ?? icons.streamers}</svg>
         <span className="nav-label">{item.label}</span>{item.href === "/jobs" && pending > 0 && <span className="nav-count">{pending}</span>}
       </Link>)}
     </nav>

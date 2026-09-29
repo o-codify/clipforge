@@ -85,6 +85,15 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  apps/cli:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   apps/web:
     dependencies:
       '@clipforge/assistant':
@@ -139,6 +148,9 @@ importers:
       '@clipforge/pipeline':
         specifier: workspace:*
         version: link:../../packages/pipeline
+      '@clipforge/resources':
+        specifier: workspace:*
+        version: link:../../packages/resources
       '@clipforge/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -231,6 +243,9 @@ importers:
       '@clipforge/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@clipforge/resources':
+        specifier: workspace:*
+        version: link:../resources
       fontkit:
         specifier: ^2.0.4
         version: 2.0.4
@@ -248,6 +263,15 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/resources:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/storage:
     dependencies:
       '@aws-sdk/client-s3':
@@ -256,6 +280,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1137.0
         version: 3.1137.0
+      '@clipforge/resources':
+        specifier: workspace:*
+        version: link:../resources
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -278,6 +305,9 @@ importers:
       '@clipforge/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@clipforge/resources':
+        specifier: workspace:*
+        version: link:../resources
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

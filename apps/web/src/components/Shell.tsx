@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { PlatformAssistant } from "./PlatformAssistant";
@@ -9,15 +9,22 @@ import { api, type Viewer } from "@/lib/api";
 import { JobsProvider } from "@/lib/jobs";
 import { SessionContext, SESSION_EXPIRED } from "@/lib/session";
 import { Toaster } from "@/lib/toast";
+import { CatalogCache } from "@/lib/catalog-cache";
+import { SiteCanvas } from "./SiteFrame";
+import { StreamerDirectory } from "./StreamerBadge";
 
 const PUBLIC_PATHS = new Set(["/login", "/about", "/privacy", "/terms"]);
 
 export function Shell({ children }: { children: React.ReactNode }) {
-  const isPublic = PUBLIC_PATHS.has(usePathname());
+  const path = usePathname();
+  const isPublic = PUBLIC_PATHS.has(path);
   const router = useRouter();
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const contentRef = useRef<HTMLElement>(null);
+
+  useEffect(() => { contentRef.current?.scrollTo(0, 0); }, [path]);
 
   useEffect(() => {
     // Revalidate when entering the workspace, never on an internal transition.
@@ -38,6 +45,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener(SESSION_EXPIRED, expired);
   }, [isPublic, router]);
 
+  const privateAdminPage = path.startsWith("/settings") || path === "/discovery";
+  const redirect = viewer && !viewer.isAdmin && privateAdminPage ? "/" :
+    viewer?.role === "user" && path === "/streamers" ?
+      (viewer.actingAs && viewer.actingAs !== "__unlinked_account__" ? `/streamers/${viewer.actingAs}` : "/me") : null;
+  useEffect(() => { if (redirect) router.replace(redirect); }, [redirect, router]);
+
   const logout = useCallback(async () => {
     await api.post("/api/auth/logout");
     if (viewer) sessionStorage.removeItem(`clipforge-chat:${viewer.accountId}:${viewer.actingAs ?? "all"}`);
@@ -51,16 +64,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return <SessionContext.Provider value={{ viewer, updateViewer: setViewer, logout }}>
     <JobsProvider key={`${viewer.accountId}:${viewer.actingAs ?? "all"}`}>
-      <div className="shell workspace-shell">
+      <CatalogCache>
+      <StreamerDirectory>
+      <div className="shell workspace-shell site-frame">
+        <SiteCanvas />
         <a href="#workspace-content" className="workspace-skip">К содержимому</a>
         <Sidebar />
         <div className="content">
           <Header />
-          <main id="workspace-content" className="main" tabIndex={-1}>{children}</main>
+          <main ref={contentRef} id="workspace-content" className="main" tabIndex={-1}>{redirect ? null : children}</main>
         </div>
         <PlatformAssistant viewer={viewer} />
         <Toaster />
       </div>
+      </StreamerDirectory>
+      </CatalogCache>
     </JobsProvider>
   </SessionContext.Provider>;
 }

@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from media_resources import Monitor, Policy, atomic_json
 
 
 class BasicLimits(c.Structure):
@@ -61,10 +62,10 @@ def wait_for_headroom(min_free_mb):
         time.sleep(30)
 
 
-def run(command, memory_mb, cpu_percent):
+def run(command, memory_mb, cpu_percent, state_file=None, idle=0):
     if os.name != 'nt':
         raise RuntimeError('This launcher requires Windows Job Objects')
-    if not 128 <= memory_mb <= 32768 or not 1 <= cpu_percent <= 100:
+    if not 0 <= memory_mb <= 262144 or not 1 <= cpu_percent <= 90:
         raise ValueError('Invalid media resource limits')
     kernel = c.WinDLL('kernel32', use_last_error=True)
     signatures = {
@@ -89,16 +90,22 @@ def run(command, memory_mb, cpu_percent):
 
     job = check(kernel.CreateJobObjectW(None, None))
     process = ProcessInfo()
+    monitor = None
     try:
         limits = Limits()
         # Aggregate committed memory, lower scheduling priority, and kill the
         # whole tree when the launcher exits. Children cannot break away.
         limits.basic.flags = 0x200 | 0x20 | 0x2000
         limits.basic.priority = 0x4000  # BELOW_NORMAL_PRIORITY_CLASS
-        limits.job_memory = memory_mb * 1024 * 1024
+        import psutil
+        limits.job_memory = int((memory_mb or psutil.virtual_memory().available / 2**20 * .85) * 1024 * 1024)
         check(kernel.SetInformationJobObject(job, 9, c.byref(limits), c.sizeof(limits)))
         cpu = CpuLimits(0x1 | 0x4, cpu_percent * 100)  # ENABLE | HARD_CAP
         check(kernel.SetInformationJobObject(job, 15, c.byref(cpu), c.sizeof(cpu)))
+        state_file = state_file or str(Path('data/media-resource-state.json').resolve())
+        os.environ['MEDIA_RESOURCE_STATE'] = str(Path(state_file).resolve())
+        if not atomic_json(state_file, dict(version=1, at=time.time()*1000, paused=True, reason='starting')):
+            raise RuntimeError('Cannot publish initial resource state; media was not started')
         startup = Startup()
         startup.cb = c.sizeof(startup)
         check(kernel.CreateProcessW(None, c.create_unicode_buffer(subprocess.list2cmdline(command)),
@@ -107,12 +114,31 @@ def run(command, memory_mb, cpu_percent):
         check(kernel.AssignProcessToJobObject(job, process.process))
         if kernel.ResumeThread(process.thread) == 0xFFFFFFFF:
             raise c.WinError(c.get_last_error())
-        print(f'Media tree limited: {memory_mb} MiB RAM, {cpu_percent}% CPU', flush=True)
-        kernel.WaitForSingleObject(process.process, 0xFFFFFFFF)
+        policy = Policy(target=cpu_percent, idle_seconds=idle,
+                        download_kbps=float(os.getenv('MEDIA_DOWNLOAD_KBPS', '10000')),
+                        upload_kbps=float(os.getenv('MEDIA_UPLOAD_KBPS', '5000')),
+                        link_down_kbps=float(os.getenv('MEDIA_LINK_DOWN_KBPS', '20000')),
+                        link_up_kbps=float(os.getenv('MEDIA_LINK_UP_KBPS', '10000')))
+        monitor = Monitor(process.pid, state_file, policy)
+        print(f'Adaptive media governor: idle {idle}s, target {cpu_percent}%, foreground priority', flush=True)
+        previous_reason = 'starting'
+        while kernel.WaitForSingleObject(process.process, 500) == 258:
+            state = monitor.tick()
+            limits.job_memory = int(min(memory_mb or float('inf'), state['memoryMb']) * 1024 * 1024)
+            # Lowering a commit ceiling does not reclaim existing allocations;
+            # Monitor explicitly releases heavy children on sustained pressure.
+            check(kernel.SetInformationJobObject(job, 9, c.byref(limits), c.sizeof(limits)))
+            cpu.rate = max(100, int(state['cpuPercent'] * 100))
+            check(kernel.SetInformationJobObject(job, 15, c.byref(cpu), c.sizeof(cpu)))
+            if state['reason'] != previous_reason:
+                print(f"Media: {state['reason'] or 'running'}", flush=True)
+                previous_reason = state['reason']
         code = w.DWORD()
         check(kernel.GetExitCodeProcess(process.process, c.byref(code)))
         return code.value
     finally:
+        if monitor:
+            monitor.close()
         if process.process:
             kernel.TerminateProcess(process.process, 1)
             kernel.CloseHandle(process.process)
@@ -123,13 +149,15 @@ def run(command, memory_mb, cpu_percent):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--memory-mb', type=int, default=4096)
-    parser.add_argument('--cpu-percent', type=int, default=20)
+    parser.add_argument('--memory-mb', type=int, default=0, help='Optional emergency ceiling; 0 = adaptive')
+    parser.add_argument('--cpu-percent', type=int, default=90)
     parser.add_argument('--min-free-mb', type=int, default=0)
+    parser.add_argument('--idle-seconds', type=int, default=0, help='Optional idle-only mode; 0 = work whenever resources allow')
+    parser.add_argument('--state-file')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
     if not command:
         parser.error('A media command is required')
     wait_for_headroom(args.min_free_mb)
-    sys.exit(run(command, args.memory_mb, args.cpu_percent))
+    sys.exit(run(command, args.memory_mb, args.cpu_percent, args.state_file, args.idle_seconds))

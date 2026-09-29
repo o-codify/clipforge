@@ -8,6 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "cf": "tsc -b apps/cli && node apps/cli/dist/main.js",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:push": "pnpm --filter @clipforge/db push",

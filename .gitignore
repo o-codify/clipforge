@@ -20,3 +20,5 @@ out/
 .next-dev/
 /legacy/
 /Twitch-Brand.zip
+/models/dtln/
+/models/deepfilter/

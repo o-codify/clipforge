@@ -15,6 +15,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, stat, rename, unlink } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { dirname, extname, join } from "node:path";
+import { activeTimeout, waitForResources, wasPreempted } from '@clipforge/resources';
 
 export interface YtDlpOptions {
   /** Как запускать: "yt-dlp" или python -m yt_dlp. */
@@ -33,13 +34,16 @@ export interface RunResult {
 }
 
 /** Запустить yt-dlp, отдавая строки вывода по мере появления. */
-function run(
+async function run(
   command: string,
   args: string[],
   onLine?: (line: string) => void,
   timeoutMs = 7_200_000,
 ): Promise<RunResult> {
-  return new Promise((resolve, reject) => {
+  for (;;) {
+  await waitForResources();
+  const started = Date.now();
+  const result = await new Promise<RunResult & { pid?: number }>((resolve, reject) => {
     const child = spawn(command, args, { windowsHide: true });
     const tail: string[] = [];
 
@@ -57,7 +61,7 @@ function run(
       if (tail.length > 200) tail.shift();
     });
 
-    const timer = setTimeout(() => {
+    const timer = activeTimeout(() => {
       if(process.platform==='win32' && child.pid) execFile('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true},()=>{});
       else child.kill("SIGKILL");
       reject(new Error(`таймаут yt-dlp (${timeoutMs} мс)`));
@@ -69,9 +73,11 @@ function run(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ code: code ?? -1, lines: tail });
+      resolve({ code: code ?? -1, lines: tail, pid: child.pid });
     });
   });
+  if (!wasPreempted(result.pid, started)) return result;
+  }
 }
 
 /** Принять и id (v123), и полную ссылку. */
@@ -277,6 +283,7 @@ function downloadArgs(options:DownloadOptions):string[] {
   const kbps=options.rateLimitKbps ?? 40000;
   if(!Number.isFinite(kbps)||kbps<=0)throw new Error('Invalid download rate');
   return ['--limit-rate',String(Math.floor(Math.min(40000,kbps)*1000/8)),'-N','1',
+    '--buffer-size','16K','--no-resize-buffer',
     '--downloader','m3u8:native','--abort-on-unavailable-fragments'];
 }
 

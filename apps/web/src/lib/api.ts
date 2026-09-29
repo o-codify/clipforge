@@ -62,6 +62,7 @@ export interface Viewer {
   displayName: string;
   actingAs: string | null;
   isAdmin: boolean;
+  isPreview?: boolean;
 }
 
 export interface GameRow {
@@ -136,6 +137,8 @@ export interface ClipRow {
 }
 
 export interface JobRow {
+  streamer?: string | null;
+  avatar?: string | null;
   stage?: string | null;
   objectTitle?: string;
   objectHref?: string | null;
@@ -148,6 +151,10 @@ export interface JobRow {
   startedAt: string | null;
   completedAt: string | null;
   output: unknown;
+}
+
+export interface JobGroup extends JobRow {
+  runs: number; active:number; waiting:number; completed:number; failed:number; recurring:boolean;
 }
 
 export interface Candidate {
@@ -192,6 +199,7 @@ export function when(iso: string | null | undefined): string {
 }
 
 export interface PlatformAccount {
+  verifiedAt?: string | null;
   disconnectRequestedAt?: string | null;
   id: string;
   platform: string;

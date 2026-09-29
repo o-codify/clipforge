@@ -71,7 +71,7 @@ export function loadConfig(): WorkerConfig {
     assets: join(underRoot(process.env.ASSETS_ROOT ?? "assets"), "twitch"),
     models: underRoot(process.env.MODELS_ROOT ?? "models"),
     videoFormat: process.env.VIDEO_FORMAT ?? "720p60",
-    mediaNetworkKbps: numberEnv(process.env, 'MEDIA_NETWORK_KBPS', 10000, 100, 40000),
+    mediaNetworkKbps: numberEnv(process.env, 'MEDIA_DOWNLOAD_KBPS', Number(process.env.MEDIA_NETWORK_KBPS || 10000), 100, 1000000),
     renderConcurrency: Math.floor(numberEnv(process.env, 'RENDER_CONCURRENCY', 1, 1, 4)),
     speechModel: process.env.SPEECH_MODEL ?? "large-v3",
     speechLanguage: process.env.SPEECH_LANGUAGE ?? "ru",

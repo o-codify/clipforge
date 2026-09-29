@@ -6,13 +6,13 @@
  * это решается тут, а не в каждом обработчике по отдельности. Забытая
  * проверка в одном маршруте означала бы, что чужой канал видно целиком.
  */
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 
 import {
   clips, games, publications, runs, streamerGames, streamers, transcripts, vods,
-  type Database,
+  vodAudioSettings, type AudioMode, type Database,
 } from "@clipforge/db";
 
 import { DATABASE } from "../config.js";
@@ -48,43 +48,44 @@ export class CatalogService {
   async games(viewer: Viewer | null) {
     const scope = viewer?.actingAs;
     return this.db.execute(sql`
+      with channel_counts as (
+        select game, count(*)::int as streamers from streamer_games
+        ${scope ? sql`where streamer = ${scope}` : sql``} group by game
+      ), vod_counts as (
+        select game, count(*)::int as vods, count(*) filter (where state='ready')::int as ready
+        from vods ${scope ? sql`where streamer = ${scope}` : sql``} group by game
+      ), clip_counts as (
+        select game, count(*)::int as clips from clips where archived_at is null
+        ${scope ? sql`and streamer = ${scope}` : sql``} group by game
+      )
       select g.slug, g.title, g.box_art as "boxArt", g.state,
-             count(distinct sg.streamer)::int as streamers,
-             count(distinct v.id) filter (where v.state = 'ready')::int as "readyVods",
-             count(distinct v.id)::int as vods,
-             count(distinct c.id)::int as clips
-      from games g
-        left join streamer_games sg on sg.game = g.slug
-          ${scope ? sql`and sg.streamer = ${scope}` : sql``}
-        left join vods v on v.game = g.slug
-          ${scope ? sql`and v.streamer = ${scope}` : sql``}
-        left join clips c on c.game = g.slug and c.archived_at is null
-          ${scope ? sql`and c.streamer = ${scope}` : sql``}
-      ${scope ? sql`where exists (select 1 from streamer_games x
-                                   where x.game = g.slug and x.streamer = ${scope})` : sql``}
-      group by g.slug, g.title, g.box_art, g.state
+        coalesce(s.streamers,0)::int as streamers, coalesce(v.vods,0)::int as vods,
+        coalesce(v.ready,0)::int as "readyVods", coalesce(c.clips,0)::int as clips
+      from games g left join channel_counts s on s.game=g.slug
+        left join vod_counts v on v.game=g.slug left join clip_counts c on c.game=g.slug
+      ${scope ? sql`where s.game is not null or v.game is not null or c.game is not null` : sql``}
       order by clips desc, streamers desc, g.title
     `);
   }
 
-  /** Стримеры со счётчиками. Для стримера - он один. */
   async streamers(viewer: Viewer | null, game?: string) {
     const scope = viewer?.actingAs;
     return this.db.execute(sql`
+      with vod_counts as (
+        select streamer, count(*)::int as vods, count(*) filter(where state='ready')::int as ready
+        from vods ${scope ? sql`where streamer=${scope}` : sql``} group by streamer
+      ), clip_counts as (
+        select streamer, count(*)::int as clips from clips where archived_at is null
+        ${scope ? sql`and streamer=${scope}` : sql``} group by streamer
+      )
       select s.login, s.display_name as "displayName", s.avatar, s.state,
-             s.live, s.live_game as "liveGame", s.live_viewers as "liveViewers",
-             s.followers, s.last_game as "lastGame", s.indexed_at as "indexedAt",
-             count(distinct v.id)::int as vods,
-             count(distinct v.id) filter (where v.state = 'ready')::int as "readyVods",
-             count(distinct c.id)::int as clips
-      from streamers s
-        left join vods v on v.streamer = s.login
-        left join clips c on c.streamer = s.login and c.archived_at is null
-      where true
-        ${scope ? sql`and s.login = ${scope}` : sql``}
-        ${game ? sql`and exists (select 1 from streamer_games sg
-                                  where sg.streamer = s.login and sg.game = ${game})` : sql``}
-      group by s.login
+        s.live, s.live_game as "liveGame", s.live_viewers as "liveViewers", s.followers,
+        s.last_game as "lastGame", s.indexed_at as "indexedAt",
+        coalesce(v.vods,0)::int as vods, coalesce(v.ready,0)::int as "readyVods", coalesce(c.clips,0)::int as clips
+      from streamers s left join vod_counts v on v.streamer=s.login
+        left join clip_counts c on c.streamer=s.login
+      where true ${scope ? sql`and s.login=${scope}` : sql``}
+        ${game ? sql`and exists(select 1 from streamer_games sg where sg.streamer=s.login and sg.game=${game})` : sql``}
       order by s.live desc, clips desc, s.login
     `);
   }
@@ -165,9 +166,10 @@ export class CatalogService {
       .groupBy(runs.id)
       .orderBy(desc(runs.startedAt));
 
-    if(viewer?.isAdmin)return { ...row, transcript: transcript ?? null, runs: vodRuns };
-    const {error,facecam,signals,...visible}=row;
-    return {...visible,facecam:facecam?{found:facecam.found}:null,signals:signals?{ready:true}:null,
+    const audio = await vodAudioSettings(this.db, id);
+    if(viewer?.isAdmin)return { ...row, audio, transcript: transcript ?? null, runs: vodRuns };
+    const {error,facecam,signals,adProtection,...visible}=row;
+    return {...visible,audio,facecam:facecam?{found:facecam.found}:null,signals:signals?{ready:true}:null,
       transcript:transcript?{language:transcript.language,segments:transcript.segments}:null,
       runs:vodRuns.map(({version,settings,...run})=>run)};
   }
@@ -236,7 +238,12 @@ export class CatalogService {
       .where(and(eq(clips.vodId, row.vodId), eq(clips.segmentKey, row.segmentKey), isNull(clips.archivedAt)))
       .orderBy(clips.createdAt);
 
-    return { ...visibleClip(viewer, row),
+    const [run] = await this.db.select({settings:runs.settings}).from(runs).where(eq(runs.id,row.runId));
+    const protection = (run?.settings.renderedClips as Record<string,{protection?:{audio?:{method?:string};ads?:{regions?:unknown[];qrHits?:number;bannerHits?:number;profileId?:string;profileFrames?:number};reviewedAt?:string;autoVerifiedAt?:string}}>|undefined)?.[id]?.protection;
+    const safety = protection ? {method:protection.audio?.method,regions:protection.ads?.regions?.length ?? 0,
+      qrHits:protection.ads?.qrHits ?? 0,bannerHits:protection.ads?.bannerHits ?? 0,reviewedAt:protection.reviewedAt ?? null,
+      autoVerifiedAt:protection.autoVerifiedAt??null,profileFrames:protection.ads?.profileFrames??0} : null;
+    return { ...visibleClip(viewer, row), safety,
       publications: viewer?.isAdmin ? pubs : pubs.map(({id,platform,url,status,privacy}) => ({id,platform,url,status,privacy})),
       versions: viewer?.isAdmin ? versions : [],
     };
@@ -258,12 +265,20 @@ export class CatalogService {
     return { ok: true };
   }
 
-  async setClipState(viewer: Viewer | null, id: string, state: "draft" | "ready") {
-    await this.clip(viewer, id);
-    await this.db
+  async setClipState(viewer: Viewer | null, id: string, state: "draft" | "ready", reviewed = false) {
+    const clip = await this.clip(viewer, id);
+    if (state === 'ready' && (!clip.safety || (!clip.safety.autoVerifiedAt && !reviewed))) throw new BadRequestException('Сначала завершите обработку рекламы');
+    await this.db.transaction(async tx=>{
+    if (state === 'ready' && !clip.safety?.autoVerifiedAt) {
+      await tx.execute(sql`update runs set settings = jsonb_set(settings,
+        array['renderedClips',${id},'protection','reviewedAt'], to_jsonb(now()::text), true) where id=${clip.runId}`);
+    }
+    const saved=await tx
       .update(clips)
       .set({ state, blockedReason: null })
-      .where(eq(clips.id, id));
+      .where(and(eq(clips.id, id),eq(clips.runId,clip.runId))).returning({id:clips.id});
+    if(!saved.length)throw new BadRequestException('Версия клипа изменилась. Откройте её заново');
+    });
     return { ok: true };
   }
 
@@ -354,6 +369,20 @@ export class CatalogService {
   async setStreamerState(login: string, state: "candidate" | "active" | "paused") {
     await this.db.update(streamers).set({ state }).where(eq(streamers.login, login));
     return { ok: true };
+  }
+
+  async setStreamerAudio(login: string, audioMode: AudioMode) {
+    const [row] = await this.db.update(streamers).set({audioMode})
+      .where(eq(streamers.login, login)).returning({audioMode: streamers.audioMode});
+    if (!row) throw new NotFoundException(`нет стримера ${login}`);
+    return row;
+  }
+
+  async setVodAudio(id: string, audioMode: AudioMode | null) {
+    const [row] = await this.db.update(vods).set({audioMode})
+      .where(eq(vods.id, id)).returning({id: vods.id});
+    if (!row) throw new NotFoundException(`нет эфира ${id}`);
+    return vodAudioSettings(this.db, id);
   }
 
   /** Эфиры, до которых у автоматики ещё не дошли руки. */

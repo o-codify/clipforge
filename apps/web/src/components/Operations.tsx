@@ -1,43 +1,26 @@
 "use client";
 import { useSession } from "@/lib/session";
-import Link from "next/link";
 import { useCallback, useState } from "react";
-import { api } from "@/lib/api";
+import { api, when } from "@/lib/api";
 import { useLiveReload } from "@/lib/jobs";
-import { Button, Card, Pill } from "./ui";
+import { Button } from "./ui";
+import { SettingsCard, LoadError } from "./SettingsCard";
 import { toast } from "@/lib/toast";
-
-export function Operations() {
-  const [status, setStatus] = useState<any>(null);
-  const { viewer } = useSession();
-  const [error, setError] = useState("");
-  const load = useCallback(() => {
-    void api.get("/api/operations").then(s => { setStatus(s); setError(""); }).catch(e => setError(String(e)));
-  }, []);
+export function Operations({compact=false}:{compact?:boolean}) {
+  const [status,setStatus]=useState<any>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  const {viewer}=useSession();
+  const load=useCallback(()=>{void api.get("/api/operations").then(s=>{setStatus(s);setError("");}).catch(()=>setError("Не удалось загрузить состояние платформы"));},[]);
   useLiveReload(load);
-  const paused = status?.runtime?.settings?.paused;
-  const scheduler = status?.runtime?.scheduler;
-  return <Card>
-    <div className="form-row"><b>Автономная обработка</b>
-      <Pill tone={error || !status?.online ? "bad" : paused ? "warn" : "ok"}>
-        {error ? "Нет связи" : !status ? "Проверка…" : !status.online ? "Обработка недоступна" : paused ? "На паузе" : "Работает"}
-      </Pill>
-      {viewer?.isAdmin && status && <Button size="sm" onClick={async () => {
-        try { await api.post("/api/operations/pause", { paused: !paused }); load(); } catch(e) { toast.error(String(e)); }
-      }}>{paused ? "Возобновить" : "Приостановить новые задания"}</Button>}
-    </div>
-    {error && <p role="alert">{error}</p>}
-    {status?.runtime && <>
-      {status.runtime.settings?.developmentMode && <p><b>Режим разработки</b> · Автоматическая нарезка и публикация выключены. Ручной запуск создаёт один клип.</p>}
-      <p>{paused ? "Новые автоматические задания остановлены. Уже запущенные завершаются." : scheduler?.reason ?? "Ожидается первый обход планировщика."}</p>
-      {scheduler?.vodId && <p>Выбран <Link href={`/vods/${scheduler.vodId}`}>Эфир канала {scheduler.streamer} →</Link></p>}
-      <div className="meta">
-        {typeof scheduler?.freeGb === "number" && <>Свободно {scheduler.freeGb.toFixed(1)} ГБ · </>}
-        {scheduler?.dailyLimit && <>Бюджет: {scheduler.dailyLimit} эфира/сутки · </>}
-        Twitch: {status.twitchConfigured ? "Настроен" : "Нужны ключи приложения"}
-        {status.runtime.discovery?.inspected != null && <> · Последний поиск: {status.runtime.discovery.inspected} кандидатов, добавлено {status.runtime.discovery.added}</>}
-      </div>
-      {status.runtime.discovery?.state === "error" && <p role="alert">Поиск: {status.runtime.discovery.reason}</p>}
-    </>}
-  </Card>;
+  const paused=!!status?.runtime?.settings?.paused, development=!!status?.runtime?.settings?.developmentMode;
+  const pause=async()=>{setBusy(true);try{await api.post("/api/operations/pause",{paused:!paused});load();}catch(e){toast.error(String(e));}finally{setBusy(false);}};
+  if(error)return <LoadError message={error} retry={load}/>;
+  const processing=<SettingsCard title="Обработка видео" status={!status?"Проверка…":status.online?"Доступна":"Недоступна"} tone={!status?"":status.online?"ok":"bad"} actions={viewer.isAdmin&&status?<Button busy={busy} onClick={pause}>{paused?"Возобновить новые задания":"Приостановить новые задания"}</Button>:undefined}>
+    <dl className="settings-facts"><div><dt>Новые задания</dt><dd>{!status?"—":paused?"На паузе":"Разрешены"}</dd></div><div><dt>Последняя связь</dt><dd>{when(status?.runtime?.worker?.updatedAt)}</dd></div></dl>
+  </SettingsCard>;
+  if(compact)return processing;
+  return <>{processing}<SettingsCard title="Автоматическая нарезка" status={!status?"Проверка…":development?"Выключена":paused?"На паузе":!status.online?"Ожидает обработчик":"Включена"} tone={!status||development?"":paused||!status.online?"warn":"ok"}>
+    <dl className="settings-facts"><div><dt>Режим</dt><dd>{!status?"—":development?"Ручной запуск":"Автоматический"}</dd></div><div><dt>Последний выбор эфира</dt><dd>{when(status?.runtime?.scheduler?.updatedAt)}</dd></div></dl>
+  </SettingsCard><SettingsCard title="Автопубликация" status={!status?"Проверка…":!status.autoPublishEnabled?"Выключена":paused?"На паузе":"Включена"} tone={status?.autoPublishEnabled?(paused?"warn":"ok"):""}>
+    <dl className="settings-facts"><div><dt>Отправка клипов</dt><dd>{!status?"—":status.autoPublishEnabled?"Автоматически":"Вручную"}</dd></div><div><dt>Последнее обновление статистики</dt><dd>{when(status?.runtime?.metrics?.updatedAt)}</dd></div></dl>
+  </SettingsCard></>;
 }

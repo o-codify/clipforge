@@ -11,5 +11,6 @@ await cp('workers/python',`${output}/workers/python`,{recursive:true,filter:path
 await cp('scripts/media-pc.mjs',`${output}/supervisor.mjs`);
 await cp('scripts/stop-media-tree.ps1',`${output}/stop-media-tree.ps1`);
 await cp('scripts/run-media-limited.py',`${output}/run-media-limited.py`);
+await cp('scripts/media_resources.py',`${output}/media_resources.py`);
 await writeFile(`${output}/release.json`,JSON.stringify({release:process.env.GITHUB_SHA,entry:'apps/worker/dist/main.mjs'}));
 console.log('Prepared media runtime without a compiler or package manager requirement on the PC');

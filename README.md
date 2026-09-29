@@ -26,6 +26,11 @@
 
 ## Проверки и внешние подключения
 
+Управление из инструментов и командной строки: `pnpm cf --help`.
+[Клиент платформы и API публикаций](docs/platform-tools.md) используют ту же авторизацию,
+очередь и историю, что и сайт. Для обычных операций не нужны отдельные скрипты,
+SSH или изменения данных напрямую в БД.
+
 `pnpm typecheck`, `pnpm build`, `pnpm test`, `pnpm test:integration`, `pnpm check:integrations`.
 HTTP-тестам нужны работающие API и БД. Реальный тест обработки: задать TEST_SOURCE_VIDEO и выполнить `node apps/worker/test/pipeline.integration.mjs`.
 

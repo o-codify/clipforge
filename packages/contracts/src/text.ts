@@ -28,6 +28,7 @@ const PATTERNS: readonly string[] = [
   String.raw`нихуя` + B,
   // пизда
   String.raw`пизд` + W,
+  String.raw`пизец` + W,
   String.raw`спизд` + W,
   String.raw`подпизд` + W,
   // корень еб. Приставки перечислены явно: голое «в» брать нельзя -
@@ -38,6 +39,7 @@ const PATTERNS: readonly string[] = [
   String.raw`ёб` + W,
   String.raw`еблан` + W,
   String.raw`ебот` + W,
+  String.raw`долбо[её]б` + W,
   // блядь
   String.raw`бля(?:дь|ть|д` + W + String.raw`|т` + W + String.raw`|)` + B,
   String.raw`блят` + W,

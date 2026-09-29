@@ -9,6 +9,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { activeTimeout, waitForResources, wasPreempted } from '@clipforge/resources';
 
 import {
   buildFilter,
@@ -60,15 +61,16 @@ export function buildAudioFilter(
   offset: number,
   duration: number,
   beep = true,
+  source = '0:a',
 ): { graph: string; output: string } {
-  if (spans.length === 0) return { graph: "", output: "0:a" };
+  if (spans.length === 0) return { graph: "", output: source };
 
   const local = spans
     .filter(([a, b]) => b > offset && a < offset + duration)
     .map(([a, b]): Span => [Math.max(0, a - offset), Math.min(duration, b - offset)])
     .filter(([a, b]) => b > a);
 
-  if (local.length === 0) return { graph: "", output: "0:a" };
+  if (local.length === 0) return { graph: "", output: source };
 
   const inside = local
     .map(([a, b]) => `between(t,${a.toFixed(3)},${b.toFixed(3)})`)
@@ -80,14 +82,14 @@ export function buildAudioFilter(
     // Только заглушить. Провал в тишину слышится как дефект записи,
     // поэтому вариант хуже писка, но иногда его и просят.
     return {
-      graph: `[0:a]volume='1-${gate}':eval=frame[aout]`,
+      graph: `[${source}]volume='1-${gate}':eval=frame[aout]`,
       output: "[aout]",
     };
   }
 
   return {
     graph:
-      `[0:a]volume='1-${gate}':eval=frame[voice];` +
+      `[${source}]volume='1-${gate}':eval=frame[voice];` +
       `sine=frequency=${BEEP_HZ}:sample_rate=48000:duration=${duration.toFixed(3)},` +
       `volume='${BEEP_LEVEL}*${gate}':eval=frame[beep];` +
       `[voice][beep]amix=inputs=2:duration=first:normalize=0[aout]`,
@@ -104,19 +106,22 @@ export function buildAudioFilter(
 export const escapeAssPath = (path: string): string =>
   path.replaceAll("\\", "/").replaceAll(":", "\\:");
 
-async function run(
+export async function runMediaCommand(
   command: string,
   args: readonly string[],
   timeoutMs: number,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
+  for (;;) {
+  await waitForResources();
+  const started = Date.now();
+  const result = await new Promise<{ code: number; stdout: string; stderr: string; pid?: number }>((resolve, reject) => {
     const child = spawn(command, args, { windowsHide: true });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
 
-    const timer = setTimeout(() => {
+    const timer = activeTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`таймаут ${command}`));
     }, timeoutMs);
@@ -127,9 +132,11 @@ async function run(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout, stderr });
+      resolve({ code: code ?? -1, stdout, stderr, pid: child.pid });
     });
   });
+  if (!wasPreempted(result.pid, started)) return result;
+  }
 }
 
 /** Разрешение исходника - от него зависит расчёт сетки. */
@@ -137,7 +144,7 @@ export async function probeSize(
   path: string,
 ): Promise<{ width: number; height: number }> {
   try {
-    const { stdout } = await run(
+    const { stdout } = await runMediaCommand(
       "ffprobe",
       ["-v", "error", "-select_streams", "v:0", "-show_entries",
        "stream=width,height", "-of", "json", path],
@@ -155,12 +162,13 @@ export async function probeMedia(path: string): Promise<{
   width: number;
   height: number;
   fps: number;
+  duration: number;
 } | null> {
   try {
-    const { stdout } = await run(
+    const { stdout } = await runMediaCommand(
       "ffprobe",
       ["-v", "error", "-select_streams", "v:0", "-show_entries",
-       "stream=width,height,r_frame_rate", "-of", "json", path],
+       "stream=width,height,r_frame_rate,duration", "-of", "json", path],
       30_000,
     );
     const stream = JSON.parse(stdout).streams?.[0];
@@ -169,6 +177,7 @@ export async function probeMedia(path: string): Promise<{
       width: Number(stream.width),
       height: Number(stream.height),
       fps: Number((Number(num) / Number(den || 1)).toFixed(3)),
+      duration: Number(stream.duration),
     };
   } catch {
     return null;
@@ -176,6 +185,9 @@ export async function probeMedia(path: string): Promise<{
 }
 
 export interface RenderOptions {
+  /** Clean PCM covers the complete clip, including the outro. Never mix original audio back in. */
+  audioSource?: string;
+  sourceMasks?: {x:number;y:number;w:number;h:number}[];
   source: string;
   start: number;
   end: number;
@@ -275,13 +287,16 @@ export function buildFfmpegArgs(options: RenderOptions, assPath: string | null):
     }
   }
 
-  const audio = buildAudioFilter(censorSpans, start, readDuration, censorBeep);
+  const audioInput = options.audioSource ? `${1 + inputs.filter(v => v === '-i').length}:a` : '0:a';
+  if (options.audioSource) inputs.push('-i', options.audioSource);
+  const audio = buildAudioFilter(censorSpans, start, readDuration, censorBeep, audioInput);
   let graph = buildFilter(grid, {
     ...(assPath ? { subtitlesPath: assPath } : {}),
     overlays,
     ...(scrim ? { scrim } : {}),
     duration: readDuration,
     fps,
+    sourceMasks: options.sourceMasks,
   });
   if (audio.graph) graph = `${graph};${audio.graph}`;
 
@@ -299,6 +314,7 @@ export function buildFfmpegArgs(options: RenderOptions, assPath: string | null):
     "-r", String(fps),
     "-c:a", "aac", "-b:a", audioBitrate, "-ac", "2",
     "-movflags", "+faststart",
+    '-t', readDuration.toFixed(3),
     out,
   ];
 
@@ -343,7 +359,7 @@ export async function renderClip(options: RenderOptions): Promise<RenderResult> 
     }
 
     const { args } = buildFfmpegArgs(options, assPath);
-    const result = await run("ffmpeg", args, options.timeoutMs ?? 600_000);
+    const result = await runMediaCommand("ffmpeg", args, options.timeoutMs ?? 600_000);
     const seconds = (Date.now() - started) / 1000;
 
     if (result.code !== 0 || !existsSync(options.out)) {

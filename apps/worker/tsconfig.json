@@ -8,7 +8,9 @@
     "src/**/*.ts"
   ],
   "references": [
-    { "path": "../../packages/storage" },
+    {
+      "path": "../../packages/storage"
+    },
     {
       "path": "../../packages/contracts"
     },
@@ -23,6 +25,12 @@
     },
     {
       "path": "../../packages/twitch"
+    },
+    {
+      "path": "../../packages/resources"
+    },
+    {
+      "path": "../../packages/youtube"
     }
   ]
 }

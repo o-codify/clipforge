@@ -3,6 +3,9 @@ import type { Database } from "./client.js";
 
 /** Additive, idempotent upgrade for existing installations. Never drops data. */
 export async function upgradeRuntime(db: Database): Promise<void> {
+  await db.execute(sql`ALTER TABLE vods ADD COLUMN IF NOT EXISTS ad_protection jsonb`);
+  await db.execute(sql`ALTER TABLE streamers ADD COLUMN IF NOT EXISTS audio_mode text NOT NULL DEFAULT 'original' CHECK (audio_mode IN ('original','dtln'))`);
+  await db.execute(sql`ALTER TABLE vods ADD COLUMN IF NOT EXISTS audio_mode text CHECK (audio_mode IN ('original','dtln'))`);
   await db.execute(sql`ALTER TYPE account_role ADD VALUE IF NOT EXISTS 'moderator'`);
   await db.execute(sql`ALTER TYPE account_role ADD VALUE IF NOT EXISTS 'user'`);
   await db.execute(sql`UPDATE accounts SET role = 'user' WHERE role = 'streamer'`);

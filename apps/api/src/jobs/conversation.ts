@@ -2,7 +2,7 @@ import { narrateEvent } from "./narration.js";
 
 interface Job {
   id:string; name:string; state:string; data:Record<string,unknown>; createdAt:string;
-  output:unknown; objectTitle?:unknown; objectHref?:unknown; streamerName?:unknown;
+  output:unknown; objectTitle?:unknown; objectHref?:unknown; streamerName?:unknown; streamer?:unknown;
 }
 export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
   const logs=events.map(event=>event.message.trim());
@@ -16,11 +16,23 @@ export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
   const complete=job.state==="completed";
   const failed=["failed","expired"].includes(job.state);
   const latest=[...logs].reverse().map(narrateEvent).find(Boolean);
-  const text=complete ? job.name==="heavy.pipeline"||job.name==="heavy.render-run" ? "Клипы готовы. Обработка эфира завершена." : "Проверка завершена. Информация обновлена."
-    : failed ? "Не удалось завершить обработку. Готовые материалы сохранены; подробности доступны администратору."
-    : job.state==="cancelled" ? "Обработка остановлена. Готовые материалы сохранены."
+  const completions:Record<string,string>={
+    "heavy.pipeline":"Закончил обработку эфира. Готовые клипы можно посмотреть здесь.",
+    "heavy.render-run":"Закончил монтаж клипов.","heavy.render-variant":"Подготовил клип с выбранной обработкой.","heavy.fetch-vod":"Загрузил запись эфира.",
+    "heavy.clean-clip":"Скрыл рекламу в новой версии клипа.",
+    "heavy.inspect-ads":"Проверил кадры эфира и сохранил расположение рекламы для нарезки.",
+    "heavy.transcribe-vod":"Распознал речь в эфире.","heavy.analyze-vod":"Проверил звук и нашёл моменты для отбора.",
+    "heavy.facecam-vod":output?.found?"Нашёл камеру стримера.":"Не нашёл камеру в проверенных кадрах.",
+    "light.index-channel":"Проверил записи канала и обновил список эфиров.",
+    "light.fetch-vod-info":"Обновил информацию об эфире.","light.refresh-streamer":"Обновил профиль стримера.",
+    "light.publish-clip":"Завершил задание публикации. Результат можно проверить в карточке клипа.",
+    "light.refresh-youtube":"Проверил видимость видео, ограничения и обновил статистику YouTube.",
+  };
+  const text=complete ? completions[job.name]??"Закончил задание. Результаты сохранены."
+    : failed ? "Не смог завершить задание. Посмотреть причину можно в разделе заданий."
+    : job.state==="cancelled" ? "Остановил обработку. Уже готовые материалы сохранены."
     : job.state==="retry" ? "Повторю обработку после паузы. Уже готовые материалы сохранены."
-    : job.state==="created" ? "Эфир в очереди на обработку."
+    : job.state==="created" ? "Добавил задание в очередь. Начну, когда дойдёт его очередь."
     : rendered.size ? `Монтирую клипы: готово ${rendered.size} из ${total}.`
     : latest??"Начинаю обработку материала.";
   const facts:{label:string;value:string}[]=[];
@@ -32,7 +44,8 @@ export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
   return {
     id:`work-${job.data.vodId?`vod:${job.data.vodId}`:job.data.login?`channel:${job.data.login}`:job.id}`,
     time:new Date(job.createdAt).toISOString(),text,
-    context:[...new Set([job.streamerName,job.objectTitle].filter(Boolean))].join(" · "),facts,
+    streamer: typeof job.streamer==='string'?job.streamer:typeof job.data.login==='string'?job.data.login:undefined,
+    context:job.objectHref?.toString().startsWith('/vods/')?String(job.objectTitle??''):undefined,facts,
     steps:job.name==="heavy.pipeline" ? ["Загрузка","Речь","Анализ","Камера","Монтаж"].map((label,index)=>({label,state:complete||index+1<stage?"done":index+1===stage?failed?"error":"active":"waiting"})) : [],
     actions:job.objectHref?[{id:complete&&job.data.vodId?`clips:${job.data.vodId}`:String(job.objectHref),label:complete&&job.data.vodId?"Клипы в чате":job.data.login?"Открыть канал":"Открыть эфир"}]:[],
     tone:failed?"error":complete?"success":"normal",

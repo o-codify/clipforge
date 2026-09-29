@@ -1,4 +1,5 @@
 "use client";
+import { StreamerBadge } from "@/components/StreamerBadge";
 
 /**
  * Поиск стримеров на Twitch.
@@ -117,13 +118,7 @@ export default function DiscoveryPage() {
               {candidates.map((candidate) => (
                 <tr key={candidate.login}>
                   <td>
-                    <a
-                      href={`https://twitch.tv/${candidate.login}`}
-                      target="_blank"
-                      rel="noopener"
-                    >
-                      {candidate.displayName}
-                    </a>
+                    <StreamerBadge login={candidate.login} name={candidate.displayName} external/>
                   </td>
                   <td className="num">{candidate.viewers.toLocaleString("ru-RU")}</td>
                   <td className="num">{candidate.followers.toLocaleString("ru-RU")}</td>

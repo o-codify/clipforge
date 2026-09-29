@@ -20,6 +20,7 @@ import { refreshAccessToken, uploadVideo, videoStatus, suggestVideoMetadata, pre
 
 import type { Context } from "./context.js";
 import type { JobReport } from "./handlers.js";
+import { collectMetrics } from "./metrics.js";
 
 async function setStatus(
   db: Database,
@@ -43,6 +44,7 @@ export async function publishClip(
       file: clips.file,
       storage: clips.mediaStorage,
       outDir: runs.outDir,
+      reviewedAt:sql<string|null>`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'])`,
       state: clips.state,
       archivedAt: clips.archivedAt,
       login: clips.streamer,
@@ -65,12 +67,12 @@ export async function publishClip(
   if ((!savedSession && row.publication.status === "uploading") || row.publication.error?.startsWith("[upload-uncertain]")) {
     throw new Error("Исход предыдущей загрузки неизвестен. Проверьте YouTube-канал перед повторной отправкой.");
   }
-  if (row.state !== "ready" || row.archivedAt) {
+  if (row.state !== "ready" || row.archivedAt || !row.reviewedAt) {
     await setStatus(ctx.db, row.publication.id, {
       status: "failed",
-      error: "клип снят с публикации",
+      error: "Клип не разрешён к публикации: обработка рекламы не завершена",
     });
-    throw new Error("клип снят с публикации");
+    throw new Error("Клип не разрешён к публикации: обработка рекламы не завершена");
   }
 
   const [account] = await ctx.db
@@ -109,6 +111,7 @@ export async function publishClip(
     const videoId = await uploadVideo(accessToken, {
       ...(source ? {source:{...source,reopen:(offset:number)=>ctx.storage!.openVideoRange(row.storage!.videoKey,offset)}} : {file:join(row.outDir, row.file)}),
       session:savedSession ? {url:savedSession.url,size:Number(savedSession.size)} : undefined,
+      renewAccessToken:()=>refreshAccessToken(ctx.youtube!,refreshToken),
       saveSession:async session=>{
         await ctx.db.execute(sql`insert into youtube_upload_sessions(publication_id,url,size) values(${row.publication.id},${session.url},${session.size})`);
       },
@@ -139,6 +142,9 @@ export async function publishClip(
           publishedAt: status.privacyStatus === "public" ? new Date() : null,
         });
         report.log("обработан");
+        // A successful upload stays successful even if statistics are temporarily unavailable.
+        const metrics = await collectMetrics(ctx, payload.publicationId).catch(() => null);
+        if (!metrics || metrics.state !== 'ok') report.log("Статистика появится после следующего обновления");
         break;
       }
       if (status?.uploadStatus === "rejected" || status?.uploadStatus === "failed") {

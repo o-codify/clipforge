@@ -21,7 +21,8 @@
     "pg-boss": "^10.1.6",
     "zod": "^3.24.1",
     "@clipforge/twitch": "workspace:*",
-    "@clipforge/youtube": "workspace:*"
+    "@clipforge/youtube": "workspace:*",
+    "@clipforge/resources": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

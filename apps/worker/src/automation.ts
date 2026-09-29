@@ -272,8 +272,10 @@ export function startAutomation(
       select c.id
       from clips c
         join streamers s on s.login = c.streamer
+        join runs r on r.id = c.run_id
       where s.auto_publish
         and c.state = 'ready'
+        and coalesce(r.settings #>> array['renderedClips',c.id,'protection','autoVerifiedAt'], r.settings #>> array['renderedClips',c.id,'protection','reviewedAt']) is not null
         and c.archived_at is null
         and not exists (
           select 1 from publications p
@@ -310,17 +312,31 @@ export function startAutomation(
 
   const running = new Set<string>();
   let stopping = false;
-  const guard = (name: string, task: () => Promise<void>) => async () => {
-    if (stopping || running.has(name)) return;
+  const guard = (name: string, task: () => Promise<unknown>) => async () => {
+    if (stopping || running.has(name) || name === "поиск" && !ctx.twitch) return;
     running.add(name);
+    let runId: string | null = null;
+    const kind = name === "поиск" ? "discovery" : name === "статистика" ? "metrics" : "sweep";
     try {
       const [setting] = await ctx.db.execute<{value: {paused?: boolean}}>(sql`select value from platform_runtime where key = 'settings'`);
       // Access revocation and retention keep running while scheduling is paused.
-      if (name === "статистика" || !setting?.value.paused) await task();
+      if (name === "статистика" || !setting?.value.paused) {
+        runId = randomUUID();
+        await ctx.db.execute(sql`insert into automation_runs(id,name,state) values (${runId}::uuid,${'platform.'+kind},'active')`);
+        await task();
+        const [result] = await ctx.db.execute<{value:{state?:string}}>(sql`select value from platform_runtime where key=${kind==='sweep'?'scheduler':kind}
+          and updated_at >= (select started_at from automation_runs where id=${runId}::uuid)`);
+        await ctx.db.execute(sql`update automation_runs set state=${result?.value.state==='error'?'failed':'completed'},completed_at=now(),output=${JSON.stringify(result?.value??{})}::jsonb where id=${runId}::uuid`);
+      }
     } catch (error) {
       ctx.log(`автоматика (${name}): ${String(error)}`);
       await runtimeValue(ctx.db, name === "поиск" ? "discovery" : name === "статистика" ? "metrics" : "scheduler", {state:"error", reason:String(error)}).catch(() => {});
-    } finally { running.delete(name); }
+      if (runId) await ctx.db.execute(sql`update automation_runs set state='failed',completed_at=now() where id=${runId}::uuid`).catch(()=>{});
+    } finally {
+      running.delete(name);
+      // Only recent execution details are retained; the UI displays a single recurring task.
+      await ctx.db.execute(sql`delete from automation_runs where started_at < now()-interval '14 days'`).catch(()=>{});
+    }
   };
 
   // Первый обход сразу: после запуска не должно быть получаса тишины.

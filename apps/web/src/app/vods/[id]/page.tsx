@@ -1,4 +1,5 @@
 "use client";
+import { StreamerBadge } from "@/components/StreamerBadge";
 import { useSession } from "@/lib/session";
 
 /**
@@ -23,9 +24,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Card, JobButton, PageSkeleton, Pill, SectionTitle } from "@/components/ui";
 import { api, hhmm, runTime, TRIGGERS, when } from "@/lib/api";
 import { useJobs, useLiveReload } from "@/lib/jobs";
+import {AudioSetting,type VodAudioSettings} from '@/components/AudioSetting';
 
 interface VodDetail {
   id: string;
+  audio: VodAudioSettings;
+  adProtection?: {complete:boolean;samples:number;regions:unknown[]}|null;
   streamer: string;
   game: string | null;
   title: string | null;
@@ -114,7 +118,7 @@ export default function VodPage() {
       <div className="crumbs">
         <Link href="/">Обзор</Link>
         <span>/</span>
-        <Link href={`/streamers/${vod.streamer}`}>{vod.streamer}</Link>
+        <StreamerBadge login={vod.streamer}/>
         <span>/</span>
         <b>Запись эфира</b>
       </div>
@@ -146,7 +150,7 @@ export default function VodPage() {
               страницы. Загрузка исходников - первый шаг конвейера. */}
           <JobButton
             target={vod.id}
-            kinds={["pipeline", "render-run", "transcribe-vod", "analyze-vod", "facecam-vod"]}
+            kinds={["pipeline", "render-run", "render-variant", "transcribe-vod", "analyze-vod", "facecam-vod"]}
             variant="primary"
             icon="✂"
             disabled={Boolean(anyJob)}
@@ -158,6 +162,13 @@ export default function VodPage() {
           </JobButton>
         </div>
       </div>
+
+      {viewer?.isAdmin&&vod.audio&&<Card><AudioSetting scope="vod" id={id} value={vod.audio.override} streamerMode={vod.audio.streamerMode} onSaved={load}/></Card>}
+      {viewer?.isAdmin&&<Card><h3>QR-коды и реклама</h3>
+        <p>{vod.adProtection?.complete
+          ? `Карта эфира готова · ${vod.adProtection.samples} кадров · областей: ${vod.adProtection.regions.length}`
+          : 'Проверка кадров и скрытие рекламы выполняются автоматически перед нарезкой.'}</p>
+      </Card>}
 
       <SectionTitle aside={<span className="muted">{readySteps} из {STEPS.length}</span>}>
         Подготовка

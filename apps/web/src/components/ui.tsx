@@ -119,7 +119,7 @@ export function JobButton({
 }) {
   const { activeFor, refresh } = useJobs();
   const { viewer } = useSession();
-  disabled = disabled || !viewer || viewer.role === "moderator";
+  disabled = disabled || !viewer || !!viewer.isPreview || viewer.role === "moderator";
   const [pending, setPending] = useState(false);
   const job = activeFor(target, kinds);
   const elapsed = useElapsed(job?.startedAt ?? null);

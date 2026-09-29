@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Res } from "@nestjs/common";
 import { z } from "zod";
+import { refreshYoutubePayload } from '@clipforge/jobs';
 import type { FastifyReply } from "fastify";
 
 import { AdminOnly, Public } from "../auth/auth.guard.js";
@@ -21,8 +22,23 @@ export class PlatformsController {
   }
 
   @AdminOnly()
+  @Get('publications/:id')
+  publication(@Param('id') id:string) {
+    return this.platforms.publication(z.string().min(1).max(200).parse(id));
+  }
+
+  @AdminOnly()
+  @Post('youtube/refresh')
+  refresh(@Body() body:unknown) {
+    return this.platforms.refresh(refreshYoutubePayload.parse(body??{}));
+  }
+
+  @AdminOnly()
   @Post("youtube/check")
-  check() { return this.platforms.check(); }
+  check(@Body() body: unknown) {
+    const { accountId } = z.object({ accountId:z.string().min(1).optional() }).parse(body ?? {});
+    return this.platforms.check(accountId);
+  }
 
   @AdminOnly()
   @Post("youtube/connect")
@@ -43,7 +59,7 @@ export class PlatformsController {
     @Query("error") error: string | undefined,
     @Res() reply: FastifyReply,
   ) {
-    const back = `${this.config.webOrigin}/me`;
+    const back = `${this.config.webOrigin}/settings/publication`;
     if (error || !code || !state) {
       return reply.redirect(`${back}?youtube=denied`, 302);
     }

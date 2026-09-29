@@ -1,39 +1,37 @@
 "use client";
 
 /** Все клипы с фильтрами. */
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { Select } from "@/components/Select";
 import { ClipGrid } from "@/components/ClipGrid";
-import { api, TRIGGERS, type ClipRow } from "@/lib/api";
-import { useLiveReload } from "@/lib/jobs";
+import { PageSkeleton } from "@/components/ui";
+import { PageScroll } from "@/components/PageScroll";
+import { TRIGGERS, type ClipRow } from "@/lib/api";
+import { useCatalog } from "@/lib/catalog-cache";
+import { counted } from "@/lib/number";
 
 export default function ClipsPage() {
-  const [clips, setClips] = useState<ClipRow[]>([]);
   const [trigger, setTrigger] = useState("");
   const [state, setState] = useState("");
-
-  const load = useCallback(() => {
-    const params = new URLSearchParams({ limit: "200" });
-    if (trigger) params.set("trigger", trigger);
-    if (state) params.set("state", state);
-    void api.get<ClipRow[]>(`/api/clips?${params}`).then(setClips);
-  }, [trigger, state]);
-
-  // Новые клипы появляются в списке по мере рендера.
-  useLiveReload(load);
+  const params = new URLSearchParams({ limit: "200" });
+  if (trigger) params.set("trigger", trigger);
+  if (state) params.set("state", state);
+  const { data: clips, loading, error, refresh } = useCatalog<ClipRow[]>(`/api/clips?${params}`);
 
   return (
     <>
-
-      <p className="sub">{clips.length} последних</p>
-
-      <div className="actions">
-        <Select label="Тип момента" value={trigger} onValueChange={setTrigger} options={[{value:"",label:"Все триггеры"},...Object.entries(TRIGGERS).map(([value,label])=>({value,label}))]}/>
+      <div className="page-toolbar">
+        <Select label="Тип момента" value={trigger} onValueChange={setTrigger} options={[{value:"",label:"Все моменты"},...Object.entries(TRIGGERS).map(([value,label])=>({value,label}))]}/>
         <Select label="Состояние клипа" value={state} onValueChange={setState} options={[{value:"",label:"Любое состояние"},{value:"draft",label:"Черновик"},{value:"ready",label:"Одобрен"},{value:"blocked",label:"Снят"}]}/>
+        <span className="toolbar-count">{clips ? counted(clips.length, "клип", "клипа", "клипов") : "…"}</span>
       </div>
 
-      <ClipGrid clips={clips} onChange={load} />
+      <PageScroll>
+      {error && <p role="alert">{error} <button className="btn" onClick={refresh}>Повторить</button></p>}
+      {loading && <PageSkeleton />}
+      {clips && <ClipGrid clips={clips} onChange={refresh} />}
+      </PageScroll>
     </>
   );
 }

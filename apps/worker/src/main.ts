@@ -21,15 +21,23 @@ import { automationDefaults, startAutomation } from "./automation.js";
 import { createContext, type Context } from "./context.js";
 import {
   analyzeVod, facecamVod, fetchVod, indexChannel, renderRun, runPipeline,
-  transcribeVod, type JobReport,
+  transcribeVod, inspectAds, type JobReport,
 } from "./handlers.js";
 import { publishClip } from "./publish.js";
+import { refreshYoutube } from './metrics.js';
+import { cleanClip } from './clean-clip.js';
 import { pruneSources } from "./storage.js";
 import { servesQueue } from "./routing.js";
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { REPO_ROOT } from './context.js';
+import { resourceState, waitForResources } from '@clipforge/resources';
 
 type Handler = (ctx: Context, payload: never, report: JobReport) => Promise<unknown>;
 
 const HANDLERS: Record<string, Handler> = {
+  [QUEUES.inspectAds]: inspectAds as Handler,
   [QUEUES.pipeline]: runPipeline as Handler,
   [QUEUES.indexChannel]: indexChannel as Handler,
   [QUEUES.fetchVod]: fetchVod as Handler,
@@ -37,7 +45,10 @@ const HANDLERS: Record<string, Handler> = {
   [QUEUES.analyzeVod]: analyzeVod as Handler,
   [QUEUES.facecamVod]: facecamVod as Handler,
   [QUEUES.renderRun]: renderRun as Handler,
+  [QUEUES.renderVariant]: renderRun as Handler,
   [QUEUES.publishClip]: publishClip as Handler,
+  [QUEUES.refreshYoutube]: refreshYoutube as Handler,
+  [QUEUES.cleanClip]: cleanClip as Handler,
 };
 
 /**
@@ -67,11 +78,11 @@ function createLane(): <T>(task: () => Promise<T>) => Promise<T> {
  * выглядит как вечно идущая работа, которая блокирует кнопку и врёт про
  * происходящее.
  */
-async function releaseStaleJobs(boss: PgBoss, ctx: Context): Promise<void> {
+async function releaseStaleJobs(boss: PgBoss, ctx: Context, queues: ReadonlySet<string>): Promise<void> {
   const active = await ctx.db.execute<{ id: string; name: string; data: { publicationId?: string } }>(
     sql`select id::text, name, data from jobs.job where state = 'active'`,
   );
-  const stale = active.filter(job => servesQueue(ctx.config.role, job.name as QueueName));
+  const stale = active.filter(job => queues.has(job.name));
   if (stale.length === 0) return;
 
   for (const job of stale) {
@@ -95,9 +106,28 @@ async function main(): Promise<void> {
     console.log('PASS: portable worker imports and role isolation');
     return;
   }
+  // Local direct starts get the same governor as the packaged scheduled task.
+  // The supervised child inherits MEDIA_RESOURCE_STATE, preventing recursion.
+  if (process.platform === 'win32' && process.env.WORKER_ROLE !== 'control' && !process.env.MEDIA_RESOURCE_STATE) {
+    const limiter = [join(REPO_ROOT,'scripts','run-media-limited.py'),join(REPO_ROOT,'run-media-limited.py')].find(existsSync);
+    if (!limiter) throw new Error('Не найден контроллер ресурсов');
+    const python = process.env.PYTHON_BIN || join(REPO_ROOT,'.venv','Scripts','python.exe');
+    const child = spawn(python,[limiter,'--idle-seconds',process.env.MEDIA_IDLE_SECONDS || '0',
+      '--cpu-percent',process.env.MEDIA_CPU_TARGET || '90','--memory-mb',process.env.MEDIA_MEMORY_MB || '0',
+      '--state-file',join(REPO_ROOT,'data','media-resource-state.json'),'--',process.execPath,...process.execArgv,...process.argv.slice(1)],
+      {cwd:REPO_ROOT,env:process.env,windowsHide:true,stdio:'inherit'});
+    child.on('error',error=>{console.error(error);process.exit(1);});
+    child.on('exit',code=>process.exit(code ?? 1));
+    process.on('SIGINT',()=>child.kill());process.on('SIGTERM',()=>child.kill());
+    return;
+  }
   const ctx = createContext();
   const role = ctx.config.role;
-  const handlers = Object.fromEntries(Object.entries(HANDLERS).filter(([queue]) => servesQueue(role, queue as QueueName)));
+  const requestedQueues=process.env.WORKER_QUEUES?.split(',').map(name=>name.trim()).filter(Boolean);
+  if(requestedQueues?.some(name=>!HANDLERS[name]||!servesQueue(role,name as QueueName)))throw new Error('WORKER_QUEUES содержит недоступную для этой роли очередь');
+  const handlers = Object.fromEntries(Object.entries(HANDLERS).filter(([queue]) => servesQueue(role, queue as QueueName)
+    && (!requestedQueues || requestedQueues.includes(queue))));
+  const selectedQueues=new Set(Object.keys(handlers));
   const runtimeKey = role === "control" ? "control" : "worker";
   // all needs both leases, so it cannot overlap a distributed installation.
   const lockKeys = role === "all" ? [740021, 740023] : [role === "control" ? 740021 : 740023];
@@ -142,13 +172,15 @@ async function main(): Promise<void> {
 
   await boss.start();
 
-  for (const queue of Object.values(QUEUES)) {
+  for (const queue of selectedQueues) {
     await boss.createQueue(queue);
   }
 
-  await releaseStaleJobs(boss, ctx);
+  await releaseStaleJobs(boss, ctx,selectedQueues);
 
   const heavyLane = createLane();
+  const activeHeavy = new Set<string>();
+  let lastResourceBeat = Date.now();
   let beating = false;
   const heartbeat = async () => {
     if (beating) return;
@@ -161,7 +193,16 @@ async function main(): Promise<void> {
         const disks = await Promise.all([statfs(ctx.config.data), statfs(ctx.config.out)]);
         freeGb = Math.min(...disks.map(d => d.bavail * d.bsize)) / 1024 ** 3;
       }
-      await runtimeValue(ctx.db, runtimeKey, { pid: process.pid, state: "online", role, freeGb });
+      const resources = resourceState();
+      const pausedSeconds = Math.min(30, (Date.now()-lastResourceBeat)/1000);
+      lastResourceBeat = Date.now();
+      // Queue expiry measures working time as well. Extend only jobs owned by
+      // this worker; the PostgreSQL lease is still checked above on every beat.
+      if (resources.paused) for (const id of activeHeavy) {
+        await ctx.db.execute(sql`update jobs.job set expire_in = expire_in + make_interval(secs => ${pausedSeconds})
+          where id = ${id}::uuid and state = 'active'`);
+      }
+      await runtimeValue(ctx.db, runtimeKey, { pid: process.pid, state: "online", role, freeGb, resources });
       await localHeartbeat("online");
       if (process.connected) process.send?.({type:'heartbeat'});
     } catch (error) {
@@ -186,6 +227,7 @@ async function main(): Promise<void> {
         if (!job) return;
         const started = Date.now();
         const report: JobReport = {
+          id: job.id,
           log: (message) => {
             ctx.log(`  ${message}`);
             void ctx.db.execute(sql`insert into job_events(job_id, message) values (${job.id}::uuid, ${message.slice(0, 2000)})`).catch(e => ctx.log(String(e)));
@@ -199,9 +241,11 @@ async function main(): Promise<void> {
         };
 
         ctx.log(`▶ ${queue} ${JSON.stringify(job.data)}`);
+        if (heavy) activeHeavy.add(job.id);
         try {
           const payload = schema.parse(job.data);
           const work = async () => {
+            if (heavy) await waitForResources(report.cancelled);
             if (await report.cancelled()) return { cancelled: true };
             if (queue === QUEUES.pipeline) {
               const vodId = (payload as {vodId: string}).vodId;
@@ -224,6 +268,8 @@ async function main(): Promise<void> {
           const took = ((Date.now() - started) / 1000).toFixed(1);
           ctx.log(`✘ ${queue} за ${took} с: ${String(error)}`);
           throw error;
+        } finally {
+          activeHeavy.delete(job.id);
         }
       },
     );
@@ -233,9 +279,9 @@ async function main(): Promise<void> {
 
   // Автоматика: активные каналы обходятся сами, кандидаты из каталога
   // подключаются сами, нарезку запускает планировщик.
-  const stopAutomation = role === "media" ? () => {} : startAutomation(boss, ctx, automationDefaults(process.env));
+  const stopAutomation = role === "media" || requestedQueues ? () => {} : startAutomation(boss, ctx, automationDefaults(process.env));
   let pruning = false;
-  const pruneTimer = role === "media" ? setInterval(async () => {
+  const pruneTimer = role === "media" && !requestedQueues ? setInterval(async () => {
     if (pruning) return;
     pruning = true;
     try { await pruneSources(ctx); } catch (error) { ctx.log(String(error)); }

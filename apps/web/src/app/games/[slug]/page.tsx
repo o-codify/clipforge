@@ -1,4 +1,5 @@
 "use client";
+import { StreamerBadge } from "@/components/StreamerBadge";
 
 /**
  * Страница игры.
@@ -10,45 +11,43 @@
  */
 import Link from "next/link";
 import { NavigationRow } from "@/components/NavigationRow";
-import { useParams, useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useParams } from "next/navigation";
+import { useState } from "react";
 
 import { ClipGrid } from "@/components/ClipGrid";
 import { Card, PageSkeleton, Pill, SectionTitle } from "@/components/ui";
 import {
-  api, hhmm, VOD_STATE,
+  hhmm, VOD_STATE,
   type ClipRow, type GameRow, type StreamerRow, type VodRow,
 } from "@/lib/api";
-import { useLiveReload } from "@/lib/jobs";
+import { useCatalog } from "@/lib/catalog-cache";
+import { useSession } from "@/lib/session";
+import { counted } from "@/lib/number";
+import { Select } from "@/components/Select";
+import { DetailPage } from "@/components/DetailPage";
 
 export default function GamePage() {
   const { slug } = useParams<{ slug: string }>();
-  const router = useRouter();
-  const [game, setGame] = useState<GameRow | null>(null);
-  const [streamers, setStreamers] = useState<StreamerRow[]>([]);
-  const [vods, setVods] = useState<VodRow[]>([]);
-  const [clips, setClips] = useState<ClipRow[]>([]);
+  const {viewer}=useSession();
+  const catalog=useCatalog<GameRow[]>("/api/games");
+  const game=catalog.data?.find(item=>item.slug===slug);
+  const streamerData=useCatalog<StreamerRow[]>(`/api/streamers?game=${encodeURIComponent(slug)}`,!!game);
+  const vodData=useCatalog<VodRow[]>(`/api/vods?game=${encodeURIComponent(slug)}`,!!game);
+  const clipData=useCatalog<ClipRow[]>(`/api/clips?game=${encodeURIComponent(slug)}&limit=60`,!!game);
+  const streamers=streamerData.data??[];
+  const vods=vodData.data??[];
+  const clips=clipData.data??[];
   /** null - все стримеры; логин - только его эфиры и клипы. */
   const [who, setWho] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    void api
-      .get<GameRow[]>("/api/games")
-      .then((list) => setGame(list.find((g) => g.slug === slug) ?? null));
-    void api.get<StreamerRow[]>(`/api/streamers?game=${slug}`).then(setStreamers);
-    void api.get<VodRow[]>(`/api/vods?game=${slug}`).then(setVods);
-    void api.get<ClipRow[]>(`/api/clips?game=${slug}&limit=60`).then(setClips);
-  }, [slug]);
-
-  useLiveReload(load);
-
-  if (!game) return <PageSkeleton />;
+  if (catalog.loading) return <PageSkeleton />;
+  if (!game) return <Card className="empty">{catalog.error?<><p role="alert">Не удалось загрузить игру</p><button className="btn" onClick={catalog.refresh}>Повторить</button></>:<>Игра недоступна. <Link href="/games">Все игры</Link></>}</Card>;
 
   const shownVods = who ? vods.filter((vod) => vod.streamer === who) : vods;
   const shownClips = who ? clips.filter((clip) => clip.streamer === who) : clips;
 
   return (
-    <>
+    <DetailPage intro={<>
       <div className="crumbs">
         <Link href="/">Обзор</Link>
         <span>/</span>
@@ -57,39 +56,14 @@ export default function GamePage() {
 
       <h2 className="detail-title">{game.title}</h2>
       <p className="sub">
-        {game.streamers} стримеров · {game.vods} эфиров · {game.clips} клипов
+        {viewer.role!=="user"&&`${counted(game.streamers,"стример","стримера","стримеров")} · `}{counted(game.vods,"эфир","эфира","эфиров")} · {counted(game.clips,"клип","клипа","клипов")}
       </p>
 
-      <SectionTitle>Стримеры</SectionTitle>
-      <div className="grid cards">
-        {streamers.map((streamer) => (
-          <Card
-            key={streamer.login}
-            className={`card selectable${who === streamer.login ? " selected" : ""}`}
-          >
-            <button
-              className="card-filter"
-              onClick={() =>
-                setWho((current) => (current === streamer.login ? null : streamer.login))
-              }
-            >
-              <h3>{streamer.displayName ?? streamer.login}</h3>
-              <div className="meta">
-                {streamer.vods} эфиров · {streamer.clips} клипов
-              </div>
-            </button>
-            <div className="pillrow">
-              {streamer.live && <Pill tone="bad">В эфире</Pill>}
-              <Link className="pill" href={`/streamers/${streamer.login}`}>
-                На страницу канала →
-              </Link>
-            </div>
-          </Card>
-        ))}
-      </div>
+    </>} toolbar={viewer.role!=="user"&&<><Select label="Стример" value={who??""} onValueChange={value=>setWho(value||null)} options={[{value:"",label:"Все стримеры"},...streamers.map(streamer=>({value:streamer.login,label:streamer.displayName??streamer.login,content:<StreamerBadge login={streamer.login} name={streamer.displayName} avatar={streamer.avatar} linked={false}/>}))]} disabled={streamerData.loading}/>{who&&<Link className="btn" href={`/streamers/${who}`}>На страницу канала</Link>}{streamerData.error&&<span role="alert">Не удалось загрузить стримеров</span>}</>}>
 
       <SectionTitle>Эфиры</SectionTitle>
-      {shownVods.length === 0 ? (
+      {vodData.error&&<p role="alert">Не удалось обновить эфиры. <button className="btn" onClick={vodData.refresh}>Повторить</button></p>}
+      {vodData.loading ? <p role="status">Загрузка эфиров…</p> : !vodData.error&&shownVods.length === 0 ? (
         <Card className="empty">Эфиров с этим фильтром нет.</Card>
       ) : (
         <div className="scroller">
@@ -110,7 +84,7 @@ export default function GamePage() {
                 return (
                   <NavigationRow key={vod.id} href={`/vods/${vod.id}`} label={vod.id}>
                     <td onClick={(event) => event.stopPropagation()}>
-                      <Link href={`/streamers/${vod.streamer}`}>{vod.streamer}</Link>
+                      <StreamerBadge login={vod.streamer}/>
                     </td>
                     <td>{vod.title ?? "—"}</td>
                     <td className="num">{hhmm(vod.duration)}</td>
@@ -127,7 +101,8 @@ export default function GamePage() {
       )}
 
       <SectionTitle>Клипы</SectionTitle>
-      <ClipGrid clips={shownClips} onChange={load} />
-    </>
+      {clipData.error&&<p role="alert">Не удалось обновить клипы. <button className="btn" onClick={clipData.refresh}>Повторить</button></p>}
+      {clipData.loading?<p role="status">Загрузка клипов…</p>:<ClipGrid clips={shownClips} onChange={clipData.refresh} />}
+    </DetailPage>
   );
 }

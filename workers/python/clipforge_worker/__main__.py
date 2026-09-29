@@ -62,9 +62,8 @@ class Context:
 class Models:
     """Кэш загруженных моделей.
 
-    Ключ - имя модели: смена модели в настройках не должна требовать
-    перезапуска воркера, но и выгружать предыдущую незачем, пока хватает
-    памяти.
+    При смене модели освобождаем предыдущую. Контроллер рабочего стола
+    также выгружает процесс при длительной паузе или нехватке памяти.
     """
 
     def __init__(self) -> None:
@@ -74,6 +73,9 @@ class Models:
         from clipforge_worker import speech
 
         if name not in self._whisper:
+            self._whisper.clear()
+            import gc
+            gc.collect()
             ctx.progress(f"загрузка модели {name}")
             self._whisper[name] = speech.load_model(name)
             ctx.log(f"модель {name} загружена")
@@ -240,12 +242,67 @@ def op_minimap(params: dict[str, Any], ctx: Context) -> dict[str, Any]:
     return asdict(result)
 
 
+def op_prepare_media(params, ctx):
+    from clipforge_worker.ads import scan_ads
+    ctx.progress('Проверяю рекламные вставки')
+    profile = params.get('adProfile')
+    regions = list(params.get('regions', []))
+    if profile:
+        from clipforge_worker.ad_profile import source_info, VERSION
+        info = source_info(params['video'])
+        if profile.get('signature') != info['signature'] or profile.get('version') != VERSION or profile.get('complete') is not True:
+            raise ValueError('Карта рекламы не соответствует исходнику')
+        regions.extend(profile['regions'])
+    ads = scan_ads(params['video'], params['start'], params['end'], params.get('transcript', ''), regions)
+    if profile and not ads['reject']:
+        ads.update(requiresReview=False, automatic=True, profileId=profile['signature'], profileFrames=profile['samples'])
+    # Only the new explicit per-run option enables DTLN. Legacy method and
+    # speechSpans never enable enhancement or gating for ordinary rendering.
+    audio = {'method': 'original'}
+    if params.get('audioMode') == 'dtln' and not ads['reject']:
+        from clipforge_worker.music import clean_music
+        if not params.get('audioOut') or not params.get('models'):
+            raise ValueError('Для DTLN нужны путь результата и каталог моделей')
+        ctx.progress('Подавляю музыку с DTLN, без отключения пауз')
+        audio = clean_music(params['video'], params['start'], params['end'],
+            params['audioOut'], 'dtln', params['models'])
+    return {'audio': audio, 'ads': ads}
+
+
+def op_profile_ads(params, ctx):
+    from clipforge_worker.ad_profile import profile_ads
+    return profile_ads(params['video'], params['directory'], params.get('cached'), ctx.progress)
+
+
+def op_clean_clip(params, ctx):
+    from clipforge_worker.music import command
+    result = op_prepare_media(params, ctx)
+    if result['ads']['reject']:
+        raise ValueError(result['ads']['reason'])
+    masks = result['ads']['regions']
+    filters = ','.join(f"drawbox=x={r['x']}:y={r['y']}:w={r['w']}:h={r['h']}:color=0x18161e:t=fill" for r in masks)
+    pending = str(Path(params['out']).with_suffix('.pending.mp4'))
+    Path(params['out']).parent.mkdir(parents=True, exist_ok=True)
+    enhanced = result['audio']['method'] == 'dtln'
+    command(['ffmpeg','-v','error','-nostdin','-y',
+             *(['-ss',str(params['start'])] if params['start'] else []),'-i',params['video'],
+             *(['-i',result['audio']['file']] if enhanced else []),
+             '-map','0:v:0','-map','1:a:0' if enhanced else '0:a?',
+             *(['-vf',filters,'-c:v','libx264','-preset','veryfast','-crf','20','-threads','2'] if filters else ['-c:v','copy']),
+             '-c:a','aac' if enhanced else 'copy','-t',str(params['end']-params['start']),'-movflags','+faststart',pending])
+    os.replace(pending,params['out'])
+    return {**result,'file':params['out']}
+
+
 OPS: dict[str, Callable[[dict[str, Any], Context], dict[str, Any]]] = {
+    "profileAds": op_profile_ads,
     "ping": op_ping,
     "transcribe": op_transcribe,
     "audioSignals": op_audio_signals,
     "facecam": op_facecam,
     "minimap": op_minimap,
+    "prepareMedia": op_prepare_media,
+    "cleanClip": op_clean_clip,
 }
 
 

@@ -4,5 +4,5 @@ export function servesQueue(role: 'control' | 'media' | 'all', queue: QueueName)
   if (role === 'all') return true;
   return role === 'media'
     ? queue.startsWith('heavy.')
-    : queue === QUEUES.indexChannel || queue === QUEUES.publishClip;
+    : queue === QUEUES.indexChannel || queue === QUEUES.publishClip || queue === QUEUES.refreshYoutube;
 }

@@ -1,29 +1,26 @@
 "use client";
 
-/**
- * Верхняя полоса: где я нахожусь и кто я.
- *
- * Профиль переехал сюда из подвала меню. В меню ему не место: там
- * навигация по содержимому площадки, а не «я и мои настройки». Заодно
- * здесь видно, что прямо сейчас выполняется - это то, что хочется знать
- * с любой страницы, а не только со страницы задач.
- */
+/** Persistent page identity, processing status and account menu. */
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { api, type StreamerRow, type Viewer } from "@/lib/api";
 import { jobLabel, useJobs } from "@/lib/jobs";
 import { useSession } from "@/lib/session";
-import { pageTitle } from "@/lib/navigation";
+import { pageTitle, sectionNumber } from "@/lib/navigation";
+import { PageIdentity } from "./SiteFrame";
+import { StreamerBadge } from "./StreamerBadge";
+import { useCatalog } from "@/lib/catalog-cache";
 import { toast } from "@/lib/toast";
 
 export function Header() {
   const { viewer, updateViewer, logout } = useSession();
   const path = usePathname();
+  const router = useRouter();
   const { jobs } = useJobs();
   const [open, setOpen] = useState(false);
-  const [streamers, setStreamers] = useState<StreamerRow[]>([]);
+  const { data: streamers = [] } = useCatalog<StreamerRow[]>("/api/streamers", open && viewer.isAdmin);
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,12 +33,6 @@ export function Header() {
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", escape); };
   }, []);
 
-  useEffect(() => {
-    if (open && viewer.isAdmin && streamers.length === 0) {
-      void api.get<StreamerRow[]>("/api/streamers").then(setStreamers).catch(() => {});
-    }
-  }, [open, viewer.isAdmin, streamers.length]);
-
   const running = jobs.filter((job) => job.state === "active");
   const waiting = jobs.filter((job) => job.state === "created" || job.state === "retry").length;
 
@@ -51,15 +42,16 @@ export function Header() {
       { streamer },
     );
     updateViewer(updated);
+    router.replace("/");
     setOpen(false);
     } catch (error) { toast.error(String(error)); }
   };
 
-  const initials = (viewer.displayName || viewer.login).slice(0, 1).toUpperCase();
+  const initials = (viewer.isPreview ? viewer.actingAs! : viewer.displayName || viewer.login).slice(0, 1).toUpperCase();
 
   return (
-    <header className="topbar">
-      <div className="workspace-heading"><span>ClipForge / Рабочее пространство</span><h1>{pageTitle(path, viewer.isAdmin)}</h1></div>
+    <header className="topbar site-masthead">
+      <PageIdentity index={sectionNumber(path)} area="Рабочее пространство" title={viewer.role === "user" && path.startsWith("/streamers/") ? "Мой канал" : pageTitle(path, viewer.isAdmin)} />
       <Link href="/jobs" className="topbar-status" aria-label={running.length ? `Задания: ${running.length} в работе` : "Перейти к заданиям"}>
         {running.length > 0 ? (
           <>
@@ -69,7 +61,7 @@ export function Header() {
               {running[0]!.data?.vodId ? (
                 <span className="muted"> · {String(running[0]!.data.vodId)}</span>
               ) : running[0]!.data?.login ? (
-                <span className="muted"> · {String(running[0]!.data.login)}</span>
+                <StreamerBadge login={String(running[0]!.data.login)} linked={false}/>
               ) : null}
             </span>
             {(running.length > 1 || waiting > 0) && (
@@ -87,15 +79,13 @@ export function Header() {
       </Link>
 
       <div className="topbar-user" ref={box}>
-        {viewer.actingAs && viewer.isAdmin && (
-          <span className="acting-tag">
-            Смотрите как <b>{viewer.actingAs}</b>
-          </span>
+        {viewer.isPreview && (
+          <button className="acting-tag" onClick={() => actAs(null)} title="Выйти из просмотра"><StreamerBadge login={viewer.actingAs!} linked={false}/> Выйти из просмотра</button>
         )}
         <button className="avatar-button" aria-label="Меню аккаунта" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-          <span className="avatar-initials">{initials}</span>
+          {!viewer.isPreview&&<span className="avatar-initials">{initials}</span>}
           <span className="avatar-name">
-            <b>{viewer.displayName}</b>
+            {viewer.isPreview ? <StreamerBadge login={viewer.actingAs!} linked={false}/> : <b>{viewer.displayName}</b>}
             <span>{viewer.isAdmin ? "Администратор" : viewer.role === "moderator" ? "Модератор" : "Пользователь"}</span>
           </span>
           <span className="chevron-down">▾</span>
@@ -104,7 +94,7 @@ export function Header() {
         {open && (
           <div className="menu">
             <Link className="menu-item" href="/me" onClick={() => setOpen(false)}>
-              {viewer.isAdmin ? "Настройки площадки" : "Мой профиль"}
+              Мой профиль
             </Link>
 
             {viewer.isAdmin && (
@@ -113,7 +103,7 @@ export function Header() {
                 <div className="menu-scroll">
                   {viewer.actingAs && (
                     <button className="menu-item" onClick={() => actAs(null)}>
-                      ← Вернуться к своему виду
+                      Вернуться к своему виду
                     </button>
                   )}
                   {streamers.map((streamer) => (
@@ -122,7 +112,7 @@ export function Header() {
                       className={`menu-item${viewer.actingAs === streamer.login ? " on" : ""}`}
                       onClick={() => actAs(streamer.login)}
                     >
-                      {streamer.displayName ?? streamer.login}
+                      <StreamerBadge login={streamer.login} name={streamer.displayName} avatar={streamer.avatar} linked={false}/>
                     </button>
                   ))}
                 </div>

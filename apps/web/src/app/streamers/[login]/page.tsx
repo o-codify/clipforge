@@ -1,4 +1,5 @@
 "use client";
+import { StreamerBadge } from "@/components/StreamerBadge";
 import { useSession } from "@/lib/session";
 
 /**
@@ -21,6 +22,8 @@ import { Button, Card, JobButton, PageSkeleton, Pill, SectionTitle } from "@/com
 import { api, hhmm, VOD_STATE, when, type VodRow } from "@/lib/api";
 import { useLiveReload } from "@/lib/jobs";
 import { toast } from "@/lib/toast";
+import { DetailPage } from "@/components/DetailPage";
+import {AudioSetting,type AudioMode} from '@/components/AudioSetting';
 
 interface StreamerDetail {
   login: string;
@@ -30,6 +33,7 @@ interface StreamerDetail {
   followers: number | null;
   state: "candidate" | "active" | "paused";
   autoPublish: boolean;
+  audioMode: AudioMode;
   live: boolean;
   liveGame: string | null;
   liveViewers: number | null;
@@ -95,29 +99,19 @@ export default function StreamerPage() {
     : vods;
 
   return (
-    <>
+    <DetailPage intro={<>
       <div className="crumbs">
         <Link href="/">Обзор</Link>
         <span>/</span>
-        <b>{name}</b>
+        <StreamerBadge login={login} name={name} avatar={streamer.avatar} linked={false}/>
       </div>
 
       <Card className="profile">
-        {streamer.avatar ? (
-          <img className="profile-avatar" src={streamer.avatar} alt="" />
-        ) : (
-          <span className="profile-avatar placeholder">
-            {name.slice(0, 1).toUpperCase()}
-          </span>
-        )}
         <div>
-          <h2 className="detail-title" style={{ marginBottom: 4 }}>{name}</h2>
+          <StreamerBadge login={login} name={name} avatar={streamer.avatar} external/>
           <p className="muted" style={{ margin: 0 }}>
-            <a href={`https://twitch.tv/${streamer.login}`} target="_blank" rel="noopener">
-              twitch.tv/{streamer.login}
-            </a>
             {streamer.followers
-              ? ` · ${streamer.followers.toLocaleString("ru-RU")} фолловеров`
+              ? `${streamer.followers.toLocaleString("ru-RU")} фолловеров`
               : ""}
           </p>
           {streamer.live && (
@@ -143,7 +137,7 @@ export default function StreamerPage() {
         <div className="profile-side">
           {/* Кнопки и есть индикаторы состояния. Призраки подписей
               держат ширину: переключение не сдвигает ни пикселя. */}
-          <Button
+          {isAdmin && <Button
             variant={automationOn ? "default" : "primary"}
             icon={automationOn ? "❙❙" : "▶"}
             busy={toggling}
@@ -151,7 +145,7 @@ export default function StreamerPage() {
             onClick={toggleAutomation}
           >
             {automationOn ? "Автоматика включена" : "Автоматика выключена"}
-          </Button>
+          </Button>}
           {isAdmin && (
             <Button
               variant="default"
@@ -168,10 +162,10 @@ export default function StreamerPage() {
         </div>
       </Card>
 
-      {streamer.games.length > 0 && (
-        <>
-          <SectionTitle>Играет</SectionTitle>
-          <div className="pillrow">
+      {isAdmin&&<Card><AudioSetting scope="streamer" id={login} value={streamer.audioMode} onSaved={load}/></Card>}
+
+      {streamer.games.length > 0 && <SectionTitle>Играет</SectionTitle>}
+    </>} toolbar={streamer.games.length > 0 && <>
             {streamer.games.map((game) => (
               <button
                 key={game.game}
@@ -183,13 +177,11 @@ export default function StreamerPage() {
                 {game.title ?? game.game} · {Math.round(game.seconds / 3600)} ч
               </button>
             ))}
-          </div>
-        </>
-      )}
+    </>}>
 
       <SectionTitle
         action={
-          <JobButton
+          isAdmin && <JobButton
             compact
             size="sm"
             target={login}
@@ -216,7 +208,7 @@ export default function StreamerPage() {
 
       {shownVods.length === 0 ? (
         <Card className="empty">
-          Эфиров нет. Обновите список — площадка обойдёт архивы канала.
+          Эфиров пока нет.
         </Card>
       ) : (
         <div className="scroller">
@@ -239,7 +231,7 @@ export default function StreamerPage() {
           </table>
         </div>
       )}
-    </>
+    </DetailPage>
   );
 }
 

@@ -1,12 +1,18 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { parseEnv } from 'node:util';
+import { parseEnv, parseArgs } from 'node:util';
 import { readFile, mkdir, appendFile } from 'node:fs/promises';
 import { createServer, createConnection } from 'node:net';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const home=resolve(process.argv[2] || process.env.CLIPFORGE_MEDIA_HOME || '.media-runtime');
+const args=parseArgs({allowPositionals:true,options:{workspace:{type:'string'}}});
+if(args.positionals.length>1)throw Error('Expected one runtime home');
+const home=resolve(args.positionals[0] || process.env.CLIPFORGE_MEDIA_HOME || '.media-runtime');
+// Explicit local development run: use the normal tunnel, lease and governor,
+// without installing a release or letting the updater replace the checkout.
+const workspace=args.values.workspace?resolve(args.values.workspace):null;
+if(workspace)await readFile(join(workspace,'apps/worker/dist/main.js'));
 const config=parseEnv(await readFile(join(home,'.env'),'utf8'));
 const exec=promisify(execFile);
 const treeStop=fileURLToPath(new URL('./stop-media-tree.ps1',import.meta.url));
@@ -22,13 +28,14 @@ await new Promise((ok,fail)=>{guard.once('error',fail);guard.listen(18423,'127.0
 let stopping=false;
 let updating=false;
 async function updateRuntime(checkOnly=false){
- if(updating||stopping||process.platform!=='win32')return;
+ if(workspace||updating||stopping||process.platform!=='win32')return;
  updating=true;
  try{await exec('powershell.exe',['-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',join(home,'update-media.ps1'),'-RuntimeHome',home,...(checkOnly?['-CheckOnly']:[])],{windowsHide:true,timeout:180000});return false;}
  catch(error){if(checkOnly&&error.code===10)return true;log('Prepared runtime update unavailable; will retry');return false;}
  finally{updating=false;}
 }
-const supervisorRelease=JSON.parse(await readFile(join(home,'current.json'),'utf8')).release;
+const readCurrent=async()=>workspace?{path:workspace,entry:'apps/worker/dist/main.js',release:'local-workspace'}:JSON.parse(await readFile(join(home,'current.json'),'utf8'));
+const supervisorRelease=(await readCurrent()).release;
 let wakeStop;
 const stopRequested=new Promise(resolveStop=>{wakeStop=resolveStop;});
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{stopping=true;wakeStop();});
@@ -60,7 +67,7 @@ while(!stopping){
   // Download updates only at a stopped-worker boundary. A second transfer
   // must not double the PC's bandwidth budget during a stream/S3 transfer.
   await updateRuntime();
-  const current=JSON.parse(await readFile(join(home,'current.json'),'utf8'));
+  const current=await readCurrent();
   if(current.release!==supervisorRelease){stopping=true;process.exitCode=75;break;}
   const {stdout}=await exec(ssh,[...sshArgs,config.SSH_HOST,`docker inspect ${config.POSTGRES_CONTAINER} --format '{{(index .NetworkSettings.Networks "coolify").IPAddress}}'`],{windowsHide:true,timeout:20000});
   const ip=stdout.trim();if(!/^\d+\.\d+\.\d+\.\d+$/.test(ip))throw Error('Database network address unavailable');
@@ -80,7 +87,7 @@ while(!stopping){
   const update=new Promise(resolveUpdate=>{
    updateWatch=setInterval(async()=>{if(await updateRuntime(true))resolveUpdate();},5*60_000);
    watch=setInterval(async()=>{
-   try{const next=JSON.parse(await readFile(join(home,'current.json'),'utf8'));if(next.release!==current.release){replaced=true;resolveUpdate();}}catch{log('Could not inspect pending worker release');}
+   try{const next=await readCurrent();if(next.release!==current.release){replaced=true;resolveUpdate();}}catch{log('Could not inspect pending worker release');}
   },15000);});
   const reason=await Promise.race([exited(worker).then(code=>`worker exited (${code})`),tunnelExit.then(()=> 'database tunnel closed'),update.then(()=> 'prepared release changed'),stopRequested.then(()=> 'stop requested'),unhealthy]);
   log(`Restart boundary: ${reason}`);

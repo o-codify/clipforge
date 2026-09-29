@@ -12,12 +12,15 @@ import { useSession } from "@/lib/session";
 import { useEffect, useState } from "react";
 
 import { Button, Pill } from "@/components/ui";
-import { api, hhmm, PUB_STATE, size, TRIGGERS, type ClipRow } from "@/lib/api";
+import { api, hhmm, PUB_STATE, TRIGGERS, type ClipRow } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { PublishForm } from "./PublishForm";
+import { StreamerBadge } from "./StreamerBadge";
+import { ClipCleanup, type MediaSafety } from './ClipCleanup';
 import { displayTranscript } from "@clipforge/contracts/text";
 
 interface ClipDetail extends ClipRow {
+  safety?:MediaSafety|null;
   publications: {
     id: string; platform: string; privacy?: string | null; error?: string | null; account: string;
     url: string | null; status: string;
@@ -81,7 +84,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
   const restore = async (id: string) => {
     setBusy(true);
     try {
-      await api.post(`/api/clips/${id}/state`, { state: "ready" });
+      await api.post(`/api/clips/${id}/state`, { state: "draft" });
       await show(id);
       onChange?.();
     } catch (error) {
@@ -108,6 +111,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
               <span className="len">{hhmm(clip.duration)}</span>
             </div>
             <div className="body">
+              <StreamerBadge login={clip.streamer} linked={false}/>
               <div className="name">
                 {TRIGGERS[clip.trigger ?? ""] ?? clip.trigger} · {hhmm(clip.start)}
               </div>
@@ -129,7 +133,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
             >
               ✕
             </button>
-            <h2 style={{ marginTop: 0 }}>{open.streamer} · {TRIGGERS[open.trigger ?? ""] ?? "Момент эфира"}</h2>
+            <div className="clip-detail-heading"><StreamerBadge login={open.streamer}/><h2>{TRIGGERS[open.trigger ?? ""] ?? "Момент эфира"}</h2></div>
             <div className="player">
               <video src={`/media/clip/${open.id}`} controls autoPlay
                      poster={`/media/poster/${open.id}`} />
@@ -138,27 +142,9 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                   {TRIGGERS[open.trigger ?? ""] ?? open.trigger} ·{" "}
                   {hhmm(open.start)}–{hhmm(open.end)} ({open.duration.toFixed(1)} с)
                 </p>
-                {viewer?.isAdmin && <details className="clip-diagnostics">
-                  <summary>Диагностика администратора</summary>
-                  <p className="sub">{open.file} · {open.width}×{open.height} · {open.fps} к/с · {size(open.sizeBytes)}</p>
-                <div className="pillrow">
-                  {Object.entries(open.parts).map(([name, value]) => (
-                    <span key={name} className="pill">
-                      {name} {Number(value).toFixed(2)}
-                    </span>
-                  ))}
-                </div>
-                <h2>Версии момента</h2>
-                <div className="pillrow">
-                  {open.versions.map((v) => (
-                    <span key={v.id} className={`pill${v.id === open.id ? " on" : ""}`}>
-                      {v.version || "Без версии"}
-                      {v.id === open.id ? " — эта" : ""}
-                    </span>
-                  ))}
-                </div>
-                </details>}
                 <p style={{ marginTop: 12 }}>{open.text ? displayTranscript(open.text) : ""}</p>
+                {viewer?.isAdmin && <ClipCleanup key={open.id} id={open.id} state={open.state} safety={open.safety}
+                  onReady={id=>{void show(id);onChange?.();}} onReview={()=>{void show(open.id);onChange?.();}}/>}
 
                 <h2>Публикации</h2>
                 {open.publications.length === 0 ? (
@@ -187,7 +173,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                     </table>
                   </div>
                 )}
-                {viewer?.isAdmin && open.state !== "blocked" &&
+                {viewer?.isAdmin && open.state === "ready" && (open.safety?.autoVerifiedAt || open.safety?.reviewedAt) &&
                   !open.publications.some(
                     (p) => p.platform === "youtube" && p.status !== "failed",
                   ) && (
@@ -201,7 +187,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                     </div>
                   )}
 
-                <div className="actions" hidden={viewer?.role === "moderator"}>
+                {viewer.role !== "moderator" && !viewer.isPreview && <div className="actions">
                   {open.state === "blocked" ? (
                     <>
                       <Pill tone="bad">
@@ -239,7 +225,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                       Запретить новые публикации
                     </Button>
                   )}
-                </div>
+                </div>}
               </div>
             </div>
           </div>

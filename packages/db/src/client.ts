@@ -26,7 +26,9 @@ export function createDatabase(options: DatabaseOptions) {
     connect_timeout: 5,
     // Имена в схеме camelCase, в базе snake_case. Преобразование здесь,
     // чтобы в запросах не мелькали кавычки и подчёркивания.
-    transform: postgres.camel,
+    // Only SQL column names are snake_case. JSON keys include opaque clip IDs,
+    // Twitch logins and model payload fields; rewriting them corrupts lookups.
+    transform: { column: postgres.camel.column },
     onnotice: () => {},
   });
 

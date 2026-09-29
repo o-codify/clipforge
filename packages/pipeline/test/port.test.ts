@@ -80,12 +80,12 @@ describe("поиск мата", () => {
     spans: [number, number][];
   };
 
-  it("тот же набор слов, что у python", () => {
+  it("сохраняет словарь python и намеренно добавленные формы", () => {
     const mine = reference.words.filter(isProfane);
     const missing = reference.profane.filter((w) => !mine.includes(w));
     const extra = mine.filter((w) => !reference.profane.includes(w));
     assert.deepEqual(missing, [], "пропущено по сравнению с python");
-    assert.deepEqual(extra, [], "лишние срабатывания");
+    assert.deepEqual(extra, ['долбоеб', 'долбоёб?', 'пизец.'], "изменения словаря должны быть явными");
   });
 
   it("приличные слова не срабатывают", () => {
@@ -106,11 +106,13 @@ describe("поиск мата", () => {
     }
   });
 
-  it("интервалы писка совпадают", () => {
+  it("интервалы писка сохраняются, включая добавленное ругательство", () => {
     const spans = mergeSpans(beepSpans(findProfanity(reference.windowWords, 0, 600)));
-    assert.equal(spans.length, reference.spans.length);
+    // Added word at 281.90–282.58: existing 0.22-second center censor window.
+    const expectedSpans = [...reference.spans, [282.13, 282.35]].sort((a,b)=>a[0]-b[0]);
+    assert.equal(spans.length, expectedSpans.length);
     spans.forEach((span, i) => {
-      const expected = reference.spans[i]!;
+      const expected = expectedSpans[i]!;
       assert.ok(Math.abs(span[0] - expected[0]) < 1e-9, `начало интервала ${i}`);
       assert.ok(Math.abs(span[1] - expected[1]) < 1e-9, `конец интервала ${i}`);
     });

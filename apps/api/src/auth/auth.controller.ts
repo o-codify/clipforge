@@ -16,7 +16,8 @@ const actAs = z.object({
 });
 
 const newAccount = z.object({
-  login: z.string().min(3).max(64),
+  login: z.string().trim().min(3).max(64).regex(/^[A-Za-z0-9_.-]+$/),
+  displayName: z.string().trim().min(1).max(100).optional(),
   password: z.string().min(8).max(200),
   streamer: z.string().min(1).max(64).nullable().default(null),
   role: z.enum(["admin", "moderator", "user"]).default("user"),
@@ -108,7 +109,7 @@ export class AuthController {
   async create(@Body() body: unknown) {
     const account = newAccount.parse(body);
     await this.auth.createStreamerAccount(
-      account.login, account.password, account.streamer, account.role,
+      account.login, account.password, account.streamer, account.role, account.displayName,
     );
     return { ok: true };
   }

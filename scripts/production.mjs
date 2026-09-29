@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { retainWebAssets } from './web-assets.mjs';
+import {readinessExpired} from './readiness-policy.mjs';
 
 process.chdir(fileURLToPath(new URL("..", import.meta.url)));
 process.env.NODE_ENV = "production";
@@ -85,7 +86,7 @@ try {
     void run("worker", ["apps/worker/dist/main.js"]);
     void run("web", [resolve("apps/web/node_modules/next/dist/bin/next"), "start", "-p", "3000", "-H", "0.0.0.0"], resolve("apps/web"));
     const start = Date.now();
-    let failures = 0;
+    let unreadySince = null;
     let ready = false;
     let checking = false;
     monitor = setInterval(async () => {
@@ -96,11 +97,12 @@ try {
         if (!response.ok) throw new Error("Service not ready");
         if (!ready) console.log("ClipForge is ready");
         ready = true;
-        failures = 0;
+        unreadySince = null;
       } catch {
         // Docker does not restart unhealthy containers by itself. Exit the
         // supervised unit so restart: unless-stopped can recover it.
-        if ((ready || Date.now() - start > 120_000) && ++failures >= 3) void stop(1, "readiness checks failed");
+        unreadySince ??= Date.now();
+        if (readinessExpired({startedAt:start,unreadySince,now:Date.now(),wasReady:ready})) void stop(1, "readiness checks failed for three minutes");
       } finally { checking = false; }
     }, 10_000);
   }

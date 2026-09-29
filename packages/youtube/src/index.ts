@@ -19,6 +19,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { pacedStream, waitForResources, resourceRequest, ResourcePauseError } from '@clipforge/resources';
 import { prepareVideoMetadata, validateVideoMetadata } from "./metadata.js";
 export * from "./metadata.js";
 
@@ -30,13 +31,18 @@ const UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos";
 
 export interface VideoSnapshot {
   id: string;
+  snippet?: { publishedAt?: string };
   status: { uploadStatus: string; privacyStatus: string; rejectionReason?: string };
   statistics?: { viewCount?: string; likeCount?: string; commentCount?: string };
+  contentDetails?: {
+    regionRestriction?: { allowed?: string[]; blocked?: string[] };
+    contentRating?: { ytRating?: string };
+  };
 }
 
 export async function videoSnapshots(accessToken: string, ids: string[]): Promise<VideoSnapshot[]> {
   if (!ids.length) return [];
-  const response = await fetch(`${API}/videos?part=status,statistics&id=${encodeURIComponent(ids.slice(0,50).join(","))}`, {
+  const response = await fetch(`${API}/videos?part=status,statistics,contentDetails,snippet&id=${encodeURIComponent(ids.slice(0,50).join(","))}`, {
     signal: AbortSignal.timeout(20_000), headers: { authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) throw new Error(`YouTube: получение статистики завершилось с кодом ${response.status}`);
@@ -149,6 +155,8 @@ export interface UploadOptions {
   source?: { body: Readable; size: number; reopen?: (offset:number)=>Promise<Readable> };
   session?: {url:string;size:number};
   saveSession?: (session:{url:string;size:number})=>Promise<void>;
+  /** Desktop pauses may outlast Google's short-lived access token. */
+  renewAccessToken?: () => Promise<string>;
   title: string;
   description: string;
   tags: string[];
@@ -165,6 +173,27 @@ export async function uploadVideo(
   accessToken: string,
   options: UploadOptions,
 ): Promise<string> {
+  let session=options.session;
+  let token=accessToken, renew=false;
+  for (;;) {
+    await waitForResources();
+    if(renew && options.renewAccessToken)token=await options.renewAccessToken();
+    renew=false;
+    try {
+      return await uploadVideoAttempt(token,{...options,session,saveSession:async value=>{
+        session=value;await options.saveSession?.(value);
+      }});
+    } catch(error) {
+      if (!(error instanceof ResourcePauseError))throw error;
+      // The saved resumable session is queried on the next attempt; a pause
+      // never creates a second YouTube video or forgets confirmed bytes.
+      if(options.source && !options.source.reopen)throw error;
+      renew=true;
+    }
+  }
+}
+
+async function uploadVideoAttempt(accessToken: string, options: UploadOptions): Promise<string> {
   options = prepareVideoMetadata(options);
   if ((!options.file && !options.source) || (options.file && options.source)) throw new Error('Exactly one video source is required');
   const size = options.source?.size ?? (await stat(options.file!)).size;
@@ -225,8 +254,12 @@ export async function uploadVideo(
     body=options.source ? await options.source.reopen?.(offset) ?? (()=>{throw new Error('Source cannot be resumed');})() : createReadStream(options.file!,{start:offset});
   }
 
-  const put = await fetch(session, {
-    signal: AbortSignal.timeout(600_000),
+    await waitForResources();
+    const uploadKbps = Number(process.env.MEDIA_UPLOAD_KBPS || (process.env.WORKER_ROLE === 'media' ? 5000 : 0));
+    if (!Number.isFinite(uploadKbps) || uploadKbps < 0) throw new Error('Invalid MEDIA_UPLOAD_KBPS');
+    const uploadBody = pacedStream(body, 'upload', uploadKbps*125);
+    const put = await resourceRequest(signal=>fetch(session!, {
+    signal,
     method: "PUT",
     redirect:'manual',
     headers: {
@@ -236,9 +269,9 @@ export async function uploadVideo(
       "content-type": "video/mp4",
     },
     // Файл уходит потоком: клип целиком в памяти держать незачем.
-    body: Readable.toWeb(body) as unknown as RequestInit["body"],
+      body: Readable.toWeb(uploadBody) as unknown as RequestInit["body"],
     duplex: "half",
-  } as RequestInit);
+  } as RequestInit).finally(()=>uploadBody.destroy()));
   if (!put.ok) {
     throw new Error(`youtube upload ${put.status}: ${(await put.text()).slice(0, 400)}`);
   }

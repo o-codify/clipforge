@@ -14,6 +14,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
+import { activeTimeout, waitForResources, wasPreempted } from '@clipforge/resources';
 
 import {
   workerMessageSchema,
@@ -66,6 +67,7 @@ export class PythonWorker {
   private start(): ChildProcessWithoutNullStreams {
     if (this.child && !this.child.killed) return this.child;
 
+    const started = Date.now();
     const child = spawn(this.options.pythonBin, ["-m", "clipforge_worker"], {
       cwd: this.options.cwd,
       env: {
@@ -89,7 +91,7 @@ export class PythonWorker {
     });
 
     child.on("exit", (code, signal) => {
-      const reason = new Error(
+      const reason = wasPreempted(child.pid, started) ? new WorkerError('Пауза для освобождения ресурсов', 'ResourcePreempted') : new Error(
         `воркер завершился: код ${code ?? "нет"}, сигнал ${signal ?? "нет"}`,
       );
       for (const [id, task] of this.pending) {
@@ -158,13 +160,17 @@ export class PythonWorker {
     const parsedParams = spec.params.parse(params ?? {});
 
     const run = async () => {
+      for (;;) {
+      await waitForResources();
       const child = this.start();
       const id = randomUUID();
 
       const timeoutMs = this.options.timeoutMs ?? 60 * 60 * 1000;
+      try {
       const raw = await new Promise<unknown>((resolve, reject) => {
-        const timer = setTimeout(() => {
+        const timer = activeTimeout(() => {
           this.pending.delete(id);
+          child.kill();
           reject(new Error(`воркер не ответил за ${timeoutMs} мс на ${op}`));
         }, timeoutMs);
         this.pending.set(id, {
@@ -177,6 +183,10 @@ export class PythonWorker {
       });
 
       return spec.result.parse(raw);
+      } catch (error) {
+        if (!(error instanceof WorkerError) || error.type !== 'ResourcePreempted') throw error;
+      }
+      }
     };
 
     // Задания выстраиваются в цепочку. Ошибка одного не должна рвать

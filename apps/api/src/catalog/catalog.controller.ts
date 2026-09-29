@@ -65,6 +65,20 @@ export class CatalogController {
     return this.catalog.vods(viewer, { streamer, game, state });
   }
 
+  @AdminOnly()
+  @Post("streamers/:login/audio")
+  streamerAudio(@Param("login") login: string, @Body() body: unknown) {
+    const {audioMode} = z.object({audioMode: z.enum(["original", "dtln"])}).strict().parse(body);
+    return this.catalog.setStreamerAudio(login, audioMode);
+  }
+
+  @AdminOnly()
+  @Post("vods/:id/audio")
+  vodAudio(@Param("id") id: string, @Body() body: unknown) {
+    const {audioMode} = z.object({audioMode: z.enum(["original", "dtln"]).nullable()}).strict().parse(body);
+    return this.catalog.setVodAudio(id, audioMode);
+  }
+
   @Get("vods/:id")
   vod(@CurrentViewer() viewer: Viewer | null, @Param("id") id: string) {
     return this.catalog.vod(viewer, id);
@@ -129,7 +143,7 @@ export class CatalogController {
     @Param("id") id: string,
     @Body() body: unknown,
   ) {
-    const { state } = z.object({ state: z.enum(["draft", "ready"]) }).parse(body);
-    return this.catalog.setClipState(viewer, id, state);
+    const { state, reviewed } = z.object({ state: z.enum(["draft", "ready"]), reviewed:z.boolean().default(false) }).parse(body);
+    return this.catalog.setClipState(viewer, id, state, reviewed);
   }
 }

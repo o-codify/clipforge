@@ -154,7 +154,11 @@ def load_model(model_name: str = DEFAULT_MODEL):
         device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
     compute = os.environ.get("SPEECH_COMPUTE_TYPE") or ("float16" if device == "cuda" else "int8")
     model = WhisperModel(model_name, device=device, compute_type=compute,
-                         cpu_threads=int(os.environ.get("SPEECH_CPU_THREADS", "2")))
+                         cpu_threads=int(os.environ.get("SPEECH_CPU_THREADS", str(max(1, (os.cpu_count() or 2)-2)))),
+                         # Desktop jobs never start a multi-GB uncapped model
+                         # download behind the user's back. Provision the cache
+                         # explicitly before enabling a new speech model.
+                         local_files_only=bool(os.environ.get('MEDIA_RESOURCE_STATE')))
     return BatchedInferencePipeline(model=model)
 
 

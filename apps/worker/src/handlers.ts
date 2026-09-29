@@ -26,8 +26,11 @@ import {
   streamers,
   transcripts,
   vods,
+  vodAudioSettings,
   type VodChapter,
 } from "@clipforge/db";
+import {disjointMoments,renderCount} from './render-options.js';
+import {ensureAdProfile} from './ad-protection.js';
 import {
   buildAss,
   clipFileName,
@@ -72,6 +75,7 @@ import type { Context } from "./context.js";
 
 /** Ход выполнения задания: пишется в журнал, позже уйдёт в интерфейс. */
 export interface JobReport {
+  id?: string;
   log: (message: string) => void;
   /**
    * Снято ли задание. Проверяется на естественных границах - между
@@ -216,7 +220,7 @@ export async function indexChannel(
     report.log(`Найдено эфиров: ${archives.length}, новых: ${added}. Главы выбранного эфира уточняются перед скачиванием.`);
     return {found:archives.length,added};
   }
-  const ytdlp = { command: ctx.config.pythonBin, args: ["-m", "yt_dlp"] };
+  const ytdlp = { command: ctx.config.pythonBin, args: [join(ctx.config.workerRoot, 'clipforge_worker', 'download.py')] };
 
   report.log(`архивы канала ${login}`);
   const archives = await listArchives(login, payload.limit, ytdlp);
@@ -294,7 +298,7 @@ export async function fetchVod(
   payload: { vodId: string; audioOnly: boolean },
   report: JobReport,
 ): Promise<{ audio: string; video: string | null }> {
-  const ytdlp = { command: ctx.config.pythonBin, args: ["-m", "yt_dlp"] };
+  const ytdlp = { command: ctx.config.pythonBin, args: [join(ctx.config.workerRoot, 'clipforge_worker', 'download.py')] };
   // Server discovery uses Helix only. The downloader resolves the selected
   // archive's chapters before choosing its cache path and starting analysis.
   if (ctx.config.role === 'media') {
@@ -491,6 +495,12 @@ export async function facecamVod(
 
 // --- нарезка ------------------------------------------------------------
 
+export async function inspectAds(ctx:Context,payload:{vodId:string},report:JobReport) {
+  const {workspace}=await loadVod(ctx,payload.vodId);
+  const profile=await ensureAdProfile(ctx,payload.vodId,workspace.video(ctx.config.videoFormat),report);
+  return {vodId:payload.vodId,profileId:profile.signature,regions:profile.regions.length,samples:profile.samples};
+}
+
 /** A real, bounded source uses the same selection and rendering as a full VOD. */
 export interface PreparedRenderSource {
   video: string;
@@ -501,11 +511,24 @@ export interface PreparedRenderSource {
 
 export async function renderRun(
   ctx: Context,
-  payload: { vodId: string; count?: number },
+  payload: { vodId: string; count?: number; skipExisting?:boolean; audioMode?:'original'|'dtln';testBatch?:boolean },
   report: JobReport,
   prepared?: PreparedRenderSource,
 ): Promise<{ runId: string; rendered: number; skipped: number; replaced: number }> {
   const { row, workspace } = await loadVod(ctx, payload.vodId);
+  const [resuming] = report.id&&payload.testBatch ? await ctx.db.select().from(runs).where(and(
+    eq(runs.vodId,row.id),sql`${runs.settings}->>'jobId' = ${report.id}`)).limit(1) : [];
+  const audioSettings=resuming?.settings.audioSettings as Awaited<ReturnType<typeof vodAudioSettings>>|undefined
+    ?? await vodAudioSettings(ctx.db,row.id,payload.audioMode);
+  const audioMode=audioSettings.mode;
+  const skipExisting=payload.skipExisting||payload.testBatch||false;
+  const [mode] = await ctx.db.execute<{value:{developmentMode?:boolean}}>(sql`select value from platform_runtime where key='settings'`);
+  const count = Number(resuming?.settings.requestedCount??renderCount(payload,!!mode?.value.developmentMode,ctx.config.clipsPerRun));
+  const previousClips = resuming ? await ctx.db.select({id:clipsTable.id}).from(clipsTable).where(eq(clipsTable.runId,resuming.id)) : [];
+  if(previousClips.length>=count) {
+    await ctx.db.update(runs).set({finishedAt:new Date()}).where(eq(runs.id,resuming!.id));
+    return {runId:resuming!.id,rendered:previousClips.length,skipped:0,replaced:0};
+  }
   if (!prepared && row.facecam?.detectorVersion !== CAMERA_HINT_VERSION) {
     await facecamVod(ctx, {vodId:row.id,force:false}, report);
     const [updated] = await ctx.db.select({facecam:vods.facecam}).from(vods).where(eq(vods.id,row.id));
@@ -540,16 +563,24 @@ export async function renderRun(
 
   const feedback = await applyFeedback(ctx, row.streamer, candidates);
   report.log(`Отбор: ${feedback.evidence.mode}, публичных наблюдений ${feedback.evidence.samples}`);
-  const [mode] = await ctx.db.execute<{value:{developmentMode?:boolean}}>(sql`select value from platform_runtime where key='settings'`);
-  const count = mode?.value.developmentMode ? 1 : (payload.count ?? ctx.config.clipsPerRun);
-  if (mode?.value.developmentMode) report.log("Режим разработки: создаю только один проверочный клип.");
+  if (mode?.value.developmentMode&&!payload.testBatch) report.log("Режим разработки: создаю только один проверочный клип.");
+  report.log(`Звук новых клипов: ${audioMode==='dtln'?'DTLN':'исходный'}.`);
   // Camera/layout validation can reject a moment. Try a bounded reserve while
   // still producing at most count clips; never silently omit a visible camera.
   // selectDiverse returns chronological order for batch rendering. A quality
   // reserve must try the strongest moment first, otherwise requesting one clip
   // silently switches to the earliest of five candidates.
-  const picked = selectDiverse(feedback.candidates, Math.min(300,count*5), audio.duration)
+  // Archived, unpublished drafts from earlier experiments do not exhaust
+  // the VOD. Keep all visible and already-published moments excluded.
+  const covered = skipExisting ? await ctx.db.select({start:clipsTable.start,end:clipsTable.end})
+    .from(clipsTable).where(and(eq(clipsTable.vodId,row.id),
+      sql`(${clipsTable.archivedAt} is null or exists(select 1 from publications p where p.clip_id=${clipsTable.id}))`)) : [];
+  const eligible = feedback.candidates.filter(candidate=>!covered.some(range=>range.start!==null&&range.end!==null
+    && range.start < (prepared?.offsetSeconds??0)+candidate.end && range.end > (prepared?.offsetSeconds??0)+candidate.start));
+  if(!eligible.length)throw new Error('Нет новых моментов, не пересекающихся с существующими клипами');
+  const reserve = selectDiverse(eligible, Math.min(300,count*5), audio.duration)
     .sort((a,b) => b.score-a.score || a.peak-b.peak);
+  const picked=skipExisting?disjointMoments(reserve):reserve;
 
   const byTrigger = new Map<string, number>();
   for (const candidate of picked) {
@@ -565,6 +596,7 @@ export async function renderRun(
   const sourceOffset = prepared?.offsetSeconds ?? 0;
   if (sourceOffset < 0 || !Number.isFinite(sourceOffset)) throw new Error("Неверное начало исходного фрагмента");
   const source = await probeSize(video);
+  const adProfile=await ensureAdProfile(ctx,row.id,video,report);
   const grid = computeGrid(source.width, source.height, null);
   report.log(`Исходник ${source.width}×${source.height}. Расположение камеры проверяется отдельно для каждого момента.`);
 
@@ -596,6 +628,7 @@ export async function renderRun(
     cameraPolicy: "per-clip-roi-v6-verified-window",
     layoutPolicy: "fixed-crop-minimap-v1",
     subtitleTextPolicy: "ru-spacing-and-shared-masking-v1",
+    mediaProtection: { version:3, audio:audioMode, ads:'vod-vision', profileId:adProfile.signature },
     grid, subtitles: style, header, outro,
     render: { crf: 20, preset: "veryfast", fps: 30, audioBitrate: "160k" },
     censor: { enabled: true, audio: "off", maskSubtitles: true },
@@ -604,23 +637,24 @@ export async function renderRun(
   });
   report.log(`версия оформления: ${version}`);
 
-  const runId = newRunId(new Date());
+  const runId = resuming?.id??newRunId(new Date());
   const outDir = workspace.runDir(runId);
-  await ctx.db.insert(runs).values({
+  if(!resuming)await ctx.db.insert(runs).values({
     id: runId, vodId: row.id, streamer: row.streamer, game: row.game,
     outDir, candidates: candidates.length, version,
     settings: { grid: describeGrid(grid), versionParts, speechModel: transcriptRow.model, feedback: feedback.evidence,
-      sourceWindow: {start:sourceOffset,end:sourceOffset+audio.duration}, selection:"automatic" },
+      sourceWindow: {start:sourceOffset,end:sourceOffset+audio.duration}, selection:"automatic",
+      audioMode,audioSettings,skipExisting,testBatch:payload.testBatch??false,requestedCount:count,jobId:report.id },
   });
 
   const profanityHits = findProfanity(words);
-  let rendered = 0;
+  let rendered = previousClips.length;
   let skipped = 0;
   let replaced = 0;
-  let accepted = 0;
+  let accepted = previousClips.length;
   let rejected = 0;
   const failures: string[] = [];
-  const verifications: Record<string, unknown> = {};
+  const verifications: Record<string, unknown> = {...resuming?.settings.renderedClips as Record<string,unknown>|undefined};
 
   /**
    * Рендер идёт в несколько процессов ffmpeg сразу.
@@ -730,7 +764,22 @@ export async function renderRun(
       ),
     );
 
+    const protection = await ctx.python.call('prepareMedia', {
+      video, start:candidate.start, end:candidate.end + (outro?.seconds ?? 0),
+      adProfile,
+      transcript:candidate.text ?? '',
+      ...(audioMode==='dtln'?{audioMode:'dtln' as const,models:ctx.config.models,audioOut:workspace.clipPath(runId,name+'.dtln.wav')} : {}),
+    });
+    verifications[id] = {...verifications[id] as object, protection};
+    if (protection.ads.reject) {
+      rejected++; report.log(`Пропускаю рекламный фрагмент: ${protection.ads.reason}`); return;
+    }
+    if (audioMode==='dtln' && protection.audio.method!=='dtln') {
+      throw new Error('DTLN не применён: рендер с исходным звуком отменён');
+    }
     const result = await renderClip({
+      sourceMasks:protection.ads.regions,
+      audioSource:protection.audio.method==='dtln'?protection.audio.file:undefined,
       source: video, start: candidate.start, end: candidate.end,
       out: workspace.clipPath(runId, name),
       grid, assets: { root: ctx.config.assets },
@@ -745,8 +794,6 @@ export async function renderRun(
       report.log(`  [${index + 1}/${picked.length}] СБОЙ ${name}: ${result.error.slice(0, 200)}`);
       return;
     }
-    rendered += 1;
-    accepted += 1;
     report.log(
       `  [${index + 1}/${picked.length}] OK ${name} ` +
       `${Math.round(candidate.end - candidate.start)}с за ${result.seconds.toFixed(1)}с`,
@@ -758,22 +805,30 @@ export async function renderRun(
     const size = await stat(file).then((s) => s.size).catch(() => 0);
     // Catalog visibility is committed only after both objects reach S3.
     const mediaStorage = await storeClip(ctx, id, file);
+    // Proof is committed only for an actually rendered and stored version.
+    const verifiedProtection={...protection,autoVerifiedAt:protection.ads.automatic?new Date().toISOString():null};
+    verifications[id]={...verifications[id] as object,protection:verifiedProtection};
+    // Persist proof with each clip, including when a later clip or the worker fails.
+    await ctx.db.update(runs).set({settings:sql`jsonb_set(${runs.settings},'{renderedClips}',
+      coalesce(${runs.settings}->'renderedClips','{}'::jsonb) || ${JSON.stringify({[id]:verifications[id]})}::jsonb)`}).where(eq(runs.id,runId));
     await ctx.db.insert(clipsTable).values({
       id, runId, vodId: row.id,
       streamer: row.streamer,
       game: await ensureGame(ctx, gameForMoment(row.chapters, {...candidate,peak:sourceOffset+candidate.peak}, row.game)),
       segmentKey: segment, version, file: name, mediaStorage,
-      // Клип одобрен с рождения: площадка автоматическая, и ручное
-      // одобрение каждого клипа противоречило бы её смыслу. Снятие
-      // остаётся - для жалоб на авторские права.
-      state: "ready",
+      // Explicit test batches remain drafts; ordinary automation no longer
+      // needs a human checkbox for every clip. Audio claims are independent.
+      state: payload.testBatch || !protection.ads.automatic ? 'draft' : 'ready',
       trigger, peak: sourceOffset+candidate.peak, start: sourceOffset+candidate.start, end: sourceOffset+candidate.end,
       duration: candidate.end - candidate.start, score: candidate.score,
       parts: candidate.parts, keywords: candidate.keywords, text: candidate.text,
       width: media?.width ?? 1080, height: media?.height ?? 1920,
       fps: media?.fps ?? 30,
       sizeBytes: size,
-    }).onConflictDoUpdate({ target: clipsTable.id, set: { runId, file: name, mediaStorage, sizeBytes: size, archivedAt:null, archiveReason:null } });
+    }).onConflictDoUpdate({ target: clipsTable.id, set: { runId, file: name, mediaStorage, sizeBytes: size,
+      state:payload.testBatch || !protection.ads.automatic?'draft':'ready', archivedAt:null, archiveReason:null } });
+    rendered += 1;
+    accepted += 1;
     replaced += await dropSuperseded(ctx, row.id, segment, version, report);
   };
 
@@ -806,7 +861,7 @@ export async function renderRun(
   }
   report.log(`отрендерено ${rendered}, заменено ${replaced}, пропущено ${skipped}`);
   if (failures.length) throw new Error(`Не созданы ${failures.length} из ${picked.length} клипов: ${failures.slice(0, 3).join("; ")}`);
-  if (!accepted && rejected) throw new Error(`Проверены ${rejected} моментов, камера не подтверждена. Непроверенные клипы не созданы.`);
+  if (!accepted && rejected) throw new Error(`Проверены ${rejected} моментов: фрагменты не прошли проверку камеры или рекламы. Клипы не созданы.`);
   return { runId, rendered, skipped, replaced };
 }
 

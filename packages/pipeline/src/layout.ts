@@ -193,6 +193,7 @@ export interface Scrim {
 }
 
 export interface FilterOptions {
+  sourceMasks?: {x:number;y:number;w:number;h:number}[];
   subtitlesPath?: string;
   overlays?: Overlay[];
   scrim?: Scrim;
@@ -209,8 +210,12 @@ export function buildFilter(grid: Grid, options: FilterOptions = {}): string {
 
   // При размытом фоне нужна ещё одна копия кадра, при сплошном - нет.
   const streams = (blurred ? 1 : 0) + 1 + (grid.cam ? 1 : 0) + (grid.minimap ? 1 : 0);
+  const masks = (options.sourceMasks ?? []).map(r => {
+    if (![r.x,r.y,r.w,r.h].every(Number.isSafeInteger) || r.x < 0 || r.y < 0 || r.w < 1 || r.h < 1) throw new Error('Invalid source mask');
+    return `drawbox=x=${r.x}:y=${r.y}:w=${r.w}:h=${r.h}:color=0x18161e:t=fill`;
+  });
   const parts: string[] = [
-    `[0:v]split=${streams}` +
+    `[0:v]${masks.length ? masks.join(',')+',' : ''}split=${streams}` +
       Array.from({ length: streams }, (_, i) => `[s${i}]`).join(""),
   ];
   let next = 0;

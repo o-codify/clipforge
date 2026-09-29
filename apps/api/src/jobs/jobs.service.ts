@@ -5,7 +5,7 @@
  * отдельный процесс-воркер. Так рендер и распознавание не могут
  * подвесить интерфейс, а перезапуск бэкенда не роняет идущую работу.
  */
-import { Inject, Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, Logger, NotFoundException, OnModuleDestroy } from "@nestjs/common";
 import PgBoss from "pg-boss";
 import { sql } from "drizzle-orm";
 
@@ -32,6 +32,7 @@ export class JobsService implements OnModuleDestroy {
   private readonly log = new Logger("jobs");
   private boss: PgBoss | null = null;
   private starting: Promise<PgBoss> | null = null;
+  private readonly queues = new Map<QueueName,Promise<void>>();
 
   constructor(
     @Inject(CONFIG) private readonly config: ApiConfig,
@@ -64,7 +65,12 @@ export class JobsService implements OnModuleDestroy {
     payload: unknown,
   ): Promise<{ id: string | null; queued: boolean }> {
     const boss = await this.queue();
-    await boss.createQueue(queue);
+    let ready = this.queues.get(queue);
+    if (!ready) {
+      ready = boss.createQueue(queue).catch(error=>{this.queues.delete(queue);throw error;});
+      this.queues.set(queue,ready);
+    }
+    await ready;
     const parsed = PAYLOADS[queue].parse(payload);
 
     const key = singletonKey(queue, parsed as never);
@@ -74,7 +80,11 @@ export class JobsService implements OnModuleDestroy {
       retryDelay: 60, retryBackoff: true,
       expireInSeconds: 6 * 3600,
     }));
-    return { id, queued: id !== null };
+    if (id) return {id,queued:true};
+    // Return a trackable handle even when a repeated request is coalesced.
+    const [existing] = await this.db.execute<{id:string}>(sql`select id::text from jobs.job
+      where name=${queue} and singleton_key=${key} order by created_on desc limit 1`);
+    return {id:existing?.id??null,queued:false};
   }
 
   /**
@@ -127,9 +137,10 @@ export class JobsService implements OnModuleDestroy {
   private async describe(rows: JobRow[], viewer: Viewer): Promise<JobRow[]> {
     if (!rows.length) return rows;
     const objects = await this.db.execute<{id:string; objectTitle:string; objectHref:string|null; streamerName:string|null; stage:string|null}>(sql`
-      select j.id::text, coalesce(v.title, s.display_name, s.login, 'Материал больше недоступен') as "objectTitle",
+      select j.id::text, coalesce(v.title, s.display_name, s.login,
+        case when j.name='light.refresh-youtube' then 'YouTube' else 'Материал больше недоступен' end) as "objectTitle",
         case when v.id is not null then '/vods/' || v.id when s.login is not null then '/streamers/' || s.login else null end as "objectHref",
-        coalesce(s.display_name, s.login) as "streamerName",
+        coalesce(s.display_name, s.login) as "streamerName", s.login as streamer, s.avatar,
         (select message from job_events e where e.job_id=j.id and message like 'шаг %' order by e.id desc limit 1) as stage
       from jobs.job j
       left join publications p on p.id = j.data->>'publicationId'
@@ -149,6 +160,64 @@ export class JobsService implements OnModuleDestroy {
       or exists (select 1 from vods v where v.id = j.data->>'vodId' and v.streamer = ${channel ?? "__unlinked_account__"})
       or exists (select 1 from publications p join clips c on c.id = p.clip_id
         where p.id = j.data->>'publicationId' and c.streamer = ${channel ?? "__unlinked_account__"}))`;
+  }
+
+  /** Group before pagination: busy channels cannot displace other channels' tasks. */
+  private groupSource(viewer: Viewer) {
+    return sql`with source as (
+      select j.id::text, j.name, j.state::text, j.data, j.created_on, j.started_on, j.completed_on, j.output
+      from jobs.job j where ${this.scope(viewer)}
+      union all
+      select id::text, name, case when state='active' and started_at < now()-interval '6 hours' then 'expired' else state end,
+        '{}'::jsonb, started_at, started_at, completed_at, output
+      from automation_runs where ${viewer.isAdmin}
+    ), labeled as (
+      select j.*, coalesce(s.login, v.streamer, j.data->>'login', c.streamer) as streamer,
+        coalesce(s.display_name,s.login,j.data->>'login') as "streamerName", s.avatar,
+        coalesce(v.title, s.display_name, s.login) as "objectTitle",
+        case when v.id is not null then '/vods/' || v.id else null end as "objectHref"
+      from source j
+      left join publications p on p.id=j.data->>'publicationId'
+      left join clips c on c.id=p.clip_id
+      left join vods v on v.id=coalesce(j.data->>'vodId',c.vod_id)
+      left join streamers s on s.login=coalesce(v.streamer,j.data->>'login',c.streamer)
+    )`;
+  }
+
+  async groups(viewer: Viewer) {
+    const rows = await this.db.execute<JobRow & {streamer:string|null; runs:number}>(sql`${this.groupSource(viewer)}, ranked as (
+      select *, row_number() over task as position,
+        (count(*) over counts)::int as runs,
+        (count(*) filter(where state='active') over counts)::int as active,
+        (count(*) filter(where state in ('created','retry')) over counts)::int as waiting,
+        (count(*) filter(where state='completed') over counts)::int as completed,
+        (count(*) filter(where state in ('failed','expired')) over counts)::int as failed
+      from labeled
+      window task as (partition by name,streamer order by created_on desc,id desc), counts as (partition by name,streamer)
+    ) select id,name,state,data,streamer,"streamerName",avatar,"objectTitle","objectHref",
+      created_on as "createdAt",started_on as "startedAt",completed_on as "completedAt",
+      runs,active,waiting,completed,failed from ranked where position=1 order by active desc,waiting desc,created_on desc`);
+    const groups = rows.map(row => ({...row,recurring: row.runs > 1 || ['light.index-channel','light.refresh-streamer'].includes(row.name) || row.name.startsWith('platform.')}));
+    if (viewer.isAdmin) for (const name of ['platform.discovery','platform.metrics','platform.sweep']) {
+      if (!groups.some(group=>group.name===name)) groups.push({id:name,name,state:'idle',data:{},streamer:null,createdAt:null,startedAt:null,completedAt:null,runs:0,active:0,waiting:0,completed:0,failed:0,recurring:true} as unknown as typeof groups[number]);
+    }
+    return groups;
+  }
+
+  async groupRuns(viewer: Viewer, input: {name:string;streamer:string;offset:number}) {
+    const rows = await this.db.execute<JobRow>(sql`${this.groupSource(viewer)}
+      select id,name,state,data,streamer,"streamerName",avatar,"objectTitle","objectHref",
+        created_on as "createdAt",started_on as "startedAt",completed_on as "completedAt",
+        case when ${viewer.isAdmin} or state not in ('failed','expired') then output else null end as output
+      from labeled where name=${input.name} and coalesce(streamer,'')=${input.streamer}
+      order by created_on desc,id desc limit 31 offset ${input.offset}`);
+    return {runs:rows.slice(0,30),nextOffset:rows.length>30?input.offset+30:null};
+  }
+
+  async status(viewer:Viewer, id:string) {
+    const [job]=await this.db.execute<{id:string;state:string;output:unknown}>(sql`select id::text,state,output from jobs.job j where id=${id}::uuid and ${this.scope(viewer)}`);
+    if (!job) throw new NotFoundException('Задание не найдено');
+    return job;
   }
 
   async events(viewer: Viewer, id: string) {
@@ -174,7 +243,7 @@ export class JobsService implements OnModuleDestroy {
       cross join lateral (select id,message from job_events where job_id=j.id order by id desc limit 1000) e
       where j.id in (${sql.join(jobs.map(job=>sql`${job.id}::uuid`),sql`, `)}) order by e.id
     `);
-    return jobs.map(job=>jobMessage(job,events.filter(event=>event.jobId===job.id),viewer.isAdmin));
+    return jobs.map(job=>jobMessage(job,events.filter(event=>event.jobId===job.id),false));
   }
 
   async onModuleDestroy(): Promise<void> {

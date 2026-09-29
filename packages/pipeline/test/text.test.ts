@@ -8,6 +8,7 @@ test('repairs detached suffixes and punctuation but preserves dashes and ordinar
   assert.equal(normalizeRussianText('Это - то, что нужно. Дота — игра.'),'Это - то, что нужно. Дота — игра.');
   assert.equal(maskProfanity('мандарин, художник, вебинар, команда'),'мандарин, художник, вебинар, команда');
   assert.equal(displayTranscript('« Блядь », наxуй!'),'«Б****», н****!');
+  assert.equal(maskProfanity('долбоеб, долбоёбы, пизец.'),'д******, д*******, п****.');
 });
 
 test('joins timed suffix before ASS wrapping without mutating input',()=>{
