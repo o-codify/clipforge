@@ -60,6 +60,34 @@ def idle_seconds():
     return ((ctypes.windll.kernel32.GetTickCount() - info.tick) & 0xffffffff) / 1000
 
 
+def physical_network_interfaces():
+    if os.name != 'nt':
+        return None
+    try:
+        raw = subprocess.check_output(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+            '[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); @(Get-NetAdapter -Physical -ErrorAction Stop | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress'],
+            creationflags=0x08000000, timeout=5, stderr=subprocess.DEVNULL, encoding='utf-8')
+        names = json.loads(raw)
+        if isinstance(names, str):
+            names = [names]
+        return set(names) if names and all(isinstance(n, str) for n in names) else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def network_rates(previous, counters, seconds, physical=None):
+    names = set(counters) & set(previous)
+    selected = names & physical if physical else set()
+    # VPN/TUN can count localhost video/model traffic and both directions of the
+    # same packet. Real adapters already include encrypted external VPN traffic.
+    if not selected:
+        selected = {k for k in names if 'loopback' not in k.lower()}
+    deltas = [(max(0, counters[k].bytes_recv-previous[k].bytes_recv),
+               max(0, counters[k].bytes_sent-previous[k].bytes_sent)) for k in selected]
+    aggregate = sum if physical and names & physical else max
+    return tuple(aggregate([d[i] for d in deltas] or [0])*8/1000/max(.1,seconds) for i in (0,1))
+
+
 def atomic_json(file, value):
     file = Path(file)
     file.parent.mkdir(parents=True, exist_ok=True)
@@ -95,6 +123,7 @@ class Monitor:
         self.good_since = None
         self.pause_since = None
         self.previous_net = psutil.net_io_counters(pernic=True)
+        self.physical_interfaces = physical_network_interfaces()
         self.last_tick = time.monotonic()
         self.last_gpu = 0
         self.gpu = {}
@@ -120,12 +149,7 @@ class Monitor:
                 pass
         memory = p.virtual_memory()
         counters = p.net_io_counters(pernic=True)
-        # Do not double-count the same packets on VPN/virtual adapters.
-        deltas = [(max(0, v.bytes_recv-self.previous_net[k].bytes_recv), max(0, v.bytes_sent-self.previous_net[k].bytes_sent))
-                  for k, v in counters.items() if k in self.previous_net and 'loopback' not in k.lower()]
-        dt = max(.1, now-self.last_tick)
-        rx = max((x[0] for x in deltas), default=0)*8/1000/dt
-        tx = max((x[1] for x in deltas), default=0)*8/1000/dt
+        rx, tx = network_rates(self.previous_net, counters, now-self.last_tick, self.physical_interfaces)
         self.previous_net, self.last_tick = counters, now
         if now-self.last_gpu > 5:
             self.last_gpu = now

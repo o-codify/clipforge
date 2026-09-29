@@ -3,7 +3,8 @@ from pathlib import Path
 import sys
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[3]/'scripts'))
-from media_resources import Policy
+from media_resources import Policy, network_rates
+from types import SimpleNamespace
 
 
 class ResourcePolicyTest(unittest.TestCase):
@@ -42,6 +43,19 @@ class ResourcePolicyTest(unittest.TestCase):
         busy=Policy().decide({**self.snapshot,'rxKbps':16000,'txKbps':8200})
         self.assertLess(busy['downloadKbps'],free['downloadKbps'])
         self.assertLess(busy['uploadKbps'],free['uploadKbps'])
+
+    def test_local_tunnel_traffic_does_not_consume_internet_budget(self):
+        previous={k:SimpleNamespace(bytes_recv=100,bytes_sent=100) for k in ['Wi-Fi','VPN','Loopback']}
+        counters={'Wi-Fi':SimpleNamespace(bytes_recv=1100,bytes_sent=600),
+                  'VPN':SimpleNamespace(bytes_recv=100000100,bytes_sent=100000100),
+                  'Loopback':SimpleNamespace(bytes_recv=200000100,bytes_sent=200000100)}
+        self.assertEqual(network_rates(previous,counters,1,{'Wi-Fi'}),(8,4))
+        self.assertEqual(network_rates(previous,counters,1,None),(800000,800000))
+
+    def test_network_counter_reset_is_not_negative_usage(self):
+        previous={'Wi-Fi':SimpleNamespace(bytes_recv=2000,bytes_sent=2000)}
+        counters={'Wi-Fi':SimpleNamespace(bytes_recv=100,bytes_sent=50)}
+        self.assertEqual(network_rates(previous,counters,1,{'Wi-Fi'}),(0,0))
 
 
 if __name__=='__main__':unittest.main()
