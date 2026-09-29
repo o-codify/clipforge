@@ -98,7 +98,7 @@ def detect_frame(frame, ocr=True):
     return dict(regions=merge_regions(regions), kinds=kinds, evidence=evidence)
 
 
-def scan_ads(video, start, end, transcript='', extra_regions=None):
+def scan_ads(video, start, end, transcript='', extra_regions=None, *, verified_profile=False):
     if not 0 <= start < end or end-start > 180:
         raise ValueError('Ad scanning accepts clips of at most 180 seconds')
     cv2.setNumThreads(2)
@@ -122,8 +122,9 @@ def scan_ads(video, start, end, transcript='', extra_regions=None):
             raise ValueError('Invalid video frame rate')
         cap.set(cv2.CAP_PROP_POS_MSEC,start*1000)
         next_frame=0
-        # QR at 4 fps, OCR at 1 fps. All detected regions stay covered for the
-        # entire clip (also when banners animate between sample frames).
+        # A verified VOD map already classifies banners and rejects chat/HUD.
+        # Do not override that decision with keyword-only OCR on individual clips.
+        # QR detection remains active for brief/animated codes between VOD samples.
         for index in range(math.ceil((end-start)*4)):
             target=round(index*fps/4)
             ok=True
@@ -135,7 +136,7 @@ def scan_ads(video, start, end, transcript='', extra_regions=None):
                 if index < (end-start)*4-4:
                     raise ValueError('Video could not be fully screened')
                 break
-            found = detect_frame(frame, ocr=index % 4 == 0)
+            found = detect_frame(frame, ocr=not verified_profile and index % 4 == 0)
             regions.extend(found['regions']); evidence.update(found['evidence'])
             qr_hits += found['kinds'].count('qr'); banner_hits += found['kinds'].count('banner'); frames += 1
     finally:
@@ -148,4 +149,4 @@ def scan_ads(video, start, end, transcript='', extra_regions=None):
     return dict(regions=regions, qrHits=qr_hits, bannerHits=banner_hits, frames=frames,
                 evidence=sorted(evidence), coverage=area, reject=area > .3 or spoken,
                 reason='Рекламная речь' if spoken else 'Реклама занимает большую часть кадра' if area > .3 else None,
-                requiresReview=True, sampleFps=4, ocrFps=1)
+                requiresReview=True, sampleFps=4, ocrFps=0 if verified_profile else 1)

@@ -248,12 +248,12 @@ def op_prepare_media(params, ctx):
     profile = params.get('adProfile')
     regions = list(params.get('regions', []))
     if profile:
-        from clipforge_worker.ad_profile import source_info, VERSION
+        from clipforge_worker.ad_profile import source_info, VERSION, REVIEW_VERSION
         info = source_info(params['video'])
-        if profile.get('signature') != info['signature'] or profile.get('version') != VERSION or profile.get('complete') is not True:
+        if profile.get('signature') != info['signature'] or profile.get('version') != VERSION or profile.get('reviewVersion') != REVIEW_VERSION or profile.get('complete') is not True:
             raise ValueError('Карта рекламы не соответствует исходнику')
         regions.extend(profile['regions'])
-    ads = scan_ads(params['video'], params['start'], params['end'], params.get('transcript', ''), regions)
+    ads = scan_ads(params['video'], params['start'], params['end'], params.get('transcript', ''), regions, verified_profile=bool(profile))
     if profile and not ads['reject']:
         ads.update(requiresReview=False, automatic=True, profileId=profile['signature'], profileFrames=profile['samples'])
     # Only the new explicit per-run option enables DTLN. Legacy method and

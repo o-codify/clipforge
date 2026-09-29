@@ -23,6 +23,9 @@ VERSION = 'vod-vision-v1'
 MODEL = 'qwen3-vl:4b-instruct'
 SAMPLES = 12
 REVIEW_VERSION = 1
+# The desktop governor lowers priority and adapts the process tree to available
+# resources. A small inference pool can use spare CPU without monopolizing it.
+CPU_THREADS = min(8, max(2, (os.cpu_count() or 2) // 2))
 SCHEMA = {'type': 'object', 'required': ['uncertain', 'regions'], 'additionalProperties': False,
     'properties': {'uncertain': {'type': 'boolean'}, 'regions': {'type': 'array', 'items': {
         'type': 'object', 'required': ['label', 'box'], 'additionalProperties': False,
@@ -105,7 +108,7 @@ def vision_server():
 def analyze_frame(port, image):
     response = request(port, 'chat', {'model': MODEL, 'stream': False, 'format': SCHEMA,
         'keep_alive': '5m', 'options': {'temperature': 0, 'num_ctx': 4096,
-            'num_predict': 700, 'num_gpu': 0, 'num_thread': 2},
+            'num_predict': 700, 'num_gpu': 0, 'num_thread': CPU_THREADS},
         'messages': [{'role': 'user', 'content': PROMPT,
             'images': [base64.b64encode(image.read_bytes()).decode()]}]})
     if not response.get('done') or response.get('done_reason') == 'length':
@@ -140,7 +143,7 @@ def verify_region(port, frame, region):
         'format': {'type': 'object', 'required': ['kind'], 'additionalProperties': False,
                    'properties': {'kind': {'type': 'string', 'enum': ['ad', 'chat', 'game', 'face', 'other', 'uncertain']}}},
         'keep_alive': '5m', 'options': {'temperature': 0, 'num_ctx': 2048,
-            'num_predict': 60, 'num_gpu': 0, 'num_thread': 2},
+            'num_predict': 60, 'num_gpu': 0, 'num_thread': CPU_THREADS},
         'messages': [{'role': 'user', 'content':
             'Classify the MAIN content filling this crop, not small objects elsewhere inside it. '
             'ad = a tightly cropped sponsor banner, QR code, betting logo, '
@@ -177,6 +180,14 @@ def source_info(video):
         stream.seek(max(0, stat.st_size - 1024 * 1024))
         digest.update(stream.read(1024 * 1024))
     return dict(signature=digest.hexdigest(), width=width, height=height, duration=duration)
+
+
+def covered_by(region, masks):
+    # Strict containment only: reusing a verified mask must never enlarge it to
+    # include adjacent chat/HUD or approve a new region without looking at it.
+    return any(region['x'] >= m['x'] and region['y'] >= m['y'] and
+               region['x']+region['w'] <= m['x']+m['w'] and
+               region['y']+region['h'] <= m['y']+m['h'] for m in masks)
 
 
 def profile_ads(video, directory, cached=None, progress=lambda _: None):
@@ -227,7 +238,14 @@ def profile_ads(video, directory, cached=None, progress=lambda _: None):
             if item.get('reviewVersion') != REVIEW_VERSION:
                 frame = cv2.imread(str(image))
                 # Verify before merging: a mistaken chat box must not enlarge a real banner.
-                item['verified'] = [{'region': r, 'kind': verify_region(port, frame, r)} for r in candidates]
+                item['verified'] = []
+                known = merge_regions(regions)
+                for r in candidates:
+                    reused = covered_by(r, known)
+                    kind = 'ad' if reused else verify_region(port, frame, r)
+                    item['verified'].append({'region': r, 'kind': kind, 'reused': reused})
+                    if kind == 'ad':
+                        known = merge_regions([*known, r])
                 item['reviewVersion'] = REVIEW_VERSION
                 pending = checkpoint.with_suffix('.pending.json')
                 pending.write_text(json.dumps(item, ensure_ascii=False), encoding='utf-8')
