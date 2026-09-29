@@ -628,7 +628,7 @@ export async function renderRun(
     cameraPolicy: "per-clip-roi-v6-verified-window",
     layoutPolicy: "fixed-crop-minimap-v1",
     subtitleTextPolicy: "ru-spacing-and-shared-masking-v1",
-    mediaProtection: { version:3, audio:audioMode, ads:'vod-vision', profileId:adProfile.signature },
+    mediaProtection: { version:3, audio:audioMode, ads:'vod-vision', profileId:adProfile.signature, reviewVersion:adProfile.reviewVersion, regions:adProfile.regions },
     grid, subtitles: style, header, outro,
     render: { crf: 20, preset: "veryfast", fps: 30, audioBitrate: "160k" },
     censor: { enabled: true, audio: "off", maskSubtitles: true },

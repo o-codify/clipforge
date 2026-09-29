@@ -73,7 +73,7 @@ async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.
   const previous=(row.run.settings.renderedClips as Record<string,{grid?:ReturnType<typeof computeGrid>;protection?:{audio?:{method?:string}}}>|undefined)?.[row.clip.id];
   const audioMode=previous?.protection?.audio?.method??row.run.settings.audioMode??'original';
   if(!['original','dtln'].includes(String(audioMode)))throw new Error('Настройка звука исходного клипа недоступна');
-  const hash=createHash('sha256').update(JSON.stringify({v:3,parent:row.clip.id,profile:profile.signature,audioMode})).digest('hex').slice(0,12);
+  const hash=createHash('sha256').update(JSON.stringify({v:3,parent:row.clip.id,profile:profile.signature,reviewVersion:profile.reviewVersion,regions:profile.regions,audioMode})).digest('hex').slice(0,12);
   const id=`${row.clip.id}_ads_${hash}`;
   const [existing]=await ctx.db.select({id:clips.id}).from(clips).where(eq(clips.id,id));
   if(existing)return {clipId:id};

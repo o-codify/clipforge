@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 import cv2
 import numpy as np
-from clipforge_worker.ad_profile import profile_ads, source_info, validate_vision, covered_by, SAMPLES
+from clipforge_worker.ad_profile import profile_ads, source_info, validate_vision, covered_by, persistent_regions, SAMPLES
 from clipforge_worker.__main__ import op_prepare_media
 
 
@@ -31,6 +31,7 @@ class AdProfileTest(unittest.TestCase):
             root=Path(d);video=self.source(root)
             answers=[{'uncertain':False,'regions':[]} for _ in range(SAMPLES)]
             answers[-1]={'uncertain':False,'regions':[{'label':'Sponsor banner','box':[625,55,937,278]}]}
+            answers[-2]=answers[-1]
             with patch('clipforge_worker.ad_profile.vision_server',return_value=nullcontext(1)),patch('clipforge_worker.ad_profile.analyze_frame',side_effect=answers) as ai,patch('clipforge_worker.ad_profile.detect_frame',return_value={'regions':[],'kinds':[],'evidence':[]}),patch('clipforge_worker.ad_profile.verify_region',return_value='ad') as reviewer:
                 result=profile_ads(str(video),root/'ads')
                 self.assertEqual(ai.call_count,SAMPLES)
@@ -75,6 +76,7 @@ class AdProfileTest(unittest.TestCase):
             answers[0]={'uncertain':False,'regions':[
                 {'label':'banner','box':[625,55,937,278]},
                 {'label':'possible promo','box':[625,280,937,780]}]}
+            answers[1]={'uncertain':False,'regions':[answers[0]['regions'][0]]}
             with patch('clipforge_worker.ad_profile.vision_server',return_value=nullcontext(1)),patch('clipforge_worker.ad_profile.analyze_frame',side_effect=answers),patch('clipforge_worker.ad_profile.detect_frame',return_value={'regions':[],'kinds':[],'evidence':[]}),patch('clipforge_worker.ad_profile.verify_region',side_effect=['ad','chat']):
                 result=profile_ads(str(video),root/'ads')
             self.assertEqual(len(result['regions']),1)
@@ -105,6 +107,14 @@ class AdProfileTest(unittest.TestCase):
             self.assertEqual(detector.call_count,4)
             self.assertTrue(all(call.kwargs['ocr'] is False for call in detector.call_args_list))
             self.assertEqual(result['ocrFps'],0)
+
+    def test_single_frame_donation_is_not_a_full_stream_mask(self):
+        banner=dict(x=520,y=20,w=110,h=60)
+        donation=dict(x=250,y=100,w=150,h=40)
+        frame=lambda regions,kinds=[]:dict(verified=[{'region':r,'kind':'ad'} for r in regions],detected={'regions':regions,'kinds':kinds})
+        evidence=[frame([banner,donation,donation]),frame([banner])]
+        self.assertEqual(persistent_regions(evidence),[banner])
+        self.assertEqual(persistent_regions([frame([donation],['qr'])]),[donation])
 
 
 if __name__=='__main__':unittest.main()

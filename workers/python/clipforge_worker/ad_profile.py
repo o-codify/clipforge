@@ -22,7 +22,8 @@ from .ads import detect_frame, merge_regions, rectangle
 VERSION = 'vod-vision-v1'
 MODEL = 'qwen3-vl:4b-instruct'
 SAMPLES = 12
-REVIEW_VERSION = 1
+REVIEW_VERSION = 2
+CROP_REVIEW_VERSION = 1
 # The desktop governor lowers priority and adapts the process tree to available
 # resources. A small inference pool can use spare CPU without monopolizing it.
 CPU_THREADS = min(8, max(2, (os.cpu_count() or 2) // 2))
@@ -190,6 +191,32 @@ def covered_by(region, masks):
                region['y']+region['h'] <= m['y']+m['h'] for m in masks)
 
 
+def same_zone(a, b):
+    overlap_w = max(0, min(a['x']+a['w'], b['x']+b['w'])-max(a['x'],b['x']))
+    overlap_h = max(0, min(a['y']+a['h'], b['y']+b['h'])-max(a['y'],b['y']))
+    areas = (a['w']*a['h'], b['w']*b['h'])
+    return overlap_w*overlap_h >= min(areas)*.8 and max(areas) <= min(areas)*2
+
+
+def persistent_regions(evidence):
+    """A full-stream mask needs independent frames, not repeated boxes in one.
+
+    QR codes are an exception: geometric detection is sufficient even once.
+    This prevents a one-off donation/caption false positive covering the game
+    throughout the VOD. Brief QR codes also have a per-clip detector.
+    """
+    by_frame = [[v['region'] for v in item['verified'] if v['kind']=='ad'] for item in evidence]
+    selected = []
+    for index, regions in enumerate(by_frame):
+        item = evidence[index]
+        for region in regions:
+            support = sum(any(same_zone(region, other) for other in frame) for frame in by_frame)
+            qr = 'qr' in item['detected']['kinds'] and any(same_zone(region,r) for r in item['detected']['regions'])
+            if support >= 2 or qr:
+                selected.append(region)
+    return merge_regions(selected)
+
+
 def profile_ads(video, directory, cached=None, progress=lambda _: None):
     cv2.setNumThreads(2)
     info = source_info(video)
@@ -235,7 +262,7 @@ def profile_ads(video, directory, cached=None, progress=lambda _: None):
                 x1, y1, x2, y2 = region['box']
                 candidates.append(rectangle([[x1*info['width']/1000, y1*info['height']/1000],
                     [x2*info['width']/1000, y2*info['height']/1000]], info['width'], info['height'], pad=12))
-            if item.get('reviewVersion') != REVIEW_VERSION:
+            if item.get('reviewVersion') != CROP_REVIEW_VERSION:
                 frame = cv2.imread(str(image))
                 # Verify before merging: a mistaken chat box must not enlarge a real banner.
                 item['verified'] = []
@@ -246,13 +273,13 @@ def profile_ads(video, directory, cached=None, progress=lambda _: None):
                     item['verified'].append({'region': r, 'kind': kind, 'reused': reused})
                     if kind == 'ad':
                         known = merge_regions([*known, r])
-                item['reviewVersion'] = REVIEW_VERSION
+                item['reviewVersion'] = CROP_REVIEW_VERSION
                 pending = checkpoint.with_suffix('.pending.json')
                 pending.write_text(json.dumps(item, ensure_ascii=False), encoding='utf-8')
                 os.replace(pending, checkpoint)
             regions.extend(v['region'] for v in item['verified'] if v['kind'] == 'ad')
             evidence.append(item)
-    regions = merge_regions(regions)
+    regions = persistent_regions(evidence)
     coverage = sum(r['w']*r['h'] for r in regions)/(info['width']*info['height'])
     if coverage > .3 or len(regions) > 32:
         raise ValueError('Реклама занимает слишком большую часть эфира; автоматическая нарезка отложена')
