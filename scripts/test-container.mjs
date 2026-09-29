@@ -62,7 +62,7 @@ try {
   console.log("PASS: control crash recovery, persistent data and media queue retained while PC is offline");
   before = inspect().RestartCount;
   docker(["stop", "-t", "5", db]);
-  await until(() => inspect().RestartCount > before, "database outage detected");
+  await until(() => inspect().RestartCount > before, "persistent database outage detected", 360_000);
   docker(["start", db]);
   await until(() => inspect().State.Health?.Status === "healthy", "database reconnection");
   console.log("PASS: service recovers after PostgreSQL outage");

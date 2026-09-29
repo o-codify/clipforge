@@ -39,6 +39,8 @@ try{
   await db.sql`insert into vods(id,streamer) values(${prefix},${prefix})`;
   await db.sql`insert into runs(id,vod_id,streamer,out_dir) values(${prefix},${prefix},${prefix},'/unused')`;
   await db.sql`insert into clips(id,run_id,vod_id,streamer,segment_key,file,state,text,media_storage) values(${clip},${prefix},${prefix},${prefix},${prefix},'test.mp4','ready','Test clip',${JSON.stringify({videoKey:'test/video',posterKey:'test/poster'})}::jsonb)`;
+  await assert.rejects(service.preview(clip),'A ready state alone must not bypass media protection');
+  await db.sql`update runs set settings=${JSON.stringify({renderedClips:{[clip]:{protection:{autoVerifiedAt:new Date().toISOString(),ads:{automatic:true,profileFrames:12,regions:[]}}}}})}::jsonb where id=${prefix}`;
   await db.sql`insert into platform_accounts(id,platform,external_id,label,credentials) values(${account},'youtube',${channel},'Test channel',${JSON.stringify({refreshToken:'test-refresh'})}::jsonb)`;
   const draft=await service.preview(clip);assert.equal(draft.accounts[0].id,account);assert.equal(draft.privacy,'private');
   const metadata={accountId:account,title:'Пинг -то  меньше , блядь!',description:'Точное описание\n\nСо второй строкой',privacy:'public'};
