@@ -52,7 +52,8 @@ try {
   execNode("import{writeFileSync}from'node:fs';writeFileSync('/storage/data/recovery-marker','persistent')");
   const seeded = execNode(dbCode("const rows=await ctx.db.sql`select id from accounts`;console.log(rows[0].id)"));
   // A disconnected PC leaves work queued; control must never execute media jobs.
-  execNode(dbCode(`const {default:PgBoss}=await import('./apps/worker/node_modules/pg-boss/src/index.js');const boss=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'jobs'});await boss.start();await boss.send('heavy.pipeline',{vodId:'deployment-probe'},{retryLimit:2});await boss.stop();`));
+  const mediaProbe=execNode(dbCode(`const {default:PgBoss}=await import('./apps/worker/node_modules/pg-boss/src/index.js');const boss=new PgBoss({connectionString:process.env.DATABASE_URL,schema:'jobs'});await boss.start();await boss.createQueue('heavy.pipeline');console.log(await boss.send('heavy.pipeline',{vodId:'deployment-probe'},{retryLimit:2}));await boss.stop();`));
+  assert.match(mediaProbe,/^[a-f0-9-]{36}$/,'Offline-media probe must actually be queued');
   let before = inspect().RestartCount;
   execNode("import{readFileSync}from'node:fs';const beat=JSON.parse(readFileSync('/tmp/clipforge/worker.json','utf8'));process.kill(beat.pid,'SIGKILL')");
   await until(() => {const state=inspect();return state.RestartCount>before && state.State.Health?.Status==="healthy";}, "worker crash recovery");
