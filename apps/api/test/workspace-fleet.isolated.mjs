@@ -75,6 +75,13 @@ try{
   await until(()=>finished.length===8);await Promise.all(stoppers.map(stop=>stop()));stoppers=[];
   assert.equal(new Set(finished).size,8);assert.equal(maxTotal,2);assert.equal(owners.size,2);
   assert.equal((await workers.list()).length,2);
+  await db.sql`update worker_instances set label=case when id='qa-worker-a' then 'Воркер 10' else 'Воркер 2' end`;
+  const workerOrder=async()=>(await workers.list()).map(w=>w.id);
+  assert.deepEqual(await workerOrder(),['qa-worker-b','qa-worker-a']);
+  await registries[0].beat({});await registries[1].beat({});
+  assert.deepEqual(await workerOrder(),['qa-worker-b','qa-worker-a'],'Heartbeats must not reorder workers');
+  await db.sql`update worker_instances set label='Одинаковое имя'`;
+  assert.deepEqual(await workerOrder(),['qa-worker-a','qa-worker-b'],'Equal names have a stable ID tie-breaker');
   const autoId=randomUUID();await db.sql`insert into automation_runs(id,name,state) values(${autoId},'platform.metrics','active')`;
   await registries[1].claim(autoId);
   assert((await workers.list()).find(w=>w.id==='qa-worker-b').active.some(j=>j.name==='platform.metrics'));

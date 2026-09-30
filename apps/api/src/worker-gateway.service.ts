@@ -16,9 +16,10 @@ const hash=(s:string|Buffer)=>createHash('sha256').update(s).digest('hex');
 const opaque=z.string().regex(/^[a-zA-Z0-9_-]{43,128}$/);
 const uid=z.string().uuid();
 const fileId=z.string().regex(/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,219}$/).refine(s=>!s.includes('..'));
-const policySchema=z.object({cpu:z.number().min(1).max(128).default(4),memoryGb:z.number().int().min(2).max(256).default(8),
-  downloadKbps:z.number().int().min(100).max(1000000).default(10000),uploadKbps:z.number().int().min(100).max(1000000).default(5000)});
-type Policy=z.infer<typeof policySchema>;
+// One active assignment, batch size 1: 4 GiB for speech admission plus the
+// runtime, bounded media windows and a reserve. Users need not size each task.
+export const WORKER_PROFILE={cpu:2,memoryGb:6,downloadKbps:10000,uploadKbps:5000} as const;
+type Policy={cpu:number;memoryGb:number;downloadKbps:number;uploadKbps:number};
 const resourcesSchema=z.object({allocation:z.object({cpus:z.number().positive().max(1024),memoryMb:z.number().positive().max(1048576),usedMb:z.number().nonnegative().max(1048576)}),
   freeGb:z.number().nonnegative().max(1000000),paused:z.boolean(),reason:z.string().max(100).nullable().optional(),memoryMb:z.number().nonnegative().optional(),
   cpuPercent:z.number().min(0).max(100).optional(),downloadKbps:z.number().nonnegative().optional(),uploadKbps:z.number().nonnegative().optional(),
@@ -46,13 +47,13 @@ export class WorkerGatewayService implements OnModuleDestroy {
     if(!w)throw new UnauthorizedException('Доступ воркера отозван');return w;
   }
   async connect(raw:unknown){
-    const input=z.object({label:z.string().trim().min(1).max(80).default('Воркер'),policy:policySchema.default({})}).strict().parse(raw);
+    const input=z.object({label:z.string().trim().min(1).max(80).default('Воркер')}).strict().parse(raw);
     const token=randomBytes(32).toString('base64url'),id=randomUUID(),name='clipforge-'+id.slice(0,8),expiresAt=new Date(Date.now()+3600000);
     // Origin is configured by the platform; a request Host header cannot inject shell code.
     const origin=new URL(this.config.webOrigin).origin;if(!/^https?:\/\/[a-zA-Z0-9.:-]+$/.test(origin))throw new Error('Неверный адрес платформы');
-    await this.db.execute(sql`insert into remote_worker_enrollments(id,token_hash,label,policy,expires_at) values(${id}::uuid,${hash(token)},${input.label},${JSON.stringify(input.policy)}::jsonb,${expiresAt.toISOString()}::timestamptz)`);
+    await this.db.execute(sql`insert into remote_worker_enrollments(id,token_hash,label,policy,expires_at) values(${id}::uuid,${hash(token)},${input.label},${JSON.stringify(WORKER_PROFILE)}::jsonb,${expiresAt.toISOString()}::timestamptz)`);
     const launcher="fetch(process.argv[1]+'/api/worker-gateway/bootstrap').then(r=>{if(!r.ok)throw Error('Platform unavailable');return r.text()}).then(s=>require('fs').writeFileSync('/tmp/clipforge-bootstrap.cjs',s)).then(()=>require('/tmp/clipforge-bootstrap.cjs')).catch(()=>process.exit(1))";
-    const p=input.policy;
+    const p=WORKER_PROFILE;
     const command=`docker run -d --name ${name} --restart unless-stopped --init --cpus=${p.cpu} --cpu-shares=256 --memory=${p.memoryGb}g --memory-swap=${p.memoryGb}g --pids-limit=256 --mount source=${name},target=/storage node:22-bookworm-slim node -e "${launcher}" ${origin} ${token}`;
     return {command,expiresAt,name};
   }

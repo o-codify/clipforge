@@ -25,12 +25,14 @@ export class WorkersController {
         left join vods v on v.id=j.data->>'vodId'
         left join publications p on p.id=j.data->>'publicationId' left join clips c on c.id=coalesce(p.clip_id,j.data->>'clipId')
         where x.worker_id=w.id and x.finished_at is null and j.state='active'),'[]'::jsonb) as active
-      from worker_instances w order by w.heartbeat_at desc`);
+      from worker_instances w order by lower(w.label),w.id`);
     // Existing processes remain visible during a rolling upgrade, but cannot be controlled as new workers.
     const legacy=await this.db.execute<{key:string;value:Record<string,unknown>;heartbeatAt:Date}>(sql`select key,value,updated_at as "heartbeatAt" from platform_runtime
       where key in ('worker','control') and updated_at>now()-interval '40 seconds' and value->>'state'='online' and value->>'workerId' is null`);
+    const byName=new Intl.Collator('ru',{numeric:true,sensitivity:'base'});
     return [...rows,...legacy.map(r=>({id:'legacy:'+r.key,label:r.key==='control'?'Контроллер платформы':'Компьютер обработки',role:r.value.role,
-      resources:r.value.resources,state:'online',heartbeatAt:r.heartbeatAt,active:[],legacy:true}))];
+      resources:r.value.resources,state:'online',heartbeatAt:r.heartbeatAt,active:[],legacy:true}))]
+      .sort((a,b)=>byName.compare(String(a.label),String(b.label))||String(a.id).localeCompare(String(b.id)));
   }
   @Post(':id/drain')
   async drain(@Param('id') id:string,@Body() body:unknown){

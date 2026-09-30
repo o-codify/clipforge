@@ -62,7 +62,7 @@ def main():
     memory, cpus = limits()
     reserve = max(256 * 1048576, memory * .1)
     if memory < 2 * 1024**3:
-        raise RuntimeError('Worker needs at least 2 GiB; use --memory=8g for the default speech model')
+        raise RuntimeError('Insufficient container memory; use the connection command issued by the platform')
     state_file = storage / 'resources.json'
     env = dict(os.environ, MEDIA_RESOURCE_STATE=str(state_file),
                SPEECH_CPU_THREADS=str(max(1, math.floor(cpus * .9))),

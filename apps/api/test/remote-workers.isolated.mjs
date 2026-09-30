@@ -36,12 +36,15 @@ try{
   const ids=['v90000001','v90000002','v90000003','v90000004','v90000005','v90000006'];
   for(const id of ids)await db.insert(vods).values({id,streamer:login,duration:120});
   const resources={allocation:{cpus:2,memoryMb:8192,usedMb:128},freeGb:100,paused:false};
-  const register=async()=>{const connection=await gateway.connect({label:'QA',policy:{cpu:2,memoryGb:3}}),key=connection.command.split(' ').at(-1),secret=randomBytes(32).toString('base64url');
+  const register=async()=>{const connection=await gateway.connect({label:'QA'}),key=connection.command.split(' ').at(-1),secret=randomBytes(32).toString('base64url');
     assert(!/env-file|DATABASE_URL|S3_|docker login/.test(connection.command));
+    assert(connection.command.includes('--cpus=2 '));assert(connection.command.includes('--memory=6g '));
     const worker=await gateway.enroll({key,secret,host:'qa'});assert.deepEqual(await gateway.enroll({key,secret,host:'qa'}),worker);
     await assert.rejects(gateway.enroll({key,secret:randomBytes(32).toString('base64url'),host:'qa'}));
     const auth='Bearer '+secret;await gateway.heartbeat(auth,{resources,leaseId:null,version:'fixture'});return {...worker,auth};};
+  await assert.rejects(gateway.connect({label:'QA',policy:{cpu:128,memoryGb:256}}));
   const [a,b]=await Promise.all([register(),register()]);
+  assert.deepEqual(a.policy,{cpu:2,memoryGb:6,downloadKbps:10000,uploadKbps:5000});
   await assert.rejects(gateway.enroll({key:randomBytes(32).toString('base64url'),secret:randomBytes(32).toString('base64url'),host:'qa'}));
   await assert.rejects(gateway.next('Bearer '+randomBytes(32).toString('base64url')));
   for(const viewer of [null,{isAdmin:false,role:'user'},{isAdmin:false,role:'admin',isPreview:true}]){
@@ -115,7 +118,7 @@ try{
     server.setErrorHandler((e,r,reply)=>reply.code(e.getStatus?.()??500).send({message:e.message}));
     await server.listen({port:0,host:'0.0.0.0'});config.webOrigin='http://host.docker.internal:'+server.server.address().port;
     for(let i=0;i<2;i++){
-      const connection=await gateway.connect({label:'Container '+i,policy:{cpu:1,memoryGb:2}}),args=connection.command.match(/(?:[^\s"]+|"[^"]*")+/g).map(x=>x.replace(/^"|"$/g,''));
+      const connection=await gateway.connect({label:'Container '+i}),args=connection.command.match(/(?:[^\s"]+|"[^"]*")+/g).map(x=>x.replace(/^"|"$/g,''));
       const name=args[args.indexOf('--name')+1],mount=args[args.indexOf('--mount')+1],volume=mount.match(/source=([^,]+)/)[1];containers.push(name);volumes.push(volume);
       // Generate an audio cache fixture only. Everything else is installed by the exact command from the platform.
       await docker('run','--rm','--mount',mount,'node:22-bookworm-slim','node','-e',
@@ -132,7 +135,7 @@ try{
     const submitted=[];for(const id of ids)submitted.push((await jobs.enqueue(QUEUES.analyzeVod,{vodId:id,force:true})).id);
     await check(async()=>Number((await db.sql`select count(*) n from jobs.job where id=any(${submitted}::uuid[]) and state='completed'`)[0].n)===6,120000);
     const owners=await db.sql`select distinct worker_id from worker_jobs where job_id=any(${submitted}::uuid[])`;assert.equal(owners.length,2);
-    for(const name of containers){const inspect=JSON.parse(await docker('inspect',name))[0];assert(!inspect.Config.Env.some(x=>/DATABASE_URL|S3_|YOUTUBE/.test(x)));assert.equal(inspect.HostConfig.Privileged,false);assert.equal(inspect.HostConfig.Memory,2*1024**3);}
+    for(const name of containers){const inspect=JSON.parse(await docker('inspect',name))[0];assert(!inspect.Config.Env.some(x=>/DATABASE_URL|S3_|YOUTUBE/.test(x)));assert.equal(inspect.HostConfig.Privileged,false);assert.equal(inspect.HostConfig.Memory,6*1024**3);}
     const signals=await db.sql`select signals from vods where id=any(${ids})`;assert(signals.every(v=>v.signals.frames>0));
     console.log('PASS: two real one-command containers, CPU Python analysis, automatic registration, no DB/S3/YouTube credentials');
     // A real video traverses the platform -> container -> chunked result -> catalog path.
