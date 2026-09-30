@@ -5,7 +5,7 @@
  * отдельный процесс-воркер. Так рендер и распознавание не могут
  * подвесить интерфейс, а перезапуск бэкенда не роняет идущую работу.
  */
-import { Inject, Injectable, Logger, NotFoundException, OnModuleDestroy } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, OnModuleDestroy } from "@nestjs/common";
 import PgBoss from "pg-boss";
 import { sql } from "drizzle-orm";
 
@@ -108,6 +108,23 @@ export class JobsService implements OnModuleDestroy {
     const boss = await this.queue();
     await boss.cancel(row.name, id);
     return { cancelled: true };
+  }
+
+  /** Resume the same draft batch: its checkpoints and publication scope use this ID. */
+  async resumeBatch(id: string): Promise<{id:string;resumed:boolean}> {
+    const [row] = await this.db.execute<{name:string;state:string;singletonKey:string}>(sql`
+      select name,state,singleton_key as "singletonKey" from jobs.job where id=${id}::uuid`);
+    if (!row) throw new NotFoundException('Подборка не найдена');
+    if (row.name!==QUEUES.prepareStreamer) throw new BadRequestException('Можно продолжить только подборку клипов');
+    if (['created','retry','active'].includes(row.state)) return {id,resumed:false};
+    if (row.state!=='failed') throw new BadRequestException('Продолжить можно только подборку после сбоя');
+    const boss=await this.queue();
+    const resumed=await enqueueUnique(this.db,QUEUES.prepareStreamer,row.singletonKey,async()=>{
+      await boss.retry(QUEUES.prepareStreamer,id);
+      const [current]=await this.db.execute<{state:string}>(sql`select state from jobs.job where id=${id}::uuid`);
+      return current&&['retry','active','completed'].includes(current.state)?id:null;
+    });
+    return {id,resumed:resumed===id};
   }
 
   /** Последние задания - для панели «что сейчас происходит». */

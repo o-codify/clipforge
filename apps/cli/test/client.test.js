@@ -44,6 +44,9 @@ test('mass drafts and independent inherited ad preferences are explicit API oper
 });
 
 test('paced publication explicitly scopes one batch and has a separate pause action',async()=>{
+  assert.deepEqual(await commandPlan(parseCommand(['resume-batch','batch'])),
+    {path:'/api/jobs/resume-batch/batch',method:'POST',body:{}});
+  await assert.rejects(commandPlan(parseCommand(['resume-batch','batch','--audio','dtln'])));
   assert.deepEqual(await commandPlan(parseCommand(['pace-batch','batch','--channel','UC-P-55QVYfT8SBtGnCNAtog'])),
     {path:'/api/platforms/batches/batch',method:'POST',body:{enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog',intervalMinutes:10,dailyLimit:100,privacy:'public'}});
   assert.deepEqual(await commandPlan(parseCommand(['pause-batch','batch'])),{path:'/api/platforms/batches/batch',method:'DELETE'});

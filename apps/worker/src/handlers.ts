@@ -663,6 +663,7 @@ export async function renderRun(
   let replaced = 0;
   let accepted = previousClips.length;
   let rejected = 0;
+  let resourceFailure = false;
   const failures: string[] = [];
   const verifications: Record<string, unknown> = {...resuming?.settings.renderedClips as Record<string,unknown>|undefined};
 
@@ -802,6 +803,11 @@ export async function renderRun(
     });
 
     if (!result.ok) {
+      // Resource exhaustion affects the whole remaining run, not just this
+      // moment. Keep completed clips and retry the stage/run after recovery.
+      if (/cannot allocate memory|out of memory|malloc of size|bad_alloc/i.test(result.error)) {
+        throw new Error(`Недостаточно памяти для рендера ${name}; готовые клипы сохранены`);
+      }
       failures.push(name);
       report.log(`  [${index + 1}/${picked.length}] СБОЙ ${name}: ${result.error.slice(0, 200)}`);
       return;
@@ -850,12 +856,13 @@ export async function renderRun(
   await Promise.all(
     Array.from({ length: concurrency }, async () => {
       for (;;) {
-        if (await report.cancelled()) return;
+        if (resourceFailure || await report.cancelled()) return;
         if (accepted+inFlight >= count) return;
         const index = cursor++;
         if (index >= picked.length) return;
         inFlight++;
         try { await renderOne(index); } catch (error) {
+          if (/недостаточно памяти|cannot allocate memory|out of memory|MemoryError|malloc of size|bad_alloc/i.test(String(error))) resourceFailure=true;
           failures.push(String(error));
           report.log(`Ошибка клипа ${index + 1}: ${String(error)}`);
         } finally {

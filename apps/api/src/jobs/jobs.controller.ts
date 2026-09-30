@@ -71,6 +71,12 @@ export class JobsController {
     return this.jobs.cancel(id);
   }
 
+  @AdminOnly()
+  @Post('resume-batch/:id')
+  resumeBatch(@Param('id') id:string) {
+    return this.jobs.resumeBatch(z.string().uuid().parse(id));
+  }
+
   /** Обойти архивы канала. Заводит стримера, если его ещё нет. */
   @AdminOnly()
   @Post("index-channel")

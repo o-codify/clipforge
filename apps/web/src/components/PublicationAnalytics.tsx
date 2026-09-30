@@ -33,7 +33,7 @@ export function PublicationAnalyticsTable({rows}:{rows:VideoAnalyticsRow[]}) {
   return <div className="publication-analytics-table" tabIndex={0} role="region" aria-label="Статистика видео YouTube"><table>
     <thead><tr><th>Видео</th><th>Видимость</th><th>Просмотры</th><th>Лайки</th><th>Комментарии</th><th>Ограничения</th><th>Обновлено</th></tr></thead>
     <tbody>{rows.map(row=><tr key={row.id}>
-      <th scope="row"><a className="publication-video-title" href={`https://www.youtube.com/watch?v=${encodeURIComponent(row.videoId)}`} target="_blank" rel="noopener noreferrer">{row.title||"Видео YouTube"}</a>
+      <th scope="row"><a className="publication-video-title" href={`https://www.youtube.com/shorts/${encodeURIComponent(row.videoId)}`} target="_blank" rel="noopener noreferrer">{row.title||"Видео YouTube"}</a>
         <div className="publication-video-author"><StreamerBadge login={row.streamer} name={row.streamerName} avatar={row.avatar}/><span>{row.channel}</span></div></th>
       <td><Pill tone={row.status==='published'&&row.privacy==='public'?"ok":row.status==='failed'?"bad":""}>{row.status==='failed'?"Ошибка":row.status==='processing'?"Обрабатывается":visibility[row.privacy??'']??"Не определена"}</Pill></td>
       <td className="metric-value">{number(row.views)}</td><td className="metric-value">{number(row.likes)}</td><td className="metric-value">{number(row.comments)}</td>

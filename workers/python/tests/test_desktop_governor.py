@@ -77,7 +77,7 @@ setInterval(()=>fs.writeFileSync(process.argv[3]+'/heartbeat',String(Date.now())
                     controller.kill()
                 controller.wait()
 
-    def test_child_is_inside_native_job_with_cpu_and_memory_limits(self):
+    def test_adaptive_job_keeps_controller_allocations_available(self):
         with tempfile.TemporaryDirectory() as directory:
             folder=Path(directory)
             script=folder/'query.py';result=folder/'result.json'
@@ -93,12 +93,15 @@ time.sleep(.8)
 ''',encoding='utf-8')
             # The venv redirector is a second Python process. Use the base
             # executable so the query is the controller, not a suspended child.
-            run=subprocess.run([sys._base_executable,str(ROOT/'scripts/run-media-limited.py'),'--idle-seconds','0','--state-file',str(folder/'state.json'),'--',sys._base_executable,str(script),str(ROOT/'scripts/run-media-limited.py'),str(result)],env={**os.environ,'PYTHONPATH':str(ROOT/'scripts')+os.pathsep+str(ROOT/'.venv/Lib/site-packages')},capture_output=True,timeout=15)
-            self.assertEqual(run.returncode,0,run.stderr.decode(errors='replace'))
-            data=json.loads(result.read_text())
-            self.assertEqual(data['cpuFlags']&5,5)
-            self.assertLessEqual(data['cpuRate'],9000)
-            self.assertGreater(data['memory'],256*2**20)
-            self.assertEqual(data['flags']&0x2200,0x2200)
+            for ceiling in (0, 1024):
+                with self.subTest(emergency_ceiling_mb=ceiling):
+                    run=subprocess.run([sys._base_executable,str(ROOT/'scripts/run-media-limited.py'),'--memory-mb',str(ceiling),'--idle-seconds','0','--state-file',str(folder/'state.json'),'--',sys._base_executable,str(script),str(ROOT/'scripts/run-media-limited.py'),str(result)],env={**os.environ,'PYTHONPATH':str(ROOT/'scripts')+os.pathsep+str(ROOT/'.venv/Lib/site-packages')},capture_output=True,timeout=15,creationflags=0x08000000)
+                    self.assertEqual(run.returncode,0,run.stderr.decode(errors='replace'))
+                    data=json.loads(result.read_text())
+                    self.assertEqual(data['cpuFlags']&5,5)
+                    self.assertLessEqual(data['cpuRate'],9000)
+                    self.assertEqual(data['memory'],ceiling*2**20)
+                    self.assertEqual(data['flags']&0x200,0x200 if ceiling else 0)
+                    self.assertEqual(data['flags']&0x2020,0x2020)
 
 if __name__=='__main__':unittest.main()

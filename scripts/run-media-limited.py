@@ -93,12 +93,14 @@ def run(command, memory_mb, cpu_percent, state_file=None, idle=0):
     monitor = None
     try:
         limits = Limits()
-        # Aggregate committed memory, lower scheduling priority, and kill the
-        # whole tree when the launcher exits. Children cannot break away.
-        limits.basic.flags = 0x200 | 0x20 | 0x2000
+        # Keep the controller alive under pressure. A changing Job Object
+        # commit ceiling rejects malloc/VirtualAlloc in Node and FFmpeg rather
+        # than throttling them. Adaptive RAM control belongs to Monitor, which
+        # suspends/releases heavy children before retrying their stage.
+        # An explicitly configured emergency commit ceiling stays fixed.
+        limits.basic.flags = 0x20 | 0x2000 | (0x200 if memory_mb else 0)
         limits.basic.priority = 0x4000  # BELOW_NORMAL_PRIORITY_CLASS
-        import psutil
-        limits.job_memory = int((memory_mb or psutil.virtual_memory().available / 2**20 * .85) * 1024 * 1024)
+        limits.job_memory = int(memory_mb * 1024 * 1024)
         check(kernel.SetInformationJobObject(job, 9, c.byref(limits), c.sizeof(limits)))
         cpu = CpuLimits(0x1 | 0x4, cpu_percent * 100)  # ENABLE | HARD_CAP
         check(kernel.SetInformationJobObject(job, 15, c.byref(cpu), c.sizeof(cpu)))
@@ -124,10 +126,6 @@ def run(command, memory_mb, cpu_percent, state_file=None, idle=0):
         previous_reason = 'starting'
         while kernel.WaitForSingleObject(process.process, 500) == 258:
             state = monitor.tick()
-            limits.job_memory = int(min(memory_mb or float('inf'), state['memoryMb']) * 1024 * 1024)
-            # Lowering a commit ceiling does not reclaim existing allocations;
-            # Monitor explicitly releases heavy children on sustained pressure.
-            check(kernel.SetInformationJobObject(job, 9, c.byref(limits), c.sizeof(limits)))
             cpu.rate = max(100, int(state['cpuPercent'] * 100))
             check(kernel.SetInformationJobObject(job, 15, c.byref(cpu), c.sizeof(cpu)))
             if state['reason'] != previous_reason:

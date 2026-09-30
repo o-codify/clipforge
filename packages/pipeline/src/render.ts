@@ -364,7 +364,7 @@ export async function renderClip(options: RenderOptions): Promise<RenderResult> 
     }
 
     const { args } = buildFfmpegArgs(options, assPath);
-    const result = await runMediaCommand("ffmpeg", args, options.timeoutMs ?? 600_000, 512);
+    const result = await runMediaCommand("ffmpeg", args, options.timeoutMs ?? 600_000, 1024);
     const seconds = (Date.now() - started) / 1000;
 
     if (result.code !== 0 || !existsSync(options.out)) {

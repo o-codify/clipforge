@@ -40,6 +40,7 @@ pnpm cf active                          задания в очереди и в �
 pnpm cf vod <vodId>                     эфир и готовые клипы
 pnpm cf job <jobId>                      состояние задания
 pnpm cf cancel <jobId>                   отменить задание
+pnpm cf resume-batch <jobId>             продолжить подборку после сбоя с сохранённого места
 pnpm cf wait <jobId> [--timeout 120]      дождаться задания (секунды, максимум 900)
 pnpm cf cleanup <clipId> [--regions file.json]
                                         скрыть QR-коды и рекламу через очередь
@@ -81,7 +82,7 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
   const options=parsed.values;
   const noTarget=['accounts','clips','analytics','jobs','active','batch-publications'];
   const optionalTarget=['youtube-check','refresh'];
-  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','streamer-ads','vod-ads','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','wait','cleanup','inspect-ads','approve-clip','draft-clip','pace-batch','pause-batch'];
+  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','streamer-ads','vod-ads','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','resume-batch','wait','cleanup','inspect-ads','approve-clip','draft-clip','pace-batch','pause-batch'];
   if(!command||![...noTarget,...optionalTarget,...targets].includes(command))throw new Error('Неизвестная команда. Используйте pnpm cf --help');
   if(extra.length||(noTarget.includes(command)&&target)||(targets.includes(command)&&!target))throw new Error('Неверное число аргументов команды');
   const allowed:Record<string,string[]>={clips:['streamer','limit'],render:['count','fresh','audio','test-batch'],prepare:['count','audio'],'prepare-streamer':['count','audio','vods'],'streamer-ads':['ads','all'],'vod-ads':['ads'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
@@ -144,6 +145,7 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
     case 'vod':return {path:`/api/vods/${id}`};
     case 'job':return {path:`/api/jobs/${id}/status`};
     case 'cancel':return {path:`/api/jobs/cancel/${id}`,method:'POST',body:{}};
+    case 'resume-batch':return {path:`/api/jobs/resume-batch/${id}`,method:'POST',body:{}};
     case 'wait':return {path:`/api/jobs/${id}/status`,waitSeconds:integer(options.timeout,120,900)};
     case 'cleanup':return {path:`/api/jobs/clean-clip/${id}`,method:'POST',body:{regions:options.regions?await jsonFile(options.regions):[]}};
     case 'inspect-ads':return {path:`/api/jobs/inspect-ads/${id}`,method:'POST',body:{}};
