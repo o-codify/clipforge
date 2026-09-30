@@ -24,10 +24,12 @@ test('restart never collapses future spacing or queues the entire backlog',()=>{
   assert.equal(publicationWindow(now,10,100,[],future).due,false);
   assert.equal(publicationWindow(now+10*minute,10,100,[],future).due,true);
 });
-test('batch uploads use the media worker light lane, legacy controller cannot consume them',()=>{
+test('publication and batch coordination stay on the platform; media workers only process assigned VODs',()=>{
   assert.equal(QUEUES.publishBatchClip.startsWith('heavy.'),false);
-  assert.equal(servesQueue('media',QUEUES.publishBatchClip),true);
-  assert.equal(servesQueue('control',QUEUES.publishBatchClip),false);
+  assert.equal(servesQueue('media',QUEUES.publishBatchClip),false);
+  assert.equal(servesQueue('control',QUEUES.publishBatchClip),true);
+  assert.equal(servesQueue('media',QUEUES.prepareStreamer),false);
+  assert.equal(servesQueue('control',QUEUES.prepareStreamer),true);
 });
 test('paused, cancelled, and stale queued jobs cannot publish',async()=>{
   for(const row of [undefined,{value:{enabled:false}},{value:{enabled:true},cancelled:true},

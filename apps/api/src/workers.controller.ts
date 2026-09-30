@@ -4,17 +4,21 @@ import {type Database} from '@clipforge/db';
 import {z} from 'zod';
 import {DATABASE} from './config.js';
 import {AdminOnly} from './auth/auth.guard.js';
+import {WorkerGatewayService} from './worker-gateway.service.js';
 const tasks=sql`(select id,name,state::text,data,created_on,started_on,completed_on,output from jobs.job
   union all select id,name,state,'{}'::jsonb,started_at,started_at,completed_at,output from automation_runs)`;
 @Controller('api/workers')
 @AdminOnly()
 export class WorkersController {
-  constructor(@Inject(DATABASE) private readonly db:Database){}
+  constructor(@Inject(DATABASE) private readonly db:Database,private readonly gateway:WorkerGatewayService){}
+  @Post('connect') connect(@Body() body:unknown){return this.gateway.connect(body);}
+  @Post(':id/revoke') revoke(@Param('id') id:string){return this.gateway.revoke(id);}
   @Get()
   async list(){
     const rows=await this.db.execute(sql`select w.id,w.label,w.host,w.role,w.queues,w.resources,w.draining,w.version,
+      exists(select 1 from remote_worker_auth a where a.worker_id=w.id) as remote,
       w.started_at as "startedAt",w.heartbeat_at as "heartbeatAt",
-      case when w.heartbeat_at<now()-interval '40 seconds' then 'offline' else w.state end as state,
+      case when w.state='revoked' then 'revoked' when w.heartbeat_at<now()-interval '40 seconds' then 'offline' else w.state end as state,
       coalesce((select jsonb_agg(jsonb_build_object('id',j.id,'name',j.name,'stage',x.stage,
         'startedAt',x.started_at,'streamer',coalesce(j.data->>'login',v.streamer,c.streamer),'vodId',coalesce(j.data->>'vodId',c.vod_id)))
         from worker_jobs x join ${tasks} j on j.id=x.job_id

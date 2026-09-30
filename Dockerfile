@@ -5,11 +5,16 @@ RUN npm install --global pnpm@11.1.3
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc turbo.json tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY scripts ./scripts
+COPY workers/python ./workers/python
+COPY assets ./assets
+COPY models ./models
 RUN pnpm install --frozen-lockfile
 ENV NEXT_TELEMETRY_DISABLED=1 API_URL=http://127.0.0.1:8420
 ARG RELEASE_SHA=local
 ENV RELEASE_SHA=$RELEASE_SHA
 RUN pnpm build
+RUN node scripts/build-worker-bundle.mjs
 # Installation timestamps are irrelevant at runtime and would invalidate the
 # dependency layer on every otherwise identical GitHub build.
 RUN CI=true pnpm install --prod --frozen-lockfile --ignore-scripts \
@@ -73,6 +78,7 @@ COPY --from=build --chown=node:node /app/apps/worker/package.json ./apps/worker/
 COPY --from=build --chown=node:node /app/apps/web/package.json ./apps/web/package.json
 COPY --from=build --chown=node:node /app/apps/api/dist ./apps/api/dist
 COPY --from=build --chown=node:node /app/apps/worker/dist ./apps/worker/dist
+COPY --from=build --chown=node:node /app/worker-bundle.tar.gz /app/worker-bundle.tar.gz.json ./
 COPY --from=build --chown=node:node /app/apps/web/.next ./apps/web/.next
 COPY --from=build --chown=node:node /app/apps/web/public ./apps/web/public
 COPY --chown=node:node scripts ./scripts

@@ -6,7 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 export function startConsumers(boss:Pick<PgBoss,'fetch'|'complete'|'fail'>,queues:string[],
   execute:(queue:string,job:PgBoss.Job)=>Promise<unknown>,ready:(heavy:boolean)=>Promise<boolean>,log:(message:string)=>void){
   let stopping=false;const active=new Set<Promise<void>>();
-  const coordinator=(q:string)=>process.env.WORKER_FLEET==='true'&&q==='heavy.prepare-streamer';
+  const coordinator=(q:string)=>q==='heavy.prepare-streamer';
   const loop=async(lane:'heavy'|'light'|'coordinator')=>{
     const heavy=lane==='heavy';
     const names=queues.filter(q=>coordinator(q)?lane==='coordinator':lane!=='coordinator'&&q.startsWith('heavy.')===heavy);let cursor=0;

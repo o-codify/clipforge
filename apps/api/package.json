@@ -11,6 +11,7 @@
     "test": "tsc -b && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@clipforge/worker": "workspace:*",
     "@clipforge/storage": "workspace:*",
     "@clipforge/db": "workspace:*",
     "@clipforge/jobs": "workspace:*",

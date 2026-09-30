@@ -72,6 +72,7 @@ import { SIGNAL_SERIES } from "@clipforge/contracts";
 import { applyFeedback } from "./feedback.js";
 import { storeClip } from "./media-storage.js";
 import type { Context } from "./context.js";
+import type {VodData,RunData,ClipData,TranscriptData,RenderSnapshot} from './media-task-data.js';
 
 /** Ход выполнения задания: пишется в журнал, позже уйдёт в интерфейс. */
 export interface JobReport {
@@ -88,7 +89,7 @@ export interface JobReport {
 
 /** Строка эфира вместе с рабочей папкой. Без неё шаг делать нечего. */
 async function loadVod(ctx: Context, vodId: string) {
-  const [row] = await ctx.db.select().from(vods).where(eq(vods.id, vodId));
+  const row = ctx.remote ? await ctx.remote.call<VodData>('vod.get') : (await ctx.db.select().from(vods).where(eq(vods.id, vodId)))[0];
   if (!row) throw new Error(`эфира ${vodId} нет в базе`);
 
   const workspace = new Workspace(
@@ -106,6 +107,7 @@ async function loadVod(ctx: Context, vodId: string) {
  * вместо игр, а узнать игру по названию в списке из десяти штук трудно.
  */
 async function ensureGame(ctx: Context, title: string): Promise<string | null> {
+  if(ctx.remote)return ctx.remote.call<string|null>('game.ensure',{title});
   const clean = title.trim();
   if (!clean) return null;
   const slug = safeName(clean);
@@ -311,13 +313,15 @@ export async function fetchVod(
   if (ctx.config.role === 'media') {
     const info = await fetchVodInfo(payload.vodId, ytdlp);
     const game = await ensureGame(ctx, mainGame(info));
-    await ctx.db.update(vods).set({chapters:info.chapters,title:info.title,duration:info.duration,
+    if(ctx.remote)await ctx.remote.call('vod.metadata',{chapters:info.chapters,title:info.title,duration:info.duration,publishedAt:info.publishedAt,game});
+    else await ctx.db.update(vods).set({chapters:info.chapters,title:info.title,duration:info.duration,
       publishedAt:info.publishedAt ? new Date(info.publishedAt) : null,...(game ? {game} : {})})
       .where(eq(vods.id,payload.vodId));
   }
   const { row, workspace } = await loadVod(ctx, payload.vodId);
 
-  await ctx.db.update(vods).set({ state: "fetching", error: null }).where(eq(vods.id, row.id));
+  if(ctx.remote)await ctx.remote.call('vod.state',{state:'fetching'});
+  else await ctx.db.update(vods).set({ state: "fetching", error: null }).where(eq(vods.id, row.id));
 
   try {
     let lastPercent = -1;
@@ -352,13 +356,15 @@ export async function fetchVod(
       );
     }
 
-    await ctx.db
+    if(ctx.remote)await ctx.remote.call('vod.state',{state:'ready'});
+    else await ctx.db
       .update(vods)
       .set({ state: "ready", fetchedAt: new Date() })
       .where(eq(vods.id, row.id));
     return { audio, video };
   } catch (error) {
-    await ctx.db
+    if(ctx.remote)await ctx.remote.call('vod.state',{state:'failed',error:String(error).slice(0,500)});
+    else await ctx.db
       .update(vods)
       .set({ state: "failed", error: String(error).slice(0, 500) })
       .where(eq(vods.id, row.id));
@@ -376,13 +382,13 @@ export async function transcribeVod(
   let { row, workspace } = await loadVod(ctx, payload.vodId);
 
   if (!payload.force) {
-    const [existing] = await ctx.db
+    const [existing] = ctx.remote ? [await ctx.remote.call<TranscriptData|null>('transcript.get')] : await ctx.db
       .select({ vodId: transcripts.vodId })
       .from(transcripts)
       .where(eq(transcripts.vodId, row.id));
     if (existing) {
       report.log("расшифровка уже есть");
-      const [full] = await ctx.db.select().from(transcripts).where(eq(transcripts.vodId, row.id));
+      const [full] = ctx.remote ? [existing as TranscriptData] : await ctx.db.select().from(transcripts).where(eq(transcripts.vodId, row.id));
       const segments = full?.segments ?? [];
       return {
         words: segments.reduce((sum, s) => sum + s.words.length, 0),
@@ -403,7 +409,8 @@ export async function transcribeVod(
     glossary: ctx.config.glossary,
   }, {onEvent:e=>report.log(e.event === "log" ? e.message : `${e.stage}${e.value === null ? "" : ` ${Math.round(e.value*100)}%`}`)});
 
-  await ctx.db
+  if(ctx.remote)await ctx.remote.call('transcript.save',{...result,model:ctx.config.speechModel});
+  else await ctx.db
     .insert(transcripts)
     .values({
       vodId: row.id,
@@ -451,7 +458,8 @@ export async function analyzeVod(
     out: workspace.signals,
   }, {onEvent:e=>report.log(e.event === "log" ? e.message : e.stage)});
 
-  await ctx.db
+  if(ctx.remote)await ctx.remote.call('vod.signals',result);
+  else await ctx.db
     .update(vods)
     .set({
       signals: {
@@ -499,7 +507,8 @@ export async function facecamVod(
     && face.x+face.w <= previous.x+previous.w && face.y+face.h <= previous.y+previous.h
     ? previous : result.rect;
 
-  await ctx.db
+  if(ctx.remote)await ctx.remote.call('vod.facecam',{detectorVersion:CAMERA_HINT_VERSION,found:result.found,rect,confidence:result.confidence,note:result.note});
+  else await ctx.db
     .update(vods)
     .set({
       facecam: {
@@ -537,18 +546,20 @@ export async function renderRun(
   prepared?: PreparedRenderSource,
 ): Promise<{ runId: string; rendered: number; skipped: number; replaced: number }> {
   let { row, workspace } = await loadVod(ctx, payload.vodId);
-  const [resuming] = report.id&&payload.testBatch ? await ctx.db.select().from(runs).where(and(
+  const remote = ctx.remote ? await ctx.remote.call<RenderSnapshot>('render.snapshot') : null;
+  const [resuming] = remote ? [remote.resuming] : report.id&&payload.testBatch ? await ctx.db.select().from(runs).where(and(
     eq(runs.vodId,row.id),sql`${runs.settings}->>'jobId' = ${report.id}`)).limit(1) : [];
   const audioSettings=resuming?.settings.audioSettings as Awaited<ReturnType<typeof vodAudioSettings>>|undefined
-    ?? await vodAudioSettings(ctx.db,row.id,payload.audioMode);
+    ?? remote?.audioSettings ?? await vodAudioSettings(ctx.db,row.id,payload.audioMode);
   const audioMode=audioSettings.mode;
-  const adsSettings=resuming?.settings.adsSettings as Awaited<ReturnType<typeof vodAdSettings>>|undefined ?? await vodAdSettings(ctx.db,row.id);
+  const adsSettings=resuming?.settings.adsSettings as Awaited<ReturnType<typeof vodAdSettings>>|undefined ?? remote?.adsSettings ?? await vodAdSettings(ctx.db,row.id);
   const skipExisting=payload.skipExisting||payload.testBatch||false;
-  const [mode] = await ctx.db.execute<{value:{developmentMode?:boolean}}>(sql`select value from platform_runtime where key='settings'`);
+  const [mode] = remote ? [{value:{developmentMode:remote.developmentMode}}] : await ctx.db.execute<{value:{developmentMode?:boolean}}>(sql`select value from platform_runtime where key='settings'`);
   const count = Number(resuming?.settings.requestedCount??renderCount(payload,!!mode?.value.developmentMode,ctx.config.clipsPerRun));
-  const previousClips = resuming ? await ctx.db.select({id:clipsTable.id}).from(clipsTable).where(eq(clipsTable.runId,resuming.id)) : [];
+  const previousClips = remote?.previousClips ?? (resuming ? await ctx.db.select({id:clipsTable.id}).from(clipsTable).where(eq(clipsTable.runId,resuming.id)) : []);
   if(previousClips.length>=count) {
-    await ctx.db.update(runs).set({finishedAt:new Date()}).where(eq(runs.id,resuming!.id));
+    if(ctx.remote)await ctx.remote.call('render.finish',{runId:resuming!.id});
+    else await ctx.db.update(runs).set({finishedAt:new Date()}).where(eq(runs.id,resuming!.id));
     return {runId:resuming!.id,rendered:previousClips.length,skipped:0,replaced:0};
   }
   if(!prepared&&process.env.WORKER_FLEET==='true'){
@@ -559,18 +570,17 @@ export async function renderRun(
     }
     if(!row.signals||!await stat(row.signals.file).then(s=>s.size>0).catch(()=>false)){
       await analyzeVod(ctx,{vodId:row.id,force:false},report);
-      const [updated]=await ctx.db.select({signals:vods.signals}).from(vods).where(eq(vods.id,row.id));row.signals=updated!.signals;
+      row.signals=(await loadVod(ctx,row.id)).row.signals;
     }
   }
   if (!prepared && row.facecam?.detectorVersion !== CAMERA_HINT_VERSION) {
     await facecamVod(ctx, {vodId:row.id,force:false}, report);
-    const [updated] = await ctx.db.select({facecam:vods.facecam}).from(vods).where(eq(vods.id,row.id));
-    row.facecam = updated!.facecam;
+    row.facecam = (await loadVod(ctx,row.id)).row.facecam;
   }
 
   if (!prepared && !row.signals) throw new Error("нет сигналов - сначала analyze");
-  const transcriptRow = prepared?.transcript ?? (await ctx.db
-    .select().from(transcripts).where(eq(transcripts.vodId, row.id)))[0];
+  const transcriptRow = prepared?.transcript ?? (ctx.remote ? await ctx.remote.call<TranscriptData|null>('transcript.get') : (await ctx.db
+    .select().from(transcripts).where(eq(transcripts.vodId, row.id)))[0]);
   if (!transcriptRow) throw new Error("нет расшифровки - сначала transcribe");
 
   const transcript: Transcript = {
@@ -605,7 +615,7 @@ export async function renderRun(
   // silently switches to the earliest of five candidates.
   // Archived, unpublished drafts from earlier experiments do not exhaust
   // the VOD. Keep all visible and already-published moments excluded.
-  const covered = skipExisting ? await ctx.db.select({start:clipsTable.start,end:clipsTable.end})
+  const covered = remote ? (skipExisting ? remote.covered : []) : skipExisting ? await ctx.db.select({start:clipsTable.start,end:clipsTable.end})
     .from(clipsTable).where(and(eq(clipsTable.vodId,row.id),
       sql`(${clipsTable.archivedAt} is null or exists(select 1 from publications p where p.clip_id=${clipsTable.id}))`)) : [];
   const eligible = feedback.candidates.filter(candidate=>!covered.some(range=>range.start!==null&&range.end!==null
@@ -636,7 +646,7 @@ export async function renderRun(
 
   // Имя для шапки и концовки берётся из карточки стримера: на Twitch
   // отображаемое имя отличается от логина регистром, а иногда и вовсе.
-  const [streamerRow] = await ctx.db
+  const [streamerRow] = remote ? [{displayName:remote.channelName}] : await ctx.db
     .select({ displayName: streamers.displayName })
     .from(streamers)
     .where(eq(streamers.login, row.streamer));
@@ -673,13 +683,15 @@ export async function renderRun(
 
   const runId = resuming?.id??newRunId(new Date());
   const outDir = workspace.runDir(runId);
-  if(!resuming)await ctx.db.insert(runs).values({
+  const runValues = {
     id: runId, vodId: row.id, streamer: row.streamer, game: row.game,
     outDir, candidates: candidates.length, version,
     settings: { grid: describeGrid(grid), versionParts, speechModel: transcriptRow.model, feedback: feedback.evidence,
       sourceWindow: {start:sourceOffset,end:sourceOffset+audio.duration}, selection:"automatic",
       audioMode,audioSettings,adsSettings,skipExisting,testBatch:payload.testBatch??false,requestedCount:count,jobId:report.id },
-  });
+  };
+  if(ctx.remote)await ctx.remote.call('render.begin',runValues);
+  else if(!resuming)await ctx.db.insert(runs).values(runValues);
   else if(resuming.outDir!==outDir)await ctx.db.update(runs).set({outDir}).where(eq(runs.id,runId));
 
   const profanityHits = findProfanity(words);
@@ -715,7 +727,7 @@ export async function renderRun(
     const candidate = { ...original };
     const trigger = labelTrigger(candidate);
     // Trimming must never turn a blocked moment into a publishable new segment.
-    const [blocked] = await ctx.db.select({id:clipsTable.id}).from(clipsTable).where(and(
+    const [blocked] = ctx.remote ? [await ctx.remote.call('clip.blocked',{start:sourceOffset+candidate.start,end:sourceOffset+candidate.end})] : await ctx.db.select({id:clipsTable.id}).from(clipsTable).where(and(
       eq(clipsTable.vodId,row.id),eq(clipsTable.state,"blocked"),
       sql`${clipsTable.start} < ${sourceOffset+candidate.end}`,
       sql`${clipsTable.end} > ${sourceOffset+candidate.start}`,
@@ -779,10 +791,11 @@ export async function renderRun(
     const { version } = fingerprint({ ...versionParts, grid, subtitles: clipStyle });
     const id = clipId(row.id, segment, version);
     verifications[id] = { camera:cameraCheck, minimap:mapCheck, grid, trim, sourceStart:sourceOffset+candidate.start, sourceEnd:sourceOffset+candidate.end, score:candidate.score, trigger };
-    const [existing] = await ctx.db
+    const known=ctx.remote?await ctx.remote.call<{clip:ClipData|null;run:RunData|null}>('clip.get',{id}):null;
+    const [existing] = known ? [known.clip] : await ctx.db
       .select().from(clipsTable).where(eq(clipsTable.id, id));
-    const [existingRun] = existing ? await ctx.db.select().from(runs).where(eq(runs.id, existing.runId)) : [];
-    const validFile = existing?.mediaStorage && ctx.storage ? true : existingRun && existing ? await stat(join(existingRun.outDir, existing.file)).then(s => s.size > 0).catch(() => false) : false;
+    const [existingRun] = known ? [known.run] : existing ? await ctx.db.select().from(runs).where(eq(runs.id, existing.runId)) : [];
+    const validFile = existing?.mediaStorage && (ctx.storage||ctx.remote) ? true : existingRun && existing ? await stat(join(existingRun.outDir, existing.file)).then(s => s.size > 0).catch(() => false) : false;
     if (existing && !existing.archivedAt && validFile) {
       if (ctx.storage && !existing.mediaStorage) {
         const mediaStorage = await storeClip(ctx, id, join(existingRun!.outDir, existing.file));
@@ -853,9 +866,9 @@ export async function renderRun(
     const verifiedProtection={...protection,autoVerifiedAt:protection.ads.automatic?new Date().toISOString():null,disabledAt:!adsSettings.enabled?new Date().toISOString():null};
     verifications[id]={...verifications[id] as object,protection:verifiedProtection};
     // Persist proof with each clip, including when a later clip or the worker fails.
-    await ctx.db.update(runs).set({settings:sql`jsonb_set(${runs.settings},'{renderedClips}',
+    if(!ctx.remote)await ctx.db.update(runs).set({settings:sql`jsonb_set(${runs.settings},'{renderedClips}',
       coalesce(${runs.settings}->'renderedClips','{}'::jsonb) || ${JSON.stringify({[id]:verifications[id]})}::jsonb)`}).where(eq(runs.id,runId));
-    await ctx.db.insert(clipsTable).values({
+    const clipValues:typeof clipsTable.$inferInsert = {
       id, runId, vodId: row.id,
       streamer: row.streamer,
       game: await ensureGame(ctx, gameForMoment(row.chapters, {...candidate,peak:sourceOffset+candidate.peak}, row.game)),
@@ -869,7 +882,9 @@ export async function renderRun(
       width: media?.width ?? 1080, height: media?.height ?? 1920,
       fps: media?.fps ?? 30,
       sizeBytes: size,
-    }).onConflictDoUpdate({ target: clipsTable.id, set: { runId, file: name, mediaStorage, sizeBytes: size,
+    };
+    if(ctx.remote)await ctx.remote.call('clip.save',{clip:clipValues,proof:verifications[id]});
+    else await ctx.db.insert(clipsTable).values(clipValues).onConflictDoUpdate({ target: clipsTable.id, set: { runId, file: name, mediaStorage, sizeBytes: size,
       state:payload.testBatch || (adsSettings.enabled&&!protection.ads.automatic)?'draft':'ready', archivedAt:null, archiveReason:null } });
     rendered += 1;
     accepted += 1;
@@ -898,7 +913,8 @@ export async function renderRun(
     }),
   );
 
-  await ctx.db.update(runs).set({ finishedAt: new Date(),
+  if(ctx.remote)await ctx.remote.call('render.finish',{runId,renderedClips:verifications,qualityRejected:rejected});
+  else await ctx.db.update(runs).set({ finishedAt: new Date(),
     settings:sql`${runs.settings} || ${JSON.stringify({renderedClips:verifications,qualityRejected:rejected})}::jsonb`,
   }).where(eq(runs.id, runId));
   if (await report.cancelled()) {
@@ -934,6 +950,7 @@ async function dropSuperseded(
   version: string,
   report: JobReport,
 ): Promise<number> {
+  if(ctx.remote)return ctx.remote.call<number>('clip.supersede',{segment,version});
   const older = await ctx.db
     .select()
     .from(clipsTable)

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Database } from "./client.js";
+import {upgradeRemoteWorkers} from './remote-workers.js';
 
 /** Additive, idempotent upgrade for existing installations. Never drops data. */
 export async function upgradeRuntime(db: Database): Promise<void> {
@@ -38,6 +39,7 @@ export async function upgradeRuntime(db: Database): Promise<void> {
     heartbeat_at timestamptz NOT NULL DEFAULT now()
   )`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS worker_jobs_worker_idx ON worker_jobs(worker_id,started_at desc)`);
+  await upgradeRemoteWorkers(db);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS pipeline_attempts (
     vod_id text PRIMARY KEY REFERENCES vods(id) ON DELETE CASCADE,
     attempts integer NOT NULL DEFAULT 0, state text NOT NULL DEFAULT 'pending',
@@ -66,6 +68,10 @@ export async function withVodLock<T>(db: Database, vodId: string, work: () => Pr
   const key = `vod:${vodId}`;
   try {
     await connection`select pg_advisory_lock(hashtextextended(${key}, 0))`;
+    // A remote assignment is durable across API restarts. A legacy/native
+    // worker must not start the same VOD while its remote lease is alive.
+    while((await connection`select 1 from remote_worker_leases where vod_id=${vodId} and state='active' and expires_at>now() limit 1`).length)
+      await new Promise(resolve=>setTimeout(resolve,1000));
     return await work();
   } finally {
     await connection`select pg_advisory_unlock(hashtextextended(${key}, 0))`;

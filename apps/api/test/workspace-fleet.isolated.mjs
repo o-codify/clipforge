@@ -93,7 +93,7 @@ try{
   for(const q of ['heavy.prepare-streamer','heavy.prepare-batch-vod'])await boss.createQueue(q);
   const parent=await boss.send('heavy.prepare-streamer',{login:'sany',vodIds:['vod-a','vod-c'],count:6});
   const stopParent=startConsumers(boss,['heavy.prepare-streamer','heavy.prepare-batch-vod'],async(q,job)=>{
-    if(q==='heavy.prepare-streamer')return prepareStreamer({db,queue:boss},job.data,{id:job.id,log:()=>{},cancelled:async()=>false});
+    if(q==='heavy.prepare-streamer')return prepareStreamer({db,queue:boss,config:{role:'control'}},job.data,{id:job.id,log:()=>{},cancelled:async()=>false});
     const runId='child-'+job.data.vodId;
     await db.insert(runs).values({id:runId,vodId:job.data.vodId,streamer:'sany',outDir:'unused',settings:{jobId:job.data.batchId}});
     for(let i=0;i<job.data.count;i++)await db.insert(clips).values({id:runId+'-'+i,runId,vodId:job.data.vodId,streamer:'sany',file:'unused',segmentKey:runId+'-'+i});

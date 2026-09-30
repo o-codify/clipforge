@@ -43,6 +43,7 @@ export class WorkerRegistry {
 /** A stale timestamp alone is insufficient: the owning process must have lost its session lease. */
 export async function recoverWorkers(db:Database,boss:Pick<PgBoss,'fail'>){
   const stale=await db.execute<{id:string}>(sql`select id from worker_instances where heartbeat_at<now()-interval '60 seconds'
+    and not exists(select 1 from remote_worker_auth a where a.worker_id=worker_instances.id)
     and exists(select 1 from worker_jobs w where w.worker_id=worker_instances.id and w.finished_at is null
       and (exists(select 1 from jobs.job j where j.id=w.job_id and j.state='active')
         or exists(select 1 from automation_runs a where a.id=w.job_id and a.state='active')))`);

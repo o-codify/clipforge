@@ -39,7 +39,7 @@ export class JobsService implements OnModuleDestroy {
     @Inject(DATABASE) private readonly db: Database,
   ) {}
 
-  private async queue(): Promise<PgBoss> {
+  async queue(): Promise<PgBoss> {
     if (this.boss) return this.boss;
     this.starting ??= (async () => {
       const boss = new PgBoss({

@@ -1,4 +1,4 @@
-name: Worker fleet preview
+name: Platform managed workers
 on:
   push:
     branches: [codex/preview-batch-recovery]
@@ -12,7 +12,6 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: read
-      packages: write
     services:
       postgres:
         image: postgres:17-alpine
@@ -37,30 +36,9 @@ jobs:
       - run: node apps/api/test/workspace-fleet.isolated.mjs
         env:
           CLIPFORGE_TEST_DB_URL: postgres://clipforge:fixture@127.0.0.1:5432/postgres
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: media-worker
-          tags: clipforge-worker:qa
-          load: true
-          build-args: RELEASE_SHA=${{ github.sha }}
-          cache-from: type=gha,scope=media-worker
-          cache-to: type=gha,mode=max,scope=media-worker
-      - run: node scripts/test-worker-container.mjs clipforge-worker:qa
-      - run: docker run --rm --entrypoint python -e PYTHONPATH=workers/python clipforge-worker:qa -m unittest discover -s workers/python/tests -p test_container_resources.py
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish tested worker only; no platform deployment
+      - run: node scripts/build-worker-bundle.mjs
+      - name: Verify two workers using the exact platform-generated Docker command
         env:
-          OWNER: ${{ github.repository_owner }}
-          SHA: ${{ github.sha }}
-        run: |
-          image="ghcr.io/${OWNER,,}/clipforge-worker"
-          docker tag clipforge-worker:qa "$image:$SHA"
-          docker tag clipforge-worker:qa "$image:fleet-preview"
-          docker push "$image:$SHA"
-          docker push "$image:fleet-preview"
+          CLIPFORGE_TEST_DB_URL: postgres://clipforge:fixture@127.0.0.1:5432/postgres
+          CLIPFORGE_REMOTE_CONTAINER_TEST: '1'
+        run: node apps/api/test/remote-workers.isolated.mjs

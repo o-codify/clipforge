@@ -11,6 +11,7 @@
     "src/**/*.ts"
   ],
   "references": [
+    {"path":"../worker"},
     { "path": "../../packages/youtube" },
     { "path": "../../packages/storage" },
     {

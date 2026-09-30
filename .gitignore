@@ -24,3 +24,6 @@ out/
 /models/deepfilter/
 **/worker.env
 **/cloud-quota-credentials.json
+/.worker-bundle/
+/worker-bundle.tar.gz
+/worker-bundle.tar.gz.json

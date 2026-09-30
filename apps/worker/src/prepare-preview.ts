@@ -9,14 +9,15 @@ import type {Context} from './context.js';
 
 /** Draft-only preparation may reuse a complete prefix of an interrupted VOD. */
 export async function preparePreview(ctx:Context,payload:Parameters<typeof runPipeline>[1],report:JobReport) {
-  const [row]=await ctx.db.select().from(vods).where(eq(vods.id,payload.vodId));
+  const [row]=ctx.remote?[await ctx.remote.call<typeof vods.$inferSelect>('vod.get')]:await ctx.db.select().from(vods).where(eq(vods.id,payload.vodId));
   if(!row)throw new Error('Эфир не найден');
   const draft={...payload,testBatch:true,skipExisting:true,reuse:true};
   const workspace=new Workspace({data:ctx.config.data,out:ctx.config.out},
     {game:row.game??'unknown',streamer:row.streamer,vodId:row.id});
   const source=await cachedPreview(workspace,ctx.config.videoFormat);
   if(!source)return runPipeline(ctx,draft,report);
-  await ctx.db.update(vods).set({state:'known',error:null})
+  if(ctx.remote){if(row.state==='fetching')await ctx.remote.call('vod.state',{state:'known'});}
+  else await ctx.db.update(vods).set({state:'known',error:null})
     .where(and(eq(vods.id,row.id),eq(vods.state,'fetching')));
   const cancelled=async()=>{if(await report.cancelled())throw new Error('Подготовка черновиков отменена');};
   await cancelled();

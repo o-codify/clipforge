@@ -20,7 +20,7 @@ export async function prepareStreamer(ctx:Context,input:PayloadOf<typeof QUEUES.
     .where(and(eq(runs.streamer,input.login),isNull(clips.archivedAt),sql`${clips.state}<>'blocked'`,sql`${runs.settings}->>'jobId'=${report.id}`));
   const save=async()=>{const list=await results();await runtimeValue(ctx.db,key,{...plan,target:input.count,ready:list.length,clipIds:list.map(c=>c.id),publication:'hold-for-user-review'});return list;};
   await save();
-  if(process.env.WORKER_FLEET==='true'&&ctx.queue){
+  if((ctx.config.role==='control'||process.env.WORKER_FLEET==='true')&&ctx.queue){
     // The parent coordinates only; independent VODs run on any free media worker.
     plan.children??={};
     const unfinished=plan.vodIds.filter(id=>!plan.finished.includes(id)&&!plan.errors[id]);

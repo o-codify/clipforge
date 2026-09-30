@@ -86,6 +86,7 @@ export function loadConfig(): WorkerConfig {
 }
 
 export interface Context {
+  remote?:import('./remote-access.js').RemoteMediaAccess;
   worker?:import('./registry.js').WorkerRegistry;
   queue?:PgBoss;
   storage: MediaStorage | null;

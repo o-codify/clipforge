@@ -58,7 +58,7 @@ def main():
     for name in ('data', 'out', 'models'):
         (storage / name).mkdir(parents=True, exist_ok=True)
     # Small licensed model files ship with the image; a named volume caches them.
-    shutil.copytree('/app/models', storage / 'models', dirs_exist_ok=True)
+    shutil.copytree(Path(os.getenv('MEDIA_BUNDLE_ROOT', '/app')) / 'models', storage / 'models', dirs_exist_ok=True)
     memory, cpus = limits()
     reserve = max(256 * 1048576, memory * .1)
     if memory < 2 * 1024**3:
@@ -81,7 +81,7 @@ def main():
         temporary = state_file.with_suffix('.tmp')
         temporary.write_text(json.dumps(value)); temporary.replace(state_file)
     snapshot()
-    child = subprocess.Popen(['node', 'apps/worker/dist/main.js'], env=env)
+    child = subprocess.Popen(['node', os.getenv('WORKER_ENTRY', 'apps/worker/dist/main.js')], env=env)
     root = psutil.Process(child.pid)
     root.nice(10)
     try:

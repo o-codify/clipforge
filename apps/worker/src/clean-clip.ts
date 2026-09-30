@@ -10,11 +10,16 @@ import type { JobReport } from './handlers.js';
 import { storeClip } from './media-storage.js';
 import {ensureAdProfile} from './ad-protection.js';
 import {fetchVod} from './handlers.js';
+import type {ClipData,RunData,VodData,TranscriptData} from './media-task-data.js';
+async function readClip(ctx:Context,id:string){
+  if(ctx.remote){const row=await ctx.remote.call<{clip:ClipData|null;run:RunData|null}>('clip.get',{id});return row.clip&&row.run?{clip:row.clip,run:row.run}:null;}
+  return (await ctx.db.select({clip:clips,run:runs}).from(clips).innerJoin(runs,eq(runs.id,clips.runId)).where(eq(clips.id,id)))[0];
+}
 
 /** Immutable replacement: existing files, publications and originals survive. */
 export async function cleanClip(ctx:Context, payload:PayloadOf<typeof QUEUES.cleanClip>, report:JobReport) {
   if(!payload.regions.length)return rebuildProtectedClip(ctx,payload,report);
-  let [row] = await ctx.db.select({clip:clips,run:runs}).from(clips).innerJoin(runs,eq(runs.id,clips.runId)).where(eq(clips.id,payload.clipId));
+  let row = await readClip(ctx,payload.clipId);
   if (!row || row.clip.archivedAt || row.clip.vodId !== payload.vodId) throw new Error('Клип не найден');
   // Rebuild from the original, including when opening an old audio-cleaned
   // version. Ad masking must preserve the original mix and prior manual masks.
@@ -23,21 +28,21 @@ export async function cleanClip(ctx:Context, payload:PayloadOf<typeof QUEUES.cle
   if(regions.length>32)throw new Error('Для одного клипа можно закрыть не больше 32 областей');
   const originalId=row.run.settings.sourceClipId;
   if(typeof originalId==='string') {
-    const [original]=await ctx.db.select({clip:clips,run:runs}).from(clips).innerJoin(runs,eq(runs.id,clips.runId)).where(eq(clips.id,originalId));
+    const original=await readClip(ctx,originalId);
     if(!original || original.clip.vodId!==payload.vodId)throw new Error('Исходная версия клипа недоступна');
     row=original;
   }
   const hash = createHash('sha256').update(JSON.stringify({v:2,parent:row.clip.id,method:'original',regions})).digest('hex').slice(0,12);
   const id = `${row.clip.id}_clean_${hash}`;
-  const [existing] = await ctx.db.select({id:clips.id}).from(clips).where(eq(clips.id,id));
+  const existing = await readClip(ctx,id);
   if (existing) return {clipId:id};
   const outDir = join(ctx.config.out,'cleaned',hash);
   await mkdir(outDir,{recursive:true});
   let source = join(row.run.outDir,row.clip.file);
   if (!await stat(source).then(s=>s.size>0).catch(()=>false)) {
-    if (!ctx.storage || !row.clip.mediaStorage) throw new Error('Исходный клип недоступен');
+    if ((!ctx.storage&&!ctx.remote) || !row.clip.mediaStorage) throw new Error('Исходный клип недоступен');
     source=join(outDir,'source.mp4');
-    await ctx.storage.downloadFile(row.clip.mediaStorage.videoKey,source);
+    if(ctx.remote)await ctx.remote.downloadClip(row.clip.id,source);else await ctx.storage!.downloadFile(row.clip.mediaStorage.videoKey,source);
   }
   report.log('Проверяю QR-коды и рекламные баннеры');
   const duration = (await probeMedia(source))?.duration;
@@ -48,7 +53,9 @@ export async function cleanClip(ctx:Context, payload:PayloadOf<typeof QUEUES.cle
   if (await report.cancelled()) return {cancelled:true};
   const mediaStorage=await storeClip(ctx,id,file);
   const runId=newRunId(new Date());
-  await ctx.db.transaction(async db=>{
+  if(ctx.remote)await ctx.remote.call('cleanup.save',{sourceClipId:row.clip.id,id,runId,version:hash,file:'clip.mp4',mediaStorage,
+    sizeBytes:(await stat(file)).size,settings:{sourceClipId:row.clip.id,cleanupRegions:regions,renderedClips:{[id]:{protection}},selection:'cleanup'},state:'draft'});
+  else await ctx.db.transaction(async db=>{
     await db.insert(runs).values({id:runId,vodId:row.clip.vodId,streamer:row.clip.streamer,game:row.clip.game,
       outDir,version:hash,candidates:1,finishedAt:new Date(),settings:{sourceClipId:row.clip.id,cleanupRegions:regions,renderedClips:{[id]:{protection}},selection:'cleanup'}});
     const {createdAt,archivedAt,archiveReason,...copy}=row.clip;
@@ -61,9 +68,9 @@ export async function cleanClip(ctx:Context, payload:PayloadOf<typeof QUEUES.cle
 
 /** Re-render old versions from the VOD, so masks also cover cropped/blurred copies. */
 async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.cleanClip>,report:JobReport) {
-  const [row]=await ctx.db.select({clip:clips,run:runs}).from(clips).innerJoin(runs,eq(runs.id,clips.runId)).where(eq(clips.id,payload.clipId));
+  const row=await readClip(ctx,payload.clipId);
   if(!row||row.clip.archivedAt||row.clip.vodId!==payload.vodId||row.clip.state==='blocked')throw new Error('Клип недоступен для обработки');
-  const [vod]=await ctx.db.select().from(vods).where(eq(vods.id,payload.vodId));
+  const vod=ctx.remote?await ctx.remote.call<VodData>('vod.get'):(await ctx.db.select().from(vods).where(eq(vods.id,payload.vodId)))[0];
   if(!vod||row.clip.start===null||row.clip.end===null)throw new Error('Границы исходного момента недоступны');
   const workspace=new Workspace({data:ctx.config.data,out:ctx.config.out},{game:vod.game??'unknown',streamer:vod.streamer,vodId:vod.id});
   await workspace.prepare();
@@ -75,9 +82,9 @@ async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.
   if(!['original','dtln','dtln-gated'].includes(String(audioMode)))throw new Error('Настройка звука исходного клипа недоступна');
   const hash=createHash('sha256').update(JSON.stringify({v:4,parent:row.clip.id,profile:profile.signature,reviewVersion:profile.reviewVersion,regions:profile.regions,audioMode})).digest('hex').slice(0,12);
   const id=`${row.clip.id}_ads_${hash}`;
-  const [existing]=await ctx.db.select({id:clips.id}).from(clips).where(eq(clips.id,id));
+  const existing=await readClip(ctx,id);
   if(existing)return {clipId:id};
-  const [transcript]=await ctx.db.select().from(transcripts).where(eq(transcripts.vodId,vod.id));
+  const transcript=ctx.remote?await ctx.remote.call<TranscriptData|null>('transcript.get'):(await ctx.db.select().from(transcripts).where(eq(transcripts.vodId,vod.id)))[0];
   if(!transcript)throw new Error('Расшифровка исходного эфира недоступна');
   let grid=previous?.grid;
   if(!grid){
@@ -94,7 +101,7 @@ async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.
     ...(audioMode!=='original'?{audioMode,models:ctx.config.models,audioOut:join(outDir,'dtln.wav'),
       ...(audioMode==='dtln-gated'?{speechSpans:transcript.segments.flatMap(s=>s.words).filter(w=>w.end>row.clip.start!&&w.start<row.clip.end!+3.4).map(w=>[Math.max(0,w.start-row.clip.start!),w.end-row.clip.start!])}:{})}:{})});
   if(protection.ads.reject)throw new Error(protection.ads.reason??'Рекламный фрагмент пропущен');
-  const [streamer]=await ctx.db.select({displayName:streamers.displayName}).from(streamers).where(eq(streamers.login,vod.streamer));
+  const [streamer]=ctx.remote?[await ctx.remote.call<{displayName:string}>('streamer.name')]:await ctx.db.select({displayName:streamers.displayName}).from(streamers).where(eq(streamers.login,vod.streamer));
   const channel=streamer?.displayName??vod.streamer;
   const style=defaultStyle({size:66,topY:grid.subTop,maxPhraseSeconds:3.2,maxPhraseChars:42,censor:true,maxLineWidth:992});
   const spans=mergeSpans(beepSpans(findProfanity(allWords(transcript)).filter(h=>h.end>row.clip.start!&&h.start<row.clip.end!)));
@@ -107,7 +114,10 @@ async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.
   if(await report.cancelled())return {cancelled:true};
   const storage=await storeClip(ctx,id,file),runId=newRunId(new Date());
   const proof={...protection,autoVerifiedAt:new Date().toISOString()};
-  await ctx.db.transaction(async db=>{
+  if(ctx.remote)await ctx.remote.call('cleanup.save',{sourceClipId:row.clip.id,id,runId,version:hash,file:'clip.mp4',mediaStorage:storage,
+    sizeBytes:(await stat(file)).size,settings:{sourceClipId:row.clip.id,selection:'ad-protection',audioMode,
+      testBatch:row.run.settings.testBatch??false,renderedClips:{[id]:{grid,protection:proof}}},state:row.run.settings.testBatch?'draft':'ready'});
+  else await ctx.db.transaction(async db=>{
     await db.insert(runs).values({id:runId,vodId:vod.id,streamer:vod.streamer,game:vod.game,outDir,version:hash,
       candidates:1,finishedAt:new Date(),settings:{sourceClipId:row.clip.id,selection:'ad-protection',audioMode,
         testBatch:row.run.settings.testBatch??false,renderedClips:{[id]:{grid,protection:proof}}}});

@@ -16,5 +16,8 @@
 data
 out
 legacy
+.worker-bundle
+worker-bundle.tar.gz
+worker-bundle.tar.gz.json
 docs
 Twitch-Brand.zip

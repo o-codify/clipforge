@@ -3,7 +3,8 @@ import { feedbackMultiplier, labelTrigger, type Candidate } from "@clipforge/pip
 import type { Context } from "./context.js";
 import { youtubeDerivedMetricsAllowed, runtimeValue } from "@clipforge/db";
 
-export async function applyFeedback(ctx: Context, streamer: string, candidates: Candidate[], game?:string|null) {
+export async function applyFeedback(ctx: Pick<Context,'db'|'remote'>, streamer: string, candidates: Candidate[], game?:string|null) {
+  if(ctx.remote)return ctx.remote.call<{candidates:Candidate[];evidence:{samples:number;multipliers:Record<string,number>;mode:string}}>('selection.feedback',{candidates,game});
   if(!await youtubeDerivedMetricsAllowed(ctx.db))return {candidates,evidence:{samples:0,multipliers:{},mode:"signal-baseline"}};
   const feedback = await ctx.db.execute<{ trigger: string; samples: number; rate: number }>(sql`
     select c.trigger, count(*)::int samples,

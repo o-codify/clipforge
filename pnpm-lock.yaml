@@ -41,6 +41,9 @@ importers:
       '@clipforge/twitch':
         specifier: workspace:*
         version: link:../../packages/twitch
+      '@clipforge/worker':
+        specifier: workspace:*
+        version: link:../worker
       '@clipforge/youtube':
         specifier: workspace:*
         version: link:../../packages/youtube
