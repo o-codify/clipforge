@@ -95,7 +95,7 @@ export class WorkerGatewayService implements OnModuleDestroy {
         // Resource pauses must not expire a healthy worker's media job.
         await tx.execute(sql`update jobs.job set expire_in=greatest(expire_in,now()-started_on+interval '2 minutes') where id=${lease.jobId}::uuid and state='active'`);}
     });}
-    return {accepted,draining:r?.draining??true,policy:w.policy,leaseSeconds:75};
+    return {accepted,draining:r?.draining??true,policy:w.policy,leaseSeconds:75,upgradeRequired:!!process.env.RELEASE_SHA&&m.version!==process.env.RELEASE_SHA};
   }
   private async withLease<T>(auth:string|undefined,leaseId:string,action:(repo:MediaTaskRepository,db:Database,scope:Lease)=>Promise<T>):Promise<T>{
     return this.db.transaction(async tx=>{
@@ -111,11 +111,18 @@ export class WorkerGatewayService implements OnModuleDestroy {
     });
   }
   async next(auth:string|undefined){const w=await this.identity(auth);await this.sweep();await this.jobs.queue();
+    // A pre-gateway binary cannot see durable VOD assignments. Wait for its
+    // normal rolling upgrade; never race a still-running native batch.
+    const [legacy]=await this.db.execute(sql`select 1 from worker_instances w where w.role in ('media','all') and w.state='online'
+      and w.heartbeat_at>now()-interval '75 seconds' and coalesce(w.resources->>'leaseProtocol','0')<>'1'
+      and not exists(select 1 from remote_worker_auth a where a.worker_id=w.id)
+      union all select 1 from platform_runtime where key='worker' and value->>'workerId' is null and value->>'state'='online' and updated_at>now()-interval '75 seconds' limit 1`);
+    if(legacy)return null;
     return this.db.transaction(async tx=>{
-      const [worker]=await tx.execute<{resources:z.infer<typeof resourcesSchema>;draining:boolean;fresh:boolean}>(sql`select resources,draining,heartbeat_at>now()-interval '30 seconds' as fresh from worker_instances where id=${w.workerId} for update`);
+      const [worker]=await tx.execute<{resources:z.infer<typeof resourcesSchema>;draining:boolean;fresh:boolean;version:string}>(sql`select resources,draining,version,heartbeat_at>now()-interval '30 seconds' as fresh from worker_instances where id=${w.workerId} for update`);
       if(!(await tx.execute(sql`select 1 from remote_worker_auth where worker_id=${w.workerId} and revoked_at is null for share`)).length)throw new UnauthorizedException();
       const parsed=resourcesSchema.safeParse(worker?.resources);
-      if(!worker||worker.draining||!worker.fresh||!parsed.success||parsed.data.paused)return null;
+      if(!worker||worker.draining||!worker.fresh||!parsed.success||parsed.data.paused||(process.env.RELEASE_SHA&&worker.version!==process.env.RELEASE_SHA))return null;
       const resources=parsed.data;
       if(resources.freeGb<4||resources.allocation.memoryMb-resources.allocation.usedMb<Math.max(256,resources.allocation.memoryMb*.1))return null;
       const [active]=await tx.execute(sql`select 1 from remote_worker_leases where worker_id=${w.workerId} and state='active'`);if(active)return null;
@@ -154,6 +161,7 @@ export class WorkerGatewayService implements OnModuleDestroy {
     return this.withLease(auth,leaseId,async(_,db,l)=>{
       if(m.ok)await db.execute(sql`update jobs.job set state='completed',completed_on=now(),output=${JSON.stringify(m.output)}::jsonb where id=${l.jobId}::uuid and state='active'`);
       else await this.retry(db,l.jobId,m.error??'Воркер не завершил задание');
+      if(l.queue===QUEUES.pipeline)await db.execute(sql`update pipeline_attempts set state=${m.ok?'completed':'failed'},error=${m.ok?null:(m.error??'Не завершено').slice(0,1000)},updated_at=now() where vod_id=${l.vodId}`);
       await db.execute(sql`update remote_worker_leases set state=${m.ok?'completed':'failed'},finished_at=now() where id=${leaseId}::uuid`);
       await db.execute(sql`update worker_jobs set finished_at=now() where job_id=${l.jobId}::uuid and worker_id=${l.workerId}`);return {accepted:true};});
   }
@@ -172,7 +180,14 @@ export class WorkerGatewayService implements OnModuleDestroy {
       for(const l of leases){await this.retry(tx as unknown as Database,l.jobId,'Связь с воркером потеряна; продолжение с сохранённого этапа');
         await tx.execute(sql`update remote_worker_leases set state='expired',finished_at=now() where id=${l.leaseId}::uuid`);
         await tx.execute(sql`update worker_jobs set finished_at=now() where job_id=${l.jobId}::uuid and worker_id=${l.workerId}`);}
-    });}finally{this.sweeping=false;}
+    });
+      // A failed or revoked assignment must not retain partial videos forever.
+      // Only server-generated UUID files from inactive leases are eligible.
+      const abandoned=await this.db.execute<{id:string}>(sql`select u.id::text from remote_worker_uploads u
+        join remote_worker_leases l on l.id=u.lease_id where u.state='receiving' and l.state<>'active'
+        and l.finished_at<now()-interval '15 minutes' order by u.created_at limit 100`);
+      for(const u of abandoned){await rm(this.uploadFile(u.id),{force:true});await this.db.execute(sql`delete from remote_worker_uploads where id=${u.id}::uuid and state='receiving'`);}
+    }finally{this.sweeping=false;}
   }
   private uploadFile(id:string){return join(this.config.data,'worker-uploads',uid.parse(id)+'.part');}
   async beginUpload(auth:string|undefined,leaseId:string,raw:unknown){

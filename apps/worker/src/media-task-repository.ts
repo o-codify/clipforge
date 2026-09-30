@@ -37,11 +37,13 @@ export class MediaTaskRepository {
   private async unblocked(start:number,end:number){const [blocked]=await this.ctx.db.select({id:clips.id}).from(clips).where(and(eq(clips.vodId,this.scope.vodId),
     eq(clips.state,'blocked'),sql`${clips.start}<${end} and ${clips.end}>${start}`)).limit(1);return blocked??null;}
   async call(operation:string,raw:unknown):Promise<unknown>{
+    const rendering=['heavy.pipeline','heavy.prepare-preview','heavy.prepare-batch-vod','heavy.render-run','heavy.render-variant'].includes(this.scope.queue);
+    if((operation.startsWith('render.')||['clip.save','clip.supersede','selection.feedback'].includes(operation))&&!rendering)throw new Error('Операция недоступна для этого задания');
     const db=this.ctx.db,v=await this.vod(),input=raw??{};
     switch(operation){
       case 'vod.get': return v;
       case 'game.ensure': {const {title}=z.object({title:z.string().max(200)}).parse(input);const clean=title.trim();if(!clean)return null;
-        const slug=safeName(clean);await db.insert(games).values({slug,title:clean}).onConflictDoNothing();return slug;}
+        const slug=safeName(clean);if(slug==='.'||slug==='..')throw new Error('Неверное название игры');await db.insert(games).values({slug,title:clean}).onConflictDoNothing();return slug;}
       case 'vod.metadata': {const m=z.object({title:z.string().max(2000),duration:second,game:z.string().max(200).nullable(),publishedAt:z.string().nullable().optional(),
         chapters:z.array(z.object({title:z.string().max(200),start:second,end:second})).max(1000)}).parse(input);
         const date=m.publishedAt?new Date(m.publishedAt):null;if(date&&!Number.isFinite(date.getTime()))throw new Error('Неверная дата эфира');
@@ -95,7 +97,9 @@ export class MediaTaskRepository {
         if((await this.clip(m.id)).clip)return {};
         const {createdAt,archivedAt,archiveReason,...copy}=source.clip,mediaStorage=await this.assets(m.id);
         await db.insert(runs).values({id:m.runId,vodId:v.id,streamer:v.streamer,game:source.clip.game,outDir:join(this.ctx.config.out,'remote',v.id,m.runId),version:m.version,candidates:1,finishedAt:new Date(),settings:{...m.settings,jobId:this.reportId(),sourceClipId:m.sourceClipId}});
-        await db.insert(clips).values({...copy,id:m.id,runId:m.runId,version:m.version,file:m.file,sizeBytes:m.sizeBytes,mediaStorage,state:'draft',blockedReason:null});return {};}
+        const rendered=m.settings.renderedClips as Record<string,{protection?:{ads?:{automatic?:boolean}}}>|undefined;
+        const automatic=m.settings.selection==='ad-protection'&&rendered?.[m.id]?.protection?.ads?.automatic===true;
+        await db.insert(clips).values({...copy,id:m.id,runId:m.runId,version:m.version,file:m.file,sizeBytes:m.sizeBytes,mediaStorage,state:automatic&&!source.run?.settings.testBatch?'ready':'draft',blockedReason:null});return {};}
       default:throw new Error('Операция воркера не разрешена');
     }
   }

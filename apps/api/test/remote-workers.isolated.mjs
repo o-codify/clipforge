@@ -10,6 +10,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import Fastify from 'fastify';
 import {createDatabase,upgradeRuntime,streamers,vods,runs,clips,withVodLock} from '../../../packages/db/dist/index.js';
 import {QUEUES} from '../../../packages/jobs/dist/index.js';
+import {segmentKey,clipId} from '../../../packages/pipeline/dist/index.js';
 import {WorkerGatewayService} from '../dist/worker-gateway.service.js';
 import {JobsService} from '../dist/jobs/jobs.service.js';
 import {AuthGuard} from '../dist/auth/auth.guard.js';
@@ -76,7 +77,27 @@ try{
   await assert.rejects(gateway.finish(a.auth,t3.leaseId,{ok:true}));
   await gateway.revoke(b.workerId);await assert.rejects(gateway.operation(b.auth,takeover.leaseId,{operation:'vod.get'}));
   await db.sql`update jobs.job set state='cancelled' where state in ('retry','created','active')`;
+  // The server owns catalog settings and only accepts assets from this lease.
+  await jobs.enqueue(QUEUES.pipeline,{vodId:ids[5]});const rendering=await gateway.next(a.auth);assert(rendering);
+  const operation=(operation,input)=>gateway.operation(a.auth,rendering.leaseId,{operation,input});
+  await operation('render.begin',{id:'render-fixture',candidates:1,version:'fixture',settings:{jobId:'forged',audioMode:'dtln',testBatch:false}});
+  const segment=segmentKey(ids[5],10,20),renderedId=clipId(ids[5],segment,'fixture');
+  const proof={protection:{ads:{automatic:true,reject:false},audio:{method:'original'}}};
+  const clip={id:renderedId,runId:'render-fixture',vodId:ids[5],streamer:login,game:null,segmentKey:segment,version:'fixture',file:'clip.mp4',mediaStorage:{videoKey:'forged'},state:'ready',trigger:'fixture',peak:15,start:10,end:20,duration:10,score:1,parts:{},keywords:[],text:'',width:270,height:480,fps:10,sizeBytes:8};
+  await assert.rejects(operation('clip.save',{clip,proof}));
+  for(const kind of ['video','poster']){const upload=await gateway.beginUpload(a.auth,rendering.leaseId,{clipId:renderedId,kind,size:8,sha256:createHash('sha256').update('abcdefgh').digest('hex')});await gateway.chunk(a.auth,rendering.leaseId,upload.id,{offset:0,data:Buffer.from('abcdefgh').toString('base64')});await gateway.commitUpload(a.auth,rendering.leaseId,upload.id);}
+  await assert.rejects(operation('clip.save',{clip:{...clip,streamer:'other'},proof}));
+  assert.deepEqual(await operation('clip.save',{clip,proof}),{saved:true});
+  const [saved]=await db.sql`select c.state,c.media_storage,r.settings from clips c join runs r on r.id=c.run_id where c.id=${renderedId}`;
+  assert.equal(saved.state,'ready');assert.equal(saved.settings.jobId,rendering.jobId);assert.equal(saved.settings.audioMode,'original');assert.notEqual(saved.mediaStorage.videoKey,'forged');
+  await operation('render.finish',{runId:'render-fixture'});await gateway.finish(a.auth,rendering.leaseId,{ok:true});
+  // Expired uploads are collected without touching active assignments or assets.
+  const abandoned=randomUUID();await mkdir(join(folder,'worker-uploads'),{recursive:true});await writeFile(join(folder,'worker-uploads',abandoned+'.part'),'partial');
+  await db.sql`insert into remote_worker_uploads(id,lease_id,clip_id,kind,size,sha256) values(${abandoned},${t3.leaseId},'abandoned','video',7,'unused')`;
+  await db.sql`update remote_worker_leases set finished_at=now()-interval '20 minutes' where id=${t3.leaseId}`;
+  await gateway.sweep();await assert.rejects(stat(join(folder,'worker-uploads',abandoned+'.part')));
   console.log('PASS: enroll/replay, roles, two independent assignments, VOD isolation, uploads, lease fencing and revocation');
+  console.log('PASS: lease-scoped clip assets, server-owned rendering settings and abandoned upload cleanup');
 
   if(process.env.CLIPFORGE_REMOTE_CONTAINER_TEST==='1'){
     server=Fastify({bodyLimit:8*1024**2,logger:false});
@@ -87,6 +108,10 @@ try{
     for(const action of ['installation','heartbeat'])server.post('/api/worker-gateway/'+action,r=>gateway[action](r.headers.authorization,r.body));
     server.post('/api/worker-gateway/next',r=>gateway.next(r.headers.authorization));
     for(const action of ['operation','progress','finish'])server.post('/api/worker-gateway/tasks/:id/'+action,r=>gateway[action](r.headers.authorization,r.params.id,r.body));
+    server.post('/api/worker-gateway/tasks/:id/uploads',r=>gateway.beginUpload(r.headers.authorization,r.params.id,r.body));
+    server.post('/api/worker-gateway/tasks/:id/uploads/:upload/chunk',r=>gateway.chunk(r.headers.authorization,r.params.id,r.params.upload,r.body));
+    server.post('/api/worker-gateway/tasks/:id/uploads/:upload/commit',r=>gateway.commitUpload(r.headers.authorization,r.params.id,r.params.upload));
+    server.get('/api/worker-gateway/tasks/:id/source/:clip',async(r,reply)=>{const media=await gateway.source(r.headers.authorization,r.params.id,r.params.clip);return reply.header('content-length',media.size).send(media.body);});
     server.setErrorHandler((e,r,reply)=>reply.code(e.getStatus?.()??500).send({message:e.message}));
     await server.listen({port:0,host:'0.0.0.0'});config.webOrigin='http://host.docker.internal:'+server.server.address().port;
     for(let i=0;i<2;i++){
@@ -98,13 +123,30 @@ try{
       args.splice(2,0,'--add-host=host.docker.internal:host-gateway');await docker(...args.slice(1));
     }
     // Both containers must enroll and finish bootstrap before tasks are offered.
-    await check(async()=>Number((await db.sql`select count(*) n from worker_instances where label like 'Container %' and state='online'`)[0].n)===2,15*60000);
+    let lastProgress=0;
+    await check(async()=>{
+      if(Date.now()-lastProgress>30000){lastProgress=Date.now();console.log('Container bootstrap:',await db.sql`select label,state,resources->>'stage' as stage from worker_instances where label like 'Container %'`);
+        for(const name of containers){const state=JSON.parse(await docker('inspect',name))[0];if(state.RestartCount>1)throw Error('Worker restarted during bootstrap');}}
+      return Number((await db.sql`select count(*) n from worker_instances where label like 'Container %' and state='online'`)[0].n)===2;
+    },15*60000);
     const submitted=[];for(const id of ids)submitted.push((await jobs.enqueue(QUEUES.analyzeVod,{vodId:id,force:true})).id);
     await check(async()=>Number((await db.sql`select count(*) n from jobs.job where id=any(${submitted}::uuid[]) and state='completed'`)[0].n)===6,120000);
     const owners=await db.sql`select distinct worker_id from worker_jobs where job_id=any(${submitted}::uuid[])`;assert.equal(owners.length,2);
     for(const name of containers){const inspect=JSON.parse(await docker('inspect',name))[0];assert(!inspect.Config.Env.some(x=>/DATABASE_URL|S3_|YOUTUBE/.test(x)));assert.equal(inspect.HostConfig.Privileged,false);assert.equal(inspect.HostConfig.Memory,2*1024**3);}
     const signals=await db.sql`select signals from vods where id=any(${ids})`;assert(signals.every(v=>v.signals.frames>0));
     console.log('PASS: two real one-command containers, CPU Python analysis, automatic registration, no DB/S3/YouTube credentials');
+    // A real video traverses the platform -> container -> chunked result -> catalog path.
+    // Synthetic footage only: this test must never download a stream or publish to YouTube.
+    await docker('exec',containers[0],'ffmpeg','-v','error','-y','-f','lavfi','-i','testsrc2=size=270x480:rate=10','-f','lavfi','-i','sine=frequency=440','-t','4','-c:v','libx264','-threads','1','-preset','ultrafast','-c:a','aac','/tmp/fixture.mp4');
+    await mkdir(join(folder,'source'),{recursive:true});await docker('cp',containers[0]+':/tmp/fixture.mp4',join(folder,'source','source.mp4'));
+    const sourceId=ids[4]+'_original';await db.insert(runs).values({id:'source',vodId:ids[4],streamer:login,outDir:join(folder,'source')});
+    await db.insert(clips).values({id:sourceId,runId:'source',vodId:ids[4],streamer:login,segmentKey:'fixture-source',file:'source.mp4',text:'',start:0,end:4,duration:4});
+    const cleaned=await jobs.enqueue(QUEUES.cleanClip,{clipId:sourceId,vodId:ids[4],regions:[{x:0,y:0,w:20,h:20}]});
+    await check(async()=>{const [j]=await db.sql`select state,output from jobs.job where id=${cleaned.id}`;if(j.state==='failed')throw Error(JSON.stringify(j.output));return j.state==='completed';},180000);
+    const [result]=await db.sql`select c.id,c.media_storage,c.size_bytes from clips c where c.id<>${sourceId} and c.vod_id=${ids[4]}`;
+    assert(result&&result.sizeBytes>1000&&result.mediaStorage.videoKey&&result.mediaStorage.posterKey);
+    const downloaded=await readFile(join(folder,'objects',result.mediaStorage.videoKey));assert.equal(downloaded.length,result.sizeBytes);
+    console.log('PASS: real ffmpeg output and poster uploaded through the platform API and committed to the catalog');
   }
 }catch(error){for(const name of containers)try{console.error((await docker('logs','--tail','50',name)).replace(/[a-zA-Z0-9_-]{43,}/g,'[redacted]'));}catch{}throw error;}
 finally{gateway?.onModuleDestroy();await server?.close();for(const n of containers)await docker('rm','-f',n).catch(()=>{});for(const v of volumes)await docker('volume','rm',v).catch(()=>{});

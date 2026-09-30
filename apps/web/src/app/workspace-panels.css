@@ -18,3 +18,4 @@
 @media(max-width:600px){.analytics-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.metric-panel{padding:14px}.published-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.short-counts{grid-template-columns:1fr}.workers-grid{grid-template-columns:1fr}}
 
 .workers-grid>.metric-panel{display:flex;flex-direction:column}.workers-grid .dialog-actions{margin-top:auto}.workers-grid .metric-panel header{align-items:flex-start}.workers-grid .metric-panel header h2{overflow-wrap:anywhere}
+.worker-connect-fields{display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin:20px 0}.worker-connect-fields label{display:grid;gap:8px;font-size:12px;max-width:240px}.worker-connect-fields input{min-width:100px;width:100%}.worker-connect-fields label:first-child{flex:1;min-width:180px}

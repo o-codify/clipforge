@@ -179,7 +179,7 @@ async function main(): Promise<void> {
           where id = ${id}::uuid and state = 'active'`);
       }
       const allocation=await capacity();
-      await registry.beat({...resources,paused:resources.paused||!diskAvailable,reason:!diskAvailable?'disk-pressure':resources.reason,allocation,freeGb,heavySlots:1});
+      await registry.beat({...resources,paused:resources.paused||!diskAvailable,reason:!diskAvailable?'disk-pressure':resources.reason,allocation,freeGb,heavySlots:1,leaseProtocol:1});
       // Compatibility for older controllers; worker_instances is the fleet source of truth.
       await runtimeValue(ctx.db, runtimeKey, { pid: process.pid, state: "online", role, freeGb, resources,workerId:registry.id });
       await localHeartbeat("online");

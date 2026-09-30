@@ -14,11 +14,12 @@ async function main(){
   const stopTask=()=>{if(child?.pid){try{if(process.platform==='win32')child.kill('SIGKILL');else process.kill(-child.pid,'SIGKILL');}catch{} } child=null;active=null;result=null;messages.length=0;};
   const beat=async()=>{if(busy)return;busy=true;try{
     const allocation=await capacity(),disk=await statfs(storage),state=resourceState();
-    const response=await client.request<{accepted:boolean;draining:boolean}>('heartbeat',{leaseId:active?.leaseId??null,version:process.env.RELEASE_SHA??'local',
+    const response=await client.request<{accepted:boolean;draining:boolean;upgradeRequired:boolean}>('heartbeat',{leaseId:active?.leaseId??null,version:process.env.RELEASE_SHA??'local',
       resources:{allocation,freeGb:Number(disk.bavail)*Number(disk.bsize)/1024**3,paused:state.paused,reason:state.reason??null,
         memoryMb:state.memoryMb,cpuPercent:state.cpuPercent,metrics:state.metrics,downloadKbps:state.downloadKbps,uploadKbps:state.uploadKbps}},7000);
     lastContact=Date.now();
     if(active&&!response.accepted)stopTask();
+    if(!active&&response.upgradeRequired)stopping=true;
     const heartbeat=join(storage,'heartbeat.json');await writeFile(heartbeat+'.tmp',JSON.stringify({at:Date.now(),workerId:client.identity.workerId,leaseId:active?.leaseId??null}));await rename(heartbeat+'.tmp',heartbeat);
     if(active&&messages.length){const batch=messages.splice(0,30);await client.request(`tasks/${active.leaseId}/progress`,{messages:batch},7000);}
   }catch(error){if((error as {permanent?:boolean}).permanent){stopTask();stopping=true;} }

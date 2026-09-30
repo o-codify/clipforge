@@ -40,9 +40,9 @@ export async function cleanClip(ctx:Context, payload:PayloadOf<typeof QUEUES.cle
   await mkdir(outDir,{recursive:true});
   let source = join(row.run.outDir,row.clip.file);
   if (!await stat(source).then(s=>s.size>0).catch(()=>false)) {
-    if ((!ctx.storage&&!ctx.remote) || !row.clip.mediaStorage) throw new Error('Исходный клип недоступен');
+    if (!ctx.remote && (!ctx.storage || !row.clip.mediaStorage)) throw new Error('Исходный клип недоступен');
     source=join(outDir,'source.mp4');
-    if(ctx.remote)await ctx.remote.downloadClip(row.clip.id,source);else await ctx.storage!.downloadFile(row.clip.mediaStorage.videoKey,source);
+    if(ctx.remote)await ctx.remote.downloadClip(row.clip.id,source);else await ctx.storage!.downloadFile(row.clip.mediaStorage!.videoKey,source);
   }
   report.log('Проверяю QR-коды и рекламные баннеры');
   const duration = (await probeMedia(source))?.duration;
