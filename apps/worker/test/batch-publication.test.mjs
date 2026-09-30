@@ -47,7 +47,7 @@ test('publication scope and rate must be explicit and bounded',()=>{
   assert.equal(batchPublicationOptions.safeParse({enabled:true}).success,false);
 });
 
-function fixture({connected=true,sendFails=false,block=null,quota=null}={}) {
+function fixture({connected=true,sendFails=false,block=null,quota=null,session=false}={}) {
   const jobId='097c3667-a92b-4eba-9393-4fd84bb2b83b';
   let policy={jobId,login:'sany',enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog',intervalMinutes:10,dailyLimit:100,privacy:'public'};
   const pubs=[],sent=[],jobs=[];let candidates=2;
@@ -62,6 +62,8 @@ function fixture({connected=true,sendFails=false,block=null,quota=null}={}) {
     if(q.startsWith('select value from platform_runtime'))return q.includes("key='youtube-quota'")?(quota?[{value:quota}]:[]):block?[{value:block}]:[];
     if(q.startsWith('select count(*)::int n from platform_runtime'))return [{n:0}];
     if(q.startsWith('select status,media_id'))return pubs.filter(row=>row.id===p[0]);
+    if(q.startsWith('select publication_id from youtube_upload_sessions'))return session?[{publication_id:p[0]}]:[];
+    if(q.startsWith("update publications set status='queued'")){const pub=pubs.find(row=>row.id===p[0]);pub.status='queued';pub.error=null;return [];}
     if(q.startsWith('select id from publications'))return pubs.filter(row=>['queued','uploading','processing'].includes(row.status));
     if(q.startsWith('select created_at'))return [];
     if(q.startsWith('select c.id,c.streamer')){
@@ -78,7 +80,7 @@ function fixture({connected=true,sendFails=false,block=null,quota=null}={}) {
     if(sendFails){sendFails=false;throw new Error('queue disconnected after commit');}
     sent.push(data);jobs.push({key:options.singletonKey});return 'queue-job';
   }};
-  return {ctx:{db},boss,pubs,sent,policy:()=>policy};
+  return {ctx:{db},boss,pubs,sent,policy:()=>policy,finishJob:()=>{jobs.length=0;},block:value=>{block=value;}};
 }
 
 test('active render batch publishes incrementally, one outstanding upload, then waits full interval',async()=>{
@@ -115,4 +117,24 @@ test('known provider limit stops new uploads but records a completed pending upl
   active.pubs[0].status='published';active.pubs[0].mediaId='video';
   await dispatchBatchPublications(active.ctx,active.boss,now+minute);
   assert.equal(active.policy().pendingPublicationId,null);assert.equal(active.policy().state,'interval');
+});
+
+test('multiline YouTube init rejection waits for the channel limit and retries the same publication',async()=>{
+  const f=fixture();await dispatchBatchPublications(f.ctx,f.boss,now);
+  const id=f.pubs[0].id;f.finishJob();f.pubs[0].status='failed';
+  f.pubs[0].error='Error: youtube upload init 400: {\n  "error": {\n    "errors": [{"reason":"uploadLimitExceeded"}]\n  }\n}';
+  const until=new Date(now+24*3600000).toISOString();f.block({until,reason:'channel-limit'});
+  await dispatchBatchPublications(f.ctx,f.boss,now+minute);
+  assert.equal(f.policy().state,'youtube-limit');assert.equal(f.policy().nextAt,until);assert.equal(f.sent.length,1);
+  await dispatchBatchPublications(f.ctx,f.boss,now+24*3600000+1);
+  assert.equal(f.sent.length,2);assert.equal(f.sent[1].publicationId,id);assert.equal(f.pubs.length,1);
+});
+
+test('a known upload session or an uncertain body failure is never automatically restarted',async()=>{
+  for(const [session,error] of [[true,'youtube upload init 400: {\n "reason":"uploadLimitExceeded"}'],[false,'youtube upload body failed: uploadLimitExceeded']]){
+    const f=fixture({session});await dispatchBatchPublications(f.ctx,f.boss,now);f.finishJob();
+    f.pubs[0].status='failed';f.pubs[0].error=error;
+    await dispatchBatchPublications(f.ctx,f.boss,now+minute);
+    assert.equal(f.policy().state,'error');assert.equal(f.sent.length,1);
+  }
 });

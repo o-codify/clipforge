@@ -38,7 +38,7 @@ export async function dispatchBatchPublications(ctx:Context,boss:Pick<PgBoss,'se
       if(!account){await save('waiting-channel');continue;}
       if(p.pendingPublicationId) {
         const [pub]=await tx.execute<{status:string;mediaId:string|null;error:string|null}>(sql`select status,media_id as "mediaId",error from publications where id=${p.pendingPublicationId}`);
-        if(pub?.status==='failed'&&!pub.mediaId&&/youtube upload init.*(?:quotaExceeded|dailyLimitExceeded|uploadLimitExceeded)|\[quota-wait\]/.test(pub.error??'')){
+        if(pub?.status==='failed'&&!pub.mediaId&&/youtube upload init.*(?:quotaExceeded|dailyLimitExceeded|uploadLimitExceeded)|\[quota-wait\]/s.test(pub.error??'')){
           const wait=await uploadWait(tx,p.channelId,now);
           if(wait){p.nextAt=wait.until;await save('youtube-limit',wait.message);continue;}
           // Only an explicitly rejected init can be retried automatically. Never an uncertain body upload.
