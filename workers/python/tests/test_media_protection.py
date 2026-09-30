@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from clipforge_worker.ads import detect_frame, scan_ads, merge_regions
-from clipforge_worker.music import speech_gate, clean_music, read_wav, write_wav, command
+from clipforge_worker.music import speech_gate, prevent_gain, clean_music, read_wav, write_wav, command
 from clipforge_worker.__main__ import op_clean_clip, op_prepare_media
 
 
@@ -17,6 +17,35 @@ class Reporter:
 
 
 class ProtectionTest(unittest.TestCase):
+    def test_disabled_ad_check_never_loads_detectors_or_claims_verification(self):
+        with patch('clipforge_worker.ads.scan_ads',side_effect=AssertionError('Detector must not run')):
+            result=op_prepare_media(dict(video='missing.mp4',start=0,end=10,adCheckEnabled=False),Reporter())
+        self.assertFalse(result['ads']['enabled'])
+        self.assertFalse(result['ads']['automatic'])
+        self.assertEqual(result['ads']['regions'],[])
+        self.assertEqual(result['ads']['frames'],0)
+        self.assertEqual(result['audio'],{'method':'original'})
+
+    def test_pause_gate_is_explicit_and_requires_alignment(self):
+        with patch('clipforge_worker.music.clean_music',return_value={'method':'dtln','speechGated':True}) as clean:
+            params=dict(video='source.mp4',start=4,end=20,audioMode='dtln-gated',models='models',audioOut='speech.wav',adCheckEnabled=False)
+            with self.assertRaisesRegex(ValueError,'речи'):op_prepare_media(params,Reporter())
+            params['speechSpans']=[[1,2]]
+            self.assertTrue(op_prepare_media(params,Reporter())['audio']['speechGated'])
+            clean.assert_called_once_with('source.mp4',4,20,'speech.wav','dtln','models',speech_spans=[[1,2]])
+
+    def test_dtln_cannot_boost_quiet_windows_or_peak(self):
+        rng=np.random.default_rng(17);rate=16000;hop=320
+        source=rng.normal(0,.04,rate*2+17).astype(np.float32)
+        source[hop:hop*2]=0
+        enhanced=rng.normal(0,.4,len(source)).astype(np.float32)
+        result=prevent_gain(source,enhanced,rate)
+        for at in range(0,len(source),hop):
+            before,after=source[at:at+hop],result[at:at+hop]
+            self.assertLessEqual(float(np.mean(after**2)),float(np.mean(before**2))+1e-9)
+            self.assertLessEqual(float(np.max(np.abs(after))),float(np.max(np.abs(before)))+1e-7)
+        np.testing.assert_array_equal(prevent_gain(source,source,rate),source)
+
     def test_dtln_requires_explicit_selection_and_never_gates_speech_pauses(self):
         ads={'reject':False}
         with patch('clipforge_worker.ads.scan_ads',return_value=ads), patch('clipforge_worker.music.clean_music',return_value={'method':'dtln','file':'speech.wav'}) as clean:

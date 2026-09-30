@@ -26,6 +26,7 @@ import {
 import { publishClip } from "./publish.js";
 import { refreshYoutube } from './metrics.js';
 import { cleanClip } from './clean-clip.js';
+import { prepareStreamer } from './prepare-streamer.js';
 import { preparePreview } from './prepare-preview.js';
 import { pruneSources } from "./storage.js";
 import { servesQueue } from "./routing.js";
@@ -41,6 +42,7 @@ const HANDLERS: Record<string, Handler> = {
   [QUEUES.inspectAds]: inspectAds as Handler,
   [QUEUES.pipeline]: runPipeline as Handler,
   [QUEUES.preparePreview]: preparePreview as Handler,
+  [QUEUES.prepareStreamer]: prepareStreamer as Handler,
   [QUEUES.indexChannel]: indexChannel as Handler,
   [QUEUES.fetchVod]: fetchVod as Handler,
   [QUEUES.transcribeVod]: transcribeVod as Handler,

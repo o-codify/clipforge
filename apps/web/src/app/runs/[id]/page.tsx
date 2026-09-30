@@ -53,7 +53,7 @@ export default function RunPage() {
         {run.settings.testBatch===true&&typeof run.settings.requestedCount==='number'
           ? `${clips.length} / ${run.settings.requestedCount} клипов`
           : `${counted(clips.length, 'клип', 'клипа', 'клипов')} из ${run.candidates} кандидатов`}
-        {run.settings.audioMode==='dtln'&&<> · <Pill>DTLN</Pill></>}
+        {String(run.settings.audioMode).startsWith('dtln')&&<> · <Pill>DTLN</Pill></>}
         {run.settings.testBatch===true&&<> · Тестовая подборка</>}
       </p>
 

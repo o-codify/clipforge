@@ -111,13 +111,36 @@ def speech_gate(samples, rate, spans):
     return samples*mask
 
 
+def prevent_gain(source, enhanced, rate):
+    """Attenuation only: no 20 ms output window may exceed the source RMS/peak.
+
+    This cannot identify a singer, but prevents an enhancer from making quiet
+    residual vocals louder. Interpolated gain avoids abrupt block boundaries.
+    """
+    hop = max(1, round(rate * .02))
+    gains = []
+    for at in range(0, len(source), hop):
+        before, after = source[at:at+hop], enhanced[at:at+hop]
+        after_power, after_peak = float(np.mean(after**2)), float(np.max(np.abs(after)))
+        rms_ratio = np.sqrt(np.mean(before**2) / after_power) if after_power > 0 else 1.
+        peak_ratio = np.max(np.abs(before)) / after_peak if after_peak > 0 else 1.
+        gains.append(min(1., float(rms_ratio), float(peak_ratio)))
+    if not gains:
+        return enhanced
+    # Use the smaller neighbouring gain throughout a block. Interpolation can
+    # only attenuate further, so neither local RMS nor peak can be increased.
+    edges = [gains[0], *[min(a,b) for a,b in zip(gains,gains[1:])], gains[-1]]
+    envelope = np.interp(np.arange(len(source)), np.arange(len(edges))*hop, edges)
+    return (enhanced * envelope).astype(np.float32)
+
+
 def clean_music(video, start, end, out, method='deepfilter', models='models', speech_spans=None):
     if method not in ('deepfilter', 'dtln', 'filter', 'mute'):
         raise ValueError('Unknown audio cleanup method')
     if not 0 <= start < end or end-start > 180:
         raise ValueError('Audio cleanup accepts clips of at most 180 seconds')
     out = Path(out); out.parent.mkdir(parents=True, exist_ok=True)
-    signature = hashlib.sha256(json.dumps([3, str(Path(video).resolve()), Path(video).stat().st_size,
+    signature = hashlib.sha256(json.dumps([4, str(Path(video).resolve()), Path(video).stat().st_size,
         Path(video).stat().st_mtime_ns, start, end, method, str(Path(models).resolve()),speech_spans]).encode()).hexdigest()
     meta = out.with_suffix('.json')
     if out.exists() and meta.exists():
@@ -153,6 +176,8 @@ def clean_music(video, start, end, out, method='deepfilter', models='models', sp
             cleaned = np.zeros_like(audio)
         # Exact source length keeps subtitles and outro in sync.
         cleaned = np.pad(cleaned[:len(audio)], (0, max(0, len(audio)-len(cleaned))))
+        if method == 'dtln':
+            cleaned = prevent_gain(audio, cleaned, rate)
         if method != 'mute':
             cleaned=speech_gate(cleaned,rate,speech_spans)
         pending = out.with_suffix('.pending.wav')

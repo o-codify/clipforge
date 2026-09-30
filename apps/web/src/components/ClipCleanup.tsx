@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Button } from './ui';
-export type MediaSafety = {method?:string;regions:number;qrHits:number;bannerHits:number;reviewedAt:string|null;autoVerifiedAt?:string|null;profileFrames?:number};
+export type MediaSafety = {method?:string;regions:number;qrHits:number;bannerHits:number;reviewedAt:string|null;autoVerifiedAt?:string|null;disabledAt?:string|null;profileFrames?:number};
 
 export function ClipCleanup({id,state,safety,onReady,onReview}:{id:string;state:string;safety?:MediaSafety|null;onReady:(id:string)=>void;onReview:()=>void}) {
   const [job,setJob]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -30,8 +30,8 @@ export function ClipCleanup({id,state,safety,onReady,onReview}:{id:string;state:
   };
   return <section className="media-cleanup">
     <h3>QR-коды и реклама</h3>
-    {safety?.autoVerifiedAt ? <>
-      <p>Обработано автоматически по карте эфира · {safety.profileFrames} кадров · закрыто областей: {safety.regions}</p>
+    {(safety?.autoVerifiedAt||safety?.disabledAt) ? <>
+      {safety.disabledAt?<p>Проверка рекламы выключена для этой версии.</p>:<p>Обработано автоматически по карте эфира · {safety.profileFrames} кадров · закрыто областей: {safety.regions}</p>}
       {state==='draft'&&<Button busy={busy} onClick={async()=>{setBusy(true);try{await api.post(`/api/clips/${id}/state`,{state:'ready'});onReview();}catch(e){setError(String(e));}finally{setBusy(false);}}}>Использовать тестовый клип</Button>}
     </> : <>
       <p>Эта версия создана до автоматической проверки эфира.</p>

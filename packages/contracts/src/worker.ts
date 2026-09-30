@@ -146,6 +146,7 @@ export type Rect = z.infer<typeof rectSchema>;
 
 export const facecamParamsSchema = z.object({
   video: z.string(),
+  game: z.string().optional(),
   /** Модель YuNet. Путь даёт бэкенд: воркер раскладку проекта не знает. */
   modelPath: z.string(),
   samples: z.number().int().min(5).max(200).default(40),
@@ -185,18 +186,20 @@ export const prepareMediaParamsSchema = z.object({
   video:z.string(), start:z.number().nonnegative(), end:z.number().positive(), transcript:z.string().default(''),
   regions:z.array(rectSchema).max(32).default([]),
   adProfile:z.record(z.unknown()).optional(),
-  audioMode:z.enum(['original','dtln']).optional(),
+  adCheckEnabled:z.boolean().default(true),
+  speechSpans:z.array(z.tuple([z.number().nonnegative(),z.number().positive()])).optional(),
+  audioMode:z.enum(['original','dtln','dtln-gated']).optional(),
   audioOut:z.string().optional(), models:z.string().optional(),
 });
 export const prepareMediaResultSchema = z.object({
   audio:z.discriminatedUnion('method',[
     z.object({method:z.literal('original')}),
-    z.object({method:z.literal('dtln'),file:z.string().min(1),speechGated:z.literal(false),
+    z.object({method:z.literal('dtln'),file:z.string().min(1),speechGated:z.boolean(),
       duration:z.number(),rmsBefore:z.number(),rmsAfter:z.number()}),
   ]),
   ads:z.object({regions:z.array(rectSchema),qrHits:z.number(),bannerHits:z.number(),frames:z.number(),coverage:z.number(),
     reject:z.boolean(),reason:z.string().nullable(),requiresReview:z.boolean(),sampleFps:z.number(),ocrFps:z.number(),
-    profileId:z.string().optional(),profileFrames:z.number().optional(),automatic:z.boolean().optional()}),
+    profileId:z.string().optional(),profileFrames:z.number().optional(),automatic:z.boolean().optional(),enabled:z.boolean().optional()}),
 });
 
 export const adProfileSchema = z.object({signature:z.string(),version:z.string(),model:z.string(),
@@ -210,6 +213,7 @@ export const workerOps = {
   profileAds: {params:z.object({video:z.string(),directory:z.string(),cached:z.record(z.unknown()).nullable().optional()}),result:adProfileSchema},
   ping: { params: z.object({}), result: pingResultSchema },
   transcribe: { params: transcribeParamsSchema, result: transcribeResultSchema },
+  cachedTranscript: { params: transcribeParamsSchema, result: transcribeResultSchema.nullable() },
   audioSignals: { params: audioSignalsParamsSchema, result: audioSignalsResultSchema },
   facecam: { params: facecamParamsSchema, result: facecamResultSchema },
   minimap: { params: minimapParamsSchema, result: minimapResultSchema },
@@ -221,7 +225,7 @@ export type WorkerOp = keyof typeof workerOps;
 
 export const workerRequestSchema = z.object({
   id: z.string(),
-  op: z.enum(["ping", "transcribe", "audioSignals", "facecam", "minimap", "prepareMedia", "cleanClip", "profileAds"]),
+  op: z.enum(["ping", "transcribe", "cachedTranscript", "audioSignals", "facecam", "minimap", "prepareMedia", "cleanClip", "profileAds"]),
   params: z.record(z.unknown()),
 });
 export type WorkerRequest = z.infer<typeof workerRequestSchema>;

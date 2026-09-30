@@ -23,6 +23,8 @@ import { api, hhmm, VOD_STATE, when, type VodRow } from "@/lib/api";
 import { useLiveReload } from "@/lib/jobs";
 import { toast } from "@/lib/toast";
 import { DetailPage } from "@/components/DetailPage";
+import {AdSetting} from '@/components/AdSetting';
+import {DraftBatch} from '@/components/DraftBatch';
 import {AudioSetting,type AudioMode} from '@/components/AudioSetting';
 
 interface StreamerDetail {
@@ -34,6 +36,7 @@ interface StreamerDetail {
   state: "candidate" | "active" | "paused";
   autoPublish: boolean;
   audioMode: AudioMode;
+  adCheckEnabled:boolean;
   live: boolean;
   liveGame: string | null;
   liveViewers: number | null;
@@ -162,7 +165,8 @@ export default function StreamerPage() {
         </div>
       </Card>
 
-      {isAdmin&&<Card><AudioSetting scope="streamer" id={login} value={streamer.audioMode} onSaved={load}/></Card>}
+      {isAdmin&&<Card><AudioSetting scope="streamer" id={login} value={streamer.audioMode} onSaved={load}/><AdSetting scope="streamer" id={login} value={streamer.adCheckEnabled} onSaved={load}/></Card>}
+      {isAdmin&&<Card><DraftBatch login={login}/></Card>}
 
       {streamer.games.length > 0 && <SectionTitle>Играет</SectionTitle>}
     </>} toolbar={streamer.games.length > 0 && <>

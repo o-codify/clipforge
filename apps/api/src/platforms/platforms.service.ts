@@ -191,7 +191,7 @@ export class PlatformsService {
       displayName:streamers.displayName, gameTitle:games.title })
       .from(clips).innerJoin(runs,eq(clips.runId,runs.id)).innerJoin(streamers,eq(clips.streamer,streamers.login)).leftJoin(games,eq(clips.game,games.slug))
       .where(and(eq(clips.id,clipId),eq(clips.state,"ready"),sql`${clips.archivedAt} is null`,
-        sql`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt']) is not null`));
+        sql`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','disabledAt']) is not null`));
     if(!clip) throw new NotFoundException("Клип недоступен для публикации");
     return { ...suggestVideoMetadata({...clip,displayName:clip.displayName ?? clip.login}),
       accounts:(await this.accounts()).filter(account=>account.platform==="youtube"&&!account.disconnectRequestedAt) };
@@ -202,7 +202,7 @@ export class PlatformsService {
     try { validateVideoMetadata(metadata); } catch(error) { throw new BadRequestException((error as Error).message); }
     const [clip] = await this.db
       .select({ id: clips.id, state: clips.state, archivedAt: clips.archivedAt,
-        reviewedAt: sql<string | null>`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'])` })
+        reviewedAt: sql<string | null>`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','disabledAt'])` })
       .from(clips).innerJoin(runs,eq(clips.runId,runs.id))
       .where(eq(clips.id, clipId));
     if (!clip) throw new NotFoundException("клип не найден");

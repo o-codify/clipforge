@@ -68,15 +68,29 @@ export class CatalogController {
   @AdminOnly()
   @Post("streamers/:login/audio")
   streamerAudio(@Param("login") login: string, @Body() body: unknown) {
-    const {audioMode} = z.object({audioMode: z.enum(["original", "dtln"])}).strict().parse(body);
+    const {audioMode} = z.object({audioMode: z.enum(["original", "dtln", "dtln-gated"])}).strict().parse(body);
     return this.catalog.setStreamerAudio(login, audioMode);
   }
 
   @AdminOnly()
   @Post("vods/:id/audio")
   vodAudio(@Param("id") id: string, @Body() body: unknown) {
-    const {audioMode} = z.object({audioMode: z.enum(["original", "dtln"]).nullable()}).strict().parse(body);
+    const {audioMode} = z.object({audioMode: z.enum(["original", "dtln", "dtln-gated"]).nullable()}).strict().parse(body);
     return this.catalog.setVodAudio(id, audioMode);
+  }
+
+  @AdminOnly()
+  @Post("streamers/:login/ads")
+  streamerAds(@Param("login") login:string,@Body() body:unknown) {
+    const input=z.object({enabled:z.boolean(),applyToAll:z.boolean().default(false)}).strict().parse(body);
+    return this.catalog.setStreamerAds(login,input.enabled,input.applyToAll);
+  }
+
+  @AdminOnly()
+  @Post("vods/:id/ads")
+  vodAds(@Param("id") id:string,@Body() body:unknown) {
+    const {enabled}=z.object({enabled:z.boolean().nullable()}).strict().parse(body);
+    return this.catalog.setVodAds(id,enabled);
   }
 
   @Get("vods/:id")

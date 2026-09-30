@@ -21,15 +21,16 @@ export async function preparePreview(ctx:Context,payload:Parameters<typeof runPi
   const cancelled=async()=>{if(await report.cancelled())throw new Error('Подготовка черновиков отменена');};
   await cancelled();
   report.log(`Отбор из сохранённых ${source.seconds/60} минут эфира. Полная запись остаётся нескачанной.`);
+  const params={audio:source.audio,model:ctx.config.speechModel,language:ctx.config.speechLanguage,
+    batchSize:ctx.config.speechBatchSize,glossary:ctx.config.glossary};
+  const cached=await ctx.python.call('cachedTranscript',params,{cancelled:report.cancelled});
+  if(cached)report.log('Использую сохранённую расшифровку; модель распознавания не загружается.');
   const resources=resourceState();
-  if(process.env.MEDIA_RESOURCE_STATE&&(resources.paused
+  if(!cached&&process.env.MEDIA_RESOURCE_STATE&&(resources.paused
     ||(resources.memoryMb??0)-(resources.metrics?.ownMemoryMb??0)<speechHeadroomMb(ctx.config.speechModel))) {
     report.log('Ожидаю свободных ресурсов для распознавания речи; сохранённый фрагмент готов.');
   }
-  const result=await ctx.python.call('transcribe',{
-    audio:source.audio,model:ctx.config.speechModel,language:ctx.config.speechLanguage,
-    batchSize:ctx.config.speechBatchSize,glossary:ctx.config.glossary,
-  },{cancelled:report.cancelled,onEvent:e=>report.log(e.event==='log'?e.message:`${e.stage}${e.value===null?'':` ${Math.round(e.value*100)}%`}`)});
+  const result=cached??await ctx.python.call('transcribe',params,{cancelled:report.cancelled,onEvent:e=>report.log(e.event==='log'?e.message:`${e.stage}${e.value===null?'':` ${Math.round(e.value*100)}%`}`)});
   await cancelled();
   const signals=await ctx.python.call('audioSignals',{audio:source.audio,out:join(source.directory,'signals.f32')});
   await cancelled();

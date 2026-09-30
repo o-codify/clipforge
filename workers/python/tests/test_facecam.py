@@ -31,6 +31,19 @@ class CameraChecks(unittest.TestCase):
         frames=[np.full((240,320,3),i*10,dtype=np.uint8) for i in range(8)]
         result=self.verify(frames,[(Rect(10 if i<4 else 230,10,40,50),.9,i) for i in range(8)])
         self.assertFalse(result.found)
+    def test_animated_dota_scoreboard_is_not_a_camera(self):
+        frames=[np.full((1080,1920,3),i*10,dtype=np.uint8) for i in range(8)]
+        hero=[(Rect(600,2,32,35),.99,i) for i in range(8)]
+        with patch('clipforge_worker.facecam.grab_frames',return_value=frames), patch('clipforge_worker.facecam._detect_faces',return_value=hero):
+            result=find_facecam('fixture',samples=8,min_hit_ratio=1,start=0,end=4,game='dota_2')
+        self.assertFalse(result.found)
+        self.assertEqual(result.hits,0)
+    def test_dota_camera_outside_scoreboard_is_kept(self):
+        frames=[np.full((1080,1920,3),i*10,dtype=np.uint8) for i in range(8)]
+        faces=[(Rect(20,200,80,100),.99,i) for i in range(8)]
+        with patch('clipforge_worker.facecam.grab_frames',return_value=frames), patch('clipforge_worker.facecam._detect_faces',return_value=faces):
+            result=find_facecam('fixture',samples=8,min_hit_ratio=1,start=0,end=4,game='Dota 2')
+        self.assertTrue(result.found)
     def test_incomplete_decode_does_not_offer_mistimed_safe_windows(self):
         frames=[np.full((240,320,3),i*5,dtype=np.uint8) for i in range(39)]
         detections=[(Rect(10,10,40,50),.9,i) for i in range(39)]

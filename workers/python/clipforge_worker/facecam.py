@@ -315,6 +315,7 @@ def find_facecam(
     model_path: Path | str | None = None,
     start: float | None = None, end: float | None = None,
     reference_rect: Rect | None = None,
+    game: str | None = None,
 ) -> FacecamResult:
     """Найти вебку в видео.
 
@@ -340,6 +341,11 @@ def find_facecam(
         detections=_recover_small_faces(frames,detections,[hint],model_path)
         detections=[(r,s,i) for r,s,i in detections if roi.x<=r.cx<=roi.x+roi.w and roi.y<=r.cy<=roi.y+roi.h]
 
+    if (game or '').lower().replace('_', ' ') == 'dota 2':
+        # Animated hero portraits in the top scoreboard pass face/eye and motion
+        # checks. Their tiny boxes inside the HUD strip are not a webcam.
+        detections = [(r, s, i) for r, s, i in detections
+                      if not (r.cy < frame_h * .06 and r.h < frame_h * .06)]
     if not detections:
         return FacecamResult(
             False, samples=len(frames), note="лиц не найдено - вероятно, камеры нет"

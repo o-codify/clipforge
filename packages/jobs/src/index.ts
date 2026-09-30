@@ -37,6 +37,7 @@ export const QUEUES = {
   pipeline: "heavy.pipeline",
   /** Draft-only pipeline; isolated from legacy workers that omit preview options. */
   preparePreview: "heavy.prepare-preview",
+  prepareStreamer: "heavy.prepare-streamer",
   fetchVod: "heavy.fetch-vod",
   transcribeVod: "heavy.transcribe-vod",
   analyzeVod: "heavy.analyze-vod",
@@ -113,7 +114,7 @@ export const renderRunPayload = z.object({
   count: z.number().int().min(1).max(500).optional(),
   skipExisting: z.boolean().optional(),
   /** Optional per-run override; otherwise resolve VOD, then streamer settings. */
-  audioMode: z.enum(['original','dtln']).optional(),
+  audioMode: z.enum(['original','dtln','dtln-gated']).optional(),
   /** Explicit administrator preview, bounded independently of development mode. */
   testBatch: z.boolean().optional(),
 });
@@ -131,13 +132,18 @@ export const publishClipPayload = z.object({
 });
 
 export const preparePreviewPayload = renderRunPayload.extend({
-  count: z.number().int().min(1).max(20).default(1),
+  count: z.number().int().min(1).max(100).default(1),
   skipExisting: z.literal(true).default(true),
   testBatch: z.literal(true).default(true),
   reuse: z.literal(true).default(true),
 }).strict();
 export const refreshYoutubePayload = z.object({
   publicationId: z.string().min(1).max(200).optional(),
+}).strict();
+export const prepareStreamerPayload = z.object({
+  login:z.string().min(1).max(64),count:z.number().int().min(1).max(100).default(100),
+  audioMode:z.enum(['original','dtln','dtln-gated']).optional(),
+  vodIds:z.array(z.string().min(1)).min(2).max(20).refine(ids=>new Set(ids).size===ids.length,'Эфиры должны быть разными').optional(),
 }).strict();
 export const cleanClipPayload = z.object({
   clipId:z.string().min(1), vodId:z.string().min(1),
@@ -148,6 +154,7 @@ export const cleanClipPayload = z.object({
 export const PAYLOADS = {
   [QUEUES.pipeline]: pipelinePayload,
   [QUEUES.preparePreview]: preparePreviewPayload,
+  [QUEUES.prepareStreamer]: prepareStreamerPayload,
   [QUEUES.indexChannel]: indexChannelPayload,
   [QUEUES.fetchVodInfo]: fetchVodInfoPayload,
   [QUEUES.refreshStreamer]: refreshStreamerPayload,

@@ -20,7 +20,7 @@ test('DTLN is opt-in for one fresh render; other commands cannot enable audio pr
   assert.deepEqual(await commandPlan(parseCommand(['render','vod','--fresh','--audio','dtln'])),
     {path:'/api/jobs/render/vod',method:'POST',body:{count:1,skipExisting:true,audioMode:'dtln'}});
   await assert.rejects(commandPlan(parseCommand(['cleanup','clip','--audio','dtln'])));
-  await assert.rejects(commandPlan(parseCommand(['render','vod','--audio','dtln-gated'])));
+  await assert.rejects(commandPlan(parseCommand(['render','vod','--audio','unknown'])));
 });
 
 test('prepare only requests a bounded draft pipeline and never changes streamer defaults',async()=>{
@@ -28,8 +28,19 @@ test('prepare only requests a bounded draft pipeline and never changes streamer 
     {path:'/api/jobs/prepare/vod',method:'POST',body:{count:6,audioMode:'dtln'}});
   assert.deepEqual(await commandPlan(parseCommand(['prepare','vod'])),
     {path:'/api/jobs/prepare/vod',method:'POST',body:{count:1}});
-  for(const args of [['--count','21'],['--count','0'],['--audio','dtln-gated'],['--metadata','file.json']])
+  for(const args of [['--count','101'],['--count','0'],['--audio','unknown'],['--metadata','file.json']])
     await assert.rejects(commandPlan(parseCommand(['prepare','vod',...args])));
+});
+
+test('mass drafts and independent inherited ad preferences are explicit API operations',async()=>{
+  assert.deepEqual(await commandPlan(parseCommand(['prepare-streamer','sany_jeweler','--count','100','--audio','dtln-gated','--vods','v1,v2'])),
+    {path:'/api/jobs/prepare-streamer/sany_jeweler',method:'POST',body:{count:100,audioMode:'dtln-gated',vodIds:['v1','v2']}});
+  assert.deepEqual(await commandPlan(parseCommand(['streamer-ads','sany_jeweler','--ads','off','--all'])),
+    {path:'/api/streamers/sany_jeweler/ads',method:'POST',body:{enabled:false,applyToAll:true}});
+  assert.deepEqual(await commandPlan(parseCommand(['vod-ads','v1','--ads','inherit'])),
+    {path:'/api/vods/v1/ads',method:'POST',body:{enabled:null}});
+  for(const args of [['streamer-ads','sany','--ads','inherit'],['vod-ads','v1','--ads','off','--all'],['prepare-streamer','sany','--vods','v1,v1'],['prepare-streamer','sany','--count','101']])
+    await assert.rejects(commandPlan(parseCommand(args)));
 });
 
 test('login and logout use API; reads do not write; mutations are not retried or redirected',async()=>{

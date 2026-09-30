@@ -12,7 +12,7 @@ import type { PgColumn } from "drizzle-orm/pg-core";
 
 import {
   clips, games, publications, runs, streamerGames, streamers, transcripts, vods,
-  vodAudioSettings, type AudioMode, type Database,
+  vodAudioSettings, vodAdSettings, type AudioMode, type Database,
 } from "@clipforge/db";
 
 import { DATABASE } from "../config.js";
@@ -167,9 +167,10 @@ export class CatalogService {
       .orderBy(desc(runs.startedAt));
 
     const audio = await vodAudioSettings(this.db, id);
-    if(viewer?.isAdmin)return { ...row, audio, transcript: transcript ?? null, runs: vodRuns };
+    const ads = await vodAdSettings(this.db,id);
+    if(viewer?.isAdmin)return { ...row, audio, ads, transcript: transcript ?? null, runs: vodRuns };
     const {error,facecam,signals,adProtection,...visible}=row;
-    return {...visible,audio,facecam:facecam?{found:facecam.found}:null,signals:signals?{ready:true}:null,
+    return {...visible,audio,ads,facecam:facecam?{found:facecam.found}:null,signals:signals?{ready:true}:null,
       transcript:transcript?{language:transcript.language,segments:transcript.segments}:null,
       runs:vodRuns.map(({version,settings,...run})=>run)};
   }
@@ -239,10 +240,10 @@ export class CatalogService {
       .orderBy(clips.createdAt);
 
     const [run] = await this.db.select({settings:runs.settings}).from(runs).where(eq(runs.id,row.runId));
-    const protection = (run?.settings.renderedClips as Record<string,{protection?:{audio?:{method?:string};ads?:{regions?:unknown[];qrHits?:number;bannerHits?:number;profileId?:string;profileFrames?:number};reviewedAt?:string;autoVerifiedAt?:string}}>|undefined)?.[id]?.protection;
+    const protection = (run?.settings.renderedClips as Record<string,{protection?:{audio?:{method?:string};ads?:{regions?:unknown[];qrHits?:number;bannerHits?:number;profileId?:string;profileFrames?:number};reviewedAt?:string;autoVerifiedAt?:string;disabledAt?:string}}>|undefined)?.[id]?.protection;
     const safety = protection ? {method:protection.audio?.method,regions:protection.ads?.regions?.length ?? 0,
       qrHits:protection.ads?.qrHits ?? 0,bannerHits:protection.ads?.bannerHits ?? 0,reviewedAt:protection.reviewedAt ?? null,
-      autoVerifiedAt:protection.autoVerifiedAt??null,profileFrames:protection.ads?.profileFrames??0} : null;
+      autoVerifiedAt:protection.autoVerifiedAt??null,disabledAt:protection.disabledAt??null,profileFrames:protection.ads?.profileFrames??0} : null;
     return { ...visibleClip(viewer, row), safety,
       publications: viewer?.isAdmin ? pubs : pubs.map(({id,platform,url,status,privacy}) => ({id,platform,url,status,privacy})),
       versions: viewer?.isAdmin ? versions : [],
@@ -267,9 +268,9 @@ export class CatalogService {
 
   async setClipState(viewer: Viewer | null, id: string, state: "draft" | "ready", reviewed = false) {
     const clip = await this.clip(viewer, id);
-    if (state === 'ready' && (!clip.safety || (!clip.safety.autoVerifiedAt && !reviewed))) throw new BadRequestException('Сначала завершите обработку рекламы');
+    if (state === 'ready' && (!clip.safety || (!clip.safety.autoVerifiedAt && !clip.safety.disabledAt && !reviewed))) throw new BadRequestException('Сначала завершите обработку рекламы');
     await this.db.transaction(async tx=>{
-    if (state === 'ready' && !clip.safety?.autoVerifiedAt) {
+    if (state === 'ready' && !clip.safety?.autoVerifiedAt && !clip.safety?.disabledAt) {
       await tx.execute(sql`update runs set settings = jsonb_set(settings,
         array['renderedClips',${id},'protection','reviewedAt'], to_jsonb(now()::text), true) where id=${clip.runId}`);
     }
@@ -376,6 +377,21 @@ export class CatalogService {
       .where(eq(streamers.login, login)).returning({audioMode: streamers.audioMode});
     if (!row) throw new NotFoundException(`нет стримера ${login}`);
     return row;
+  }
+
+  async setStreamerAds(login:string, enabled:boolean, applyToAll=false) {
+    return this.db.transaction(async tx=>{
+      const [row]=await tx.update(streamers).set({adCheckEnabled:enabled}).where(eq(streamers.login,login)).returning({adCheckEnabled:streamers.adCheckEnabled});
+      if(!row)throw new NotFoundException(`нет стримера ${login}`);
+      if(applyToAll)await tx.update(vods).set({adCheckEnabled:null}).where(eq(vods.streamer,login));
+      return row;
+    });
+  }
+
+  async setVodAds(id:string, enabled:boolean|null) {
+    const [row]=await this.db.update(vods).set({adCheckEnabled:enabled}).where(eq(vods.id,id)).returning({id:vods.id});
+    if(!row)throw new NotFoundException(`нет эфира ${id}`);
+    return vodAdSettings(this.db,id);
   }
 
   async setVodAudio(id: string, audioMode: AudioMode | null) {

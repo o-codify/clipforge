@@ -173,7 +173,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                     </table>
                   </div>
                 )}
-                {viewer?.isAdmin && open.state === "ready" && (open.safety?.autoVerifiedAt || open.safety?.reviewedAt) &&
+                {viewer?.isAdmin && open.state === "ready" && (open.safety?.autoVerifiedAt || open.safety?.reviewedAt || open.safety?.disabledAt) &&
                   !open.publications.some(
                     (p) => p.platform === "youtube" && p.status !== "failed",
                   ) && (

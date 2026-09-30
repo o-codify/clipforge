@@ -231,9 +231,8 @@ def _transcribe_window(
     )
 
 
-def transcribe(audio_path, model_name=DEFAULT_MODEL, language="ru", batch_size=DEFAULT_BATCH,
-               beam_size=1, glossary=None, on_progress=None, engine=None) -> Transcript:
-    """Decode bounded windows; checkpoint completed speech after every window."""
+def checkpoint_context(audio_path, model_name=DEFAULT_MODEL, language="ru", batch_size=DEFAULT_BATCH,
+                       beam_size=1, glossary=None):
     path = Path(audio_path)
     window = int(os.environ.get("SPEECH_WINDOW_SECONDS", "300"))
     if not 30 <= window <= 600:
@@ -241,8 +240,6 @@ def transcribe(audio_path, model_name=DEFAULT_MODEL, language="ru", batch_size=D
     duration = float(subprocess.check_output([
         "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path),
     ], creationflags=0x08000000 if os.name == "nt" else 0, text=True).strip())
-    if engine is None:
-        engine = load_model(model_name)
     signature = hashlib.sha256(json.dumps({
         "version": 1, "size": path.stat().st_size, "mtime": path.stat().st_mtime_ns,
         "model": model_name, "language": language, "batch": batch_size,
@@ -250,6 +247,25 @@ def transcribe(audio_path, model_name=DEFAULT_MODEL, language="ru", batch_size=D
         "compute": os.environ.get("SPEECH_COMPUTE_TYPE"),
     }, sort_keys=True).encode()).hexdigest()
     checkpoint = path.with_suffix(path.suffix + ".speech-checkpoint.json")
+    return path, duration, window, signature, checkpoint
+
+
+def completed_checkpoint(audio_path, **options):
+    """Reuse only a complete transcript with matching source and decode settings."""
+    _, duration, _, signature, checkpoint = checkpoint_context(audio_path, **options)
+    try:
+        saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+        if saved.get('signature') == signature and saved.get('through') == duration:
+            return Transcript.load(checkpoint)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def transcribe(audio_path, model_name=DEFAULT_MODEL, language="ru", batch_size=DEFAULT_BATCH,
+               beam_size=1, glossary=None, on_progress=None, engine=None) -> Transcript:
+    """Decode bounded windows; checkpoint completed speech after every window."""
+    path, duration, window, signature, checkpoint = checkpoint_context(audio_path, model_name, language, batch_size, beam_size, glossary)
     through, segments, removed = 0.0, [], 0
     try:
         saved = json.loads(checkpoint.read_text(encoding="utf-8"))
@@ -260,6 +276,10 @@ def transcribe(audio_path, model_name=DEFAULT_MODEL, language="ru", batch_size=D
         pass
     if on_progress and through:
         on_progress(through)
+    if through == duration:
+        return Transcript(language, duration, segments, removed)
+    if engine is None:
+        engine = load_model(model_name)
     with tempfile.TemporaryDirectory(prefix="clipforge-speech-") as temporary:
         chunk = Path(temporary) / "window.wav"
         while through < duration:

@@ -78,7 +78,8 @@ export class JobsService implements OnModuleDestroy {
       singletonKey: singletonKey(queue, parsed as never),
       retryLimit: 2,
       retryDelay: 60, retryBackoff: true,
-      expireInSeconds: 6 * 3600,
+      // pg-boss requires strictly less than 24h (including explicit sends).
+      expireInSeconds: queue===QUEUES.prepareStreamer?24*3600-1:6*3600,
     }));
     if (id) return {id,queued:true};
     // Return a trackable handle even when a repeated request is coalesced.

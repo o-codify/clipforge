@@ -46,7 +46,7 @@ async function stop(code, reason) {
 
 function run(name, args, cwd = process.cwd(), once = false) {
   const child = spawn(process.execPath, args, {
-    cwd, env: process.env, stdio: "inherit", detached: process.platform !== "win32",
+    cwd, env: process.env, stdio: "inherit", detached: process.platform !== "win32", windowsHide:true,
   });
   children.set(child, name);
   console.log(`Started ${name}, pid ${child.pid}`);

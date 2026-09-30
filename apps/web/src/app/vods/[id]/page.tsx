@@ -24,11 +24,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Card, JobButton, PageSkeleton, Pill, SectionTitle } from "@/components/ui";
 import { api, hhmm, runTime, TRIGGERS, when } from "@/lib/api";
 import { useJobs, useLiveReload } from "@/lib/jobs";
+import {AdSetting,type VodAdSettings} from '@/components/AdSetting';
 import {AudioSetting,type VodAudioSettings} from '@/components/AudioSetting';
 
 interface VodDetail {
   id: string;
   audio: VodAudioSettings;
+  ads?:VodAdSettings;
   adProtection?: {complete:boolean;samples:number;regions:unknown[]}|null;
   streamer: string;
   game: string | null;
@@ -164,11 +166,7 @@ export default function VodPage() {
       </div>
 
       {viewer?.isAdmin&&vod.audio&&<Card><AudioSetting scope="vod" id={id} value={vod.audio.override} streamerMode={vod.audio.streamerMode} onSaved={load}/></Card>}
-      {viewer?.isAdmin&&<Card><h3>QR-коды и реклама</h3>
-        <p>{vod.adProtection?.complete
-          ? `Карта эфира готова · ${vod.adProtection.samples} кадров · областей: ${vod.adProtection.regions.length}`
-          : 'Проверка кадров и скрытие рекламы выполняются автоматически перед нарезкой.'}</p>
-      </Card>}
+      {viewer?.isAdmin&&vod.ads&&<Card><AdSetting scope="vod" id={id} value={vod.ads.override} streamerEnabled={vod.ads.streamerEnabled} onSaved={load}/></Card>}
 
       <SectionTitle aside={<span className="muted">{readySteps} из {STEPS.length}</span>}>
         Подготовка

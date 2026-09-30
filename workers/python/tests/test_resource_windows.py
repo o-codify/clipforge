@@ -32,9 +32,14 @@ class SpeechWindowsTest(unittest.TestCase):
                 self.assertEqual(decode.call_count, 1)
                 self.assertEqual([(w.text, w.start) for w in result.words], [('first', 10), ('new', 301)])
                 self.assertEqual(result.duration, 350)
+                with patch.object(speech,'load_model',side_effect=AssertionError('Cached transcript must not load a model')):
+                    self.assertIsNotNone(speech.completed_checkpoint(audio,batch_size=1))
+                    self.assertEqual(speech.transcribe(audio,batch_size=1).duration,350)
+                    self.assertIsNone(speech.completed_checkpoint(audio,batch_size=2))
                 speech.transcribe(audio, **options)
                 self.assertEqual(decode.call_count, 1, 'Completed windows must be reused')
                 audio.write_bytes(b'new source with different size')
+                self.assertIsNone(speech.completed_checkpoint(audio,batch_size=1))
                 speech.transcribe(audio, **options)
                 self.assertEqual(decode.call_count, 3, 'Changed sources must invalidate checkpoints')
 

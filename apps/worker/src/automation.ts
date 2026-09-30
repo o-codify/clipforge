@@ -275,7 +275,7 @@ export function startAutomation(
         join runs r on r.id = c.run_id
       where s.auto_publish
         and c.state = 'ready'
-        and coalesce(r.settings #>> array['renderedClips',c.id,'protection','autoVerifiedAt'], r.settings #>> array['renderedClips',c.id,'protection','reviewedAt']) is not null
+        and coalesce(r.settings #>> array['renderedClips',c.id,'protection','autoVerifiedAt'], r.settings #>> array['renderedClips',c.id,'protection','reviewedAt'],r.settings #>> array['renderedClips',c.id,'protection','disabledAt']) is not null
         and c.archived_at is null
         and not exists (
           select 1 from publications p

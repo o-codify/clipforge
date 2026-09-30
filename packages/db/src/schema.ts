@@ -201,7 +201,8 @@ export const streamers = pgTable(
      */
     autoPublish: boolean("auto_publish").notNull().default(false),
     /** Default for existing and future VODs without their own audio override. */
-    audioMode: text("audio_mode").$type<"original" | "dtln">().notNull().default("original"),
+    audioMode: text("audio_mode").$type<"original" | "dtln" | "dtln-gated">().notNull().default("original"),
+    adCheckEnabled: boolean("ad_check_enabled").notNull().default(true),
     /** manual - завёл админ; discovery - нашла площадка. */
     source: text("source").notNull().default("manual"),
 
@@ -268,7 +269,8 @@ export const vods = pgTable(
     /** Главы VOD: во что играли и когда. На эфире игр может быть несколько. */
     chapters: jsonb("chapters").$type<VodChapter[]>().notNull().default([]),
     /** null inherits the streamer's setting; original explicitly disables DTLN. */
-    audioMode: text("audio_mode").$type<"original" | "dtln" | null>(),
+    audioMode: text("audio_mode").$type<"original" | "dtln" | "dtln-gated" | null>(),
+    adCheckEnabled: boolean("ad_check_enabled"),
     adProtection: jsonb("ad_protection").$type<Record<string, unknown> | null>(),
 
     state: vodState("state").notNull().default("known"),

@@ -44,7 +44,7 @@ export async function publishClip(
       file: clips.file,
       storage: clips.mediaStorage,
       outDir: runs.outDir,
-      reviewedAt:sql<string|null>`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'])`,
+      reviewedAt:sql<string|null>`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','disabledAt'])`,
       state: clips.state,
       archivedAt: clips.archivedAt,
       login: clips.streamer,

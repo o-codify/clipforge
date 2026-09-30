@@ -109,6 +109,14 @@ def op_ping(params: dict[str, Any], ctx: Context) -> dict[str, Any]:
     }
 
 
+def op_cached_transcript(params: dict[str, Any], ctx: Context):
+    from clipforge_worker import speech
+    result = speech.completed_checkpoint(params['audio'], model_name=params.get('model','large-v3'),
+        language=params.get('language','ru'), batch_size=int(params.get('batchSize',1)),
+        beam_size=int(params.get('beamSize',1)), glossary=list(params.get('glossary') or []))
+    return transcript_result(result) if result is not None else None
+
+
 def op_transcribe(params: dict[str, Any], ctx: Context) -> dict[str, Any]:
     from clipforge_worker import speech
 
@@ -116,6 +124,9 @@ def op_transcribe(params: dict[str, Any], ctx: Context) -> dict[str, Any]:
     if not audio.is_file():
         raise FileNotFoundError(f"нет файла: {audio}")
 
+    cached = op_cached_transcript(params, ctx)
+    if cached is not None:
+        return cached
     model_name = params.get("model", "large-v3")
     engine = MODELS.whisper(model_name, ctx)
 
@@ -131,6 +142,10 @@ def op_transcribe(params: dict[str, Any], ctx: Context) -> dict[str, Any]:
         glossary=list(params.get("glossary") or []),
     )
 
+    return transcript_result(result)
+
+
+def transcript_result(result):
     return {
         "language": result.language,
         "duration": result.duration,
@@ -207,6 +222,7 @@ def op_facecam(params: dict[str, Any], ctx: Context) -> dict[str, Any]:
         int(params.get("samples", 40)),
         float(params.get("minHitRatio", 0.7)),
         model_path=params.get("modelPath") or None,
+        game=params.get("game"),
         start=params.get("start"), end=params.get("end"),
         reference_rect=facecam_mod.Rect(**params["referenceRect"]) if params.get("referenceRect") else None,
     )
@@ -244,28 +260,36 @@ def op_minimap(params: dict[str, Any], ctx: Context) -> dict[str, Any]:
 
 def op_prepare_media(params, ctx):
     from clipforge_worker.ads import scan_ads
-    ctx.progress('Проверяю рекламные вставки')
+    enabled = params.get('adCheckEnabled', True)
+    if enabled:
+        ctx.progress('Проверяю рекламные вставки')
     profile = params.get('adProfile')
     regions = list(params.get('regions', []))
-    if profile:
+    if profile and enabled:
         from clipforge_worker.ad_profile import source_info, VERSION, REVIEW_VERSION
         info = source_info(params['video'])
         if profile.get('signature') != info['signature'] or profile.get('version') != VERSION or profile.get('reviewVersion') != REVIEW_VERSION or profile.get('complete') is not True:
             raise ValueError('Карта рекламы не соответствует исходнику')
         regions.extend(profile['regions'])
-    ads = scan_ads(params['video'], params['start'], params['end'], params.get('transcript', ''), regions, verified_profile=bool(profile))
-    if profile and not ads['reject']:
+    ads = scan_ads(params['video'], params['start'], params['end'], params.get('transcript', ''), regions, verified_profile=bool(profile)) if enabled else dict(
+        enabled=False, regions=[], qrHits=0, bannerHits=0, frames=0, coverage=0,
+        reject=False, reason=None, requiresReview=False, sampleFps=0, ocrFps=0, automatic=False)
+    if profile and enabled and not ads['reject']:
         ads.update(requiresReview=False, automatic=True, profileId=profile['signature'], profileFrames=profile['samples'])
     # Only the new explicit per-run option enables DTLN. Legacy method and
     # speechSpans never enable enhancement or gating for ordinary rendering.
     audio = {'method': 'original'}
-    if params.get('audioMode') == 'dtln' and not ads['reject']:
+    if params.get('audioMode') in ('dtln', 'dtln-gated') and not ads['reject']:
         from clipforge_worker.music import clean_music
         if not params.get('audioOut') or not params.get('models'):
             raise ValueError('Для DTLN нужны путь результата и каталог моделей')
-        ctx.progress('Подавляю музыку с DTLN, без отключения пауз')
+        gated = params.get('audioMode') == 'dtln-gated'
+        spans = params.get('speechSpans')
+        if gated and not spans:
+            raise ValueError('Для DTLN с паузами нужна расшифровка речи')
+        ctx.progress('Обрабатываю звук: DTLN с паузами' if gated else 'Обрабатываю звук: DTLN')
         audio = clean_music(params['video'], params['start'], params['end'],
-            params['audioOut'], 'dtln', params['models'])
+            params['audioOut'], 'dtln', params['models'], **({'speech_spans':spans} if gated else {}))
     return {'audio': audio, 'ads': ads}
 
 
@@ -298,6 +322,7 @@ OPS: dict[str, Callable[[dict[str, Any], Context], dict[str, Any]]] = {
     "profileAds": op_profile_ads,
     "ping": op_ping,
     "transcribe": op_transcribe,
+    "cachedTranscript": op_cached_transcript,
     "audioSignals": op_audio_signals,
     "facecam": op_facecam,
     "minimap": op_minimap,

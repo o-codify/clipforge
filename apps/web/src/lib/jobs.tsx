@@ -134,6 +134,7 @@ export function useLiveReload(load: () => void): void {
 export const JOB_LABELS: Record<string, string> = {
   "heavy.pipeline": "Нарезка",
   "heavy.prepare-preview": "Подготовка черновиков",
+  "heavy.prepare-streamer": "Подборка клипов стримера",
   "heavy.fetch-vod": "Загрузка исходников",
   "heavy.transcribe-vod": "Распознавание речи",
   "heavy.analyze-vod": "Сигналы звука",

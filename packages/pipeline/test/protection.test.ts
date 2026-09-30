@@ -4,18 +4,18 @@ import {buildFilter,computeGrid} from '../dist/layout.js';
 import {buildFfmpegArgs} from '../dist/render.js';
 import {workerOps} from '@clipforge/contracts';
 
-test('ad screening ignores legacy enhancement and speech-gate parameters',()=>{
+test('ad screening ignores legacy enhancement parameters and defaults to checking ads',()=>{
  const input=workerOps.prepareMedia.params.parse({video:'source.mp4',start:0,end:20,
   method:'deepfilter',speechSpans:[[1,2]],out:'speech.wav',models:'missing'});
- assert.deepEqual(input,{video:'source.mp4',start:0,end:20,transcript:'',regions:[],models:'missing'});
+ assert.deepEqual(input,{video:'source.mp4',start:0,end:20,transcript:'',regions:[],models:'missing',adCheckEnabled:true,speechSpans:[[1,2]]});
 });
 
-test('DTLN is explicitly selected per run and must provide a processed audio file without gating',()=>{
+test('DTLN is explicitly selected per run and must provide a processed audio file',()=>{
  assert.equal(workerOps.prepareMedia.params.parse({video:'source.mp4',start:0,end:20}).audioMode,undefined);
  const audio={method:'dtln',file:'speech.wav',speechGated:false,duration:20,rmsBefore:.1,rmsAfter:.05};
  assert.equal(workerOps.prepareMedia.result.shape.audio.parse(audio).file,'speech.wav');
  assert.throws(()=>workerOps.prepareMedia.result.shape.audio.parse({...audio,file:undefined}));
- assert.throws(()=>workerOps.prepareMedia.result.shape.audio.parse({...audio,speechGated:true}));
+ assert.equal(workerOps.prepareMedia.result.shape.audio.parse({...audio,speechGated:true}).speechGated,true);
 });
 
 test('ad-masked renders keep source audio without enhancement or speech gating',()=>{

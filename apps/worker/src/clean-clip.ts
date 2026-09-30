@@ -71,9 +71,9 @@ async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.
   if(!await stat(video).then(s=>s.size>0).catch(()=>false))await fetchVod(ctx,{vodId:vod.id,audioOnly:false},report);
   const profile=await ensureAdProfile(ctx,vod.id,video,report);
   const previous=(row.run.settings.renderedClips as Record<string,{grid?:ReturnType<typeof computeGrid>;protection?:{audio?:{method?:string}}}>|undefined)?.[row.clip.id];
-  const audioMode=previous?.protection?.audio?.method??row.run.settings.audioMode??'original';
-  if(!['original','dtln'].includes(String(audioMode)))throw new Error('Настройка звука исходного клипа недоступна');
-  const hash=createHash('sha256').update(JSON.stringify({v:3,parent:row.clip.id,profile:profile.signature,reviewVersion:profile.reviewVersion,regions:profile.regions,audioMode})).digest('hex').slice(0,12);
+  const audioMode=row.run.settings.audioMode??previous?.protection?.audio?.method??'original';
+  if(!['original','dtln','dtln-gated'].includes(String(audioMode)))throw new Error('Настройка звука исходного клипа недоступна');
+  const hash=createHash('sha256').update(JSON.stringify({v:4,parent:row.clip.id,profile:profile.signature,reviewVersion:profile.reviewVersion,regions:profile.regions,audioMode})).digest('hex').slice(0,12);
   const id=`${row.clip.id}_ads_${hash}`;
   const [existing]=await ctx.db.select({id:clips.id}).from(clips).where(eq(clips.id,id));
   if(existing)return {clipId:id};
@@ -91,7 +91,8 @@ async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.
   const file=join(outDir,'clip.mp4');
   const protection=await ctx.python.call('prepareMedia',{video,start:row.clip.start,end:row.clip.end+3.4,
     transcript:row.clip.text??'',adProfile:profile,
-    ...(audioMode==='dtln'?{audioMode,models:ctx.config.models,audioOut:join(outDir,'dtln.wav')}:{})});
+    ...(audioMode!=='original'?{audioMode,models:ctx.config.models,audioOut:join(outDir,'dtln.wav'),
+      ...(audioMode==='dtln-gated'?{speechSpans:transcript.segments.flatMap(s=>s.words).filter(w=>w.end>row.clip.start!&&w.start<row.clip.end!+3.4).map(w=>[Math.max(0,w.start-row.clip.start!),w.end-row.clip.start!])}:{})}:{})});
   if(protection.ads.reject)throw new Error(protection.ads.reason??'Рекламный фрагмент пропущен');
   const [streamer]=await ctx.db.select({displayName:streamers.displayName}).from(streamers).where(eq(streamers.login,vod.streamer));
   const channel=streamer?.displayName??vod.streamer;

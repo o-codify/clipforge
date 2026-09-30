@@ -1,7 +1,7 @@
 import type { JobRow } from "./api";
 const actions: Record<string, string> = {
   "platform.discovery":"Поиск стримеров", "platform.metrics":"Обновление статистики публикаций", "platform.sweep":"Обход каналов и планирование",
-  "heavy.pipeline": "Создание клипов из эфира", "heavy.prepare-preview": "Подготовка черновиков из эфира", "heavy.fetch-vod": "Загрузка записи эфира",
+  "heavy.pipeline": "Создание клипов из эфира", "heavy.prepare-preview": "Подготовка черновиков из эфира", "heavy.prepare-streamer": "Подборка клипов стримера", "heavy.fetch-vod": "Загрузка записи эфира",
   "heavy.transcribe-vod": "Распознавание речи", "heavy.analyze-vod": "Поиск ярких звуковых моментов",
   "heavy.facecam-vod": "Поиск камеры стримера", "heavy.render-run": "Монтаж вертикальных клипов", "heavy.render-variant": "Монтаж клипов с выбранной обработкой", "heavy.clean-clip":"Скрытие QR-кодов и рекламы", "heavy.inspect-ads":"Проверка рекламы эфира",
   "light.index-channel": "Поиск новых эфиров", "light.fetch-vod-info": "Обновление информации об эфире",

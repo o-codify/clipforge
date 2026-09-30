@@ -26,7 +26,7 @@ import {
   streamers,
   transcripts,
   vods,
-  vodAudioSettings,
+  vodAudioSettings, vodAdSettings,
   type VodChapter,
 } from "@clipforge/db";
 import {disjointMoments,renderCount} from './render-options.js';
@@ -460,7 +460,7 @@ export async function analyzeVod(
 
 // --- поиск камеры -------------------------------------------------------
 
-const CAMERA_HINT_VERSION = "yunet-roi-v2";
+const CAMERA_HINT_VERSION = "yunet-roi-v3-ignore-dota-portraits";
 
 export async function facecamVod(
   ctx: Context,
@@ -476,6 +476,7 @@ export async function facecamVod(
 
   const result = await ctx.python.call("facecam", {
     video: workspace.video(ctx.config.videoFormat),
+    game: row.game ?? undefined,
     modelPath: `${ctx.config.models}/face_detection_yunet_2023mar.onnx`,
   });
 
@@ -518,7 +519,7 @@ export interface PreparedRenderSource {
 
 export async function renderRun(
   ctx: Context,
-  payload: { vodId: string; count?: number; skipExisting?:boolean; audioMode?:'original'|'dtln';testBatch?:boolean },
+  payload: { vodId: string; count?: number; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated';testBatch?:boolean },
   report: JobReport,
   prepared?: PreparedRenderSource,
 ): Promise<{ runId: string; rendered: number; skipped: number; replaced: number }> {
@@ -528,6 +529,7 @@ export async function renderRun(
   const audioSettings=resuming?.settings.audioSettings as Awaited<ReturnType<typeof vodAudioSettings>>|undefined
     ?? await vodAudioSettings(ctx.db,row.id,payload.audioMode);
   const audioMode=audioSettings.mode;
+  const adsSettings=resuming?.settings.adsSettings as Awaited<ReturnType<typeof vodAdSettings>>|undefined ?? await vodAdSettings(ctx.db,row.id);
   const skipExisting=payload.skipExisting||payload.testBatch||false;
   const [mode] = await ctx.db.execute<{value:{developmentMode?:boolean}}>(sql`select value from platform_runtime where key='settings'`);
   const count = Number(resuming?.settings.requestedCount??renderCount(payload,!!mode?.value.developmentMode,ctx.config.clipsPerRun));
@@ -571,7 +573,7 @@ export async function renderRun(
   const feedback = await applyFeedback(ctx, row.streamer, candidates);
   report.log(`Отбор: ${feedback.evidence.mode}, публичных наблюдений ${feedback.evidence.samples}`);
   if (mode?.value.developmentMode&&!payload.testBatch) report.log("Режим разработки: создаю только один проверочный клип.");
-  report.log(`Звук новых клипов: ${audioMode==='dtln'?'DTLN':'исходный'}.`);
+  report.log(`Звук новых клипов: ${audioMode==='original'?'исходный':audioMode==='dtln-gated'?'DTLN с паузами':'DTLN'}.`);
   // Camera/layout validation can reject a moment. Try a bounded reserve while
   // still producing at most count clips; never silently omit a visible camera.
   // selectDiverse returns chronological order for batch rendering. A quality
@@ -603,7 +605,8 @@ export async function renderRun(
   const sourceOffset = prepared?.offsetSeconds ?? 0;
   if (sourceOffset < 0 || !Number.isFinite(sourceOffset)) throw new Error("Неверное начало исходного фрагмента");
   const source = await probeSize(video);
-  const adProfile=await ensureAdProfile(ctx,row.id,video,report,!!prepared);
+  const adProfile=adsSettings.enabled?await ensureAdProfile(ctx,row.id,video,report,!!prepared):undefined;
+  if(!adsSettings.enabled)report.log("Проверка рекламы выключена в настройках эфира.");
   const grid = computeGrid(source.width, source.height, null);
   report.log(`Исходник ${source.width}×${source.height}. Расположение камеры проверяется отдельно для каждого момента.`);
 
@@ -632,10 +635,10 @@ export async function renderRun(
   // Версия оформления: отпечаток всего, что видно на экране. По ней
   // решается, дубль это или новая версия момента.
   const { version, parts: versionParts } = fingerprint({
-    cameraPolicy: "per-clip-roi-v6-verified-window",
+    cameraPolicy: "per-clip-roi-v7-ignore-dota-portraits",
     layoutPolicy: "fixed-crop-minimap-v1",
     subtitleTextPolicy: "ru-spacing-and-shared-masking-v1",
-    mediaProtection: { version:3, audio:audioMode, ads:'vod-vision', profileId:adProfile.signature, reviewVersion:adProfile.reviewVersion, regions:adProfile.regions },
+    mediaProtection: { version:4, audio:audioMode, ads:adsSettings.enabled?'vod-vision':'disabled', profileId:adProfile?.signature, reviewVersion:adProfile?.reviewVersion, regions:adProfile?.regions??[] },
     grid, subtitles: style, header, outro,
     render: { crf: 20, preset: "veryfast", fps: 30, audioBitrate: "160k" },
     censor: { enabled: true, audio: "off", maskSubtitles: true },
@@ -651,7 +654,7 @@ export async function renderRun(
     outDir, candidates: candidates.length, version,
     settings: { grid: describeGrid(grid), versionParts, speechModel: transcriptRow.model, feedback: feedback.evidence,
       sourceWindow: {start:sourceOffset,end:sourceOffset+audio.duration}, selection:"automatic",
-      audioMode,audioSettings,skipExisting,testBatch:payload.testBatch??false,requestedCount:count,jobId:report.id },
+      audioMode,audioSettings,adsSettings,skipExisting,testBatch:payload.testBatch??false,requestedCount:count,jobId:report.id },
   });
 
   const profanityHits = findProfanity(words);
@@ -698,6 +701,7 @@ export async function renderRun(
     try {
       const verifyCamera = () => ctx.python.call("facecam", {
         video, modelPath: `${ctx.config.models}/face_detection_yunet_2023mar.onnx`,
+        game:gameForMoment(row.chapters,{...candidate,peak:sourceOffset+candidate.peak},row.game),
         start: candidate.start, end: candidate.end,
         samples: Math.min(200, Math.max(5, Math.ceil((candidate.end-candidate.start)*2)+1)),
         minHitRatio: 1,
@@ -773,15 +777,16 @@ export async function renderRun(
 
     const protection = await ctx.python.call('prepareMedia', {
       video, start:candidate.start, end:candidate.end + (outro?.seconds ?? 0),
-      adProfile,
+      adProfile,adCheckEnabled:adsSettings.enabled,
       transcript:candidate.text ?? '',
-      ...(audioMode==='dtln'?{audioMode:'dtln' as const,models:ctx.config.models,audioOut:workspace.clipPath(runId,name+'.dtln.wav')} : {}),
+      ...(audioMode!=='original'?{audioMode,models:ctx.config.models,audioOut:workspace.clipPath(runId,name+'.dtln.wav'),
+        ...(audioMode==='dtln-gated'?{speechSpans:words.filter(w=>w.end>candidate.start&&w.start<candidate.end+(outro?.seconds??0)).map(w=>[Math.max(0,w.start-candidate.start),w.end-candidate.start])}:{})} : {}),
     });
     verifications[id] = {...verifications[id] as object, protection};
     if (protection.ads.reject) {
       rejected++; report.log(`Пропускаю рекламный фрагмент: ${protection.ads.reason}`); return;
     }
-    if (audioMode==='dtln' && protection.audio.method!=='dtln') {
+    if (audioMode!=='original' && protection.audio.method!=='dtln') {
       throw new Error('DTLN не применён: рендер с исходным звуком отменён');
     }
     const result = await renderClip({
@@ -813,7 +818,7 @@ export async function renderRun(
     // Catalog visibility is committed only after both objects reach S3.
     const mediaStorage = await storeClip(ctx, id, file);
     // Proof is committed only for an actually rendered and stored version.
-    const verifiedProtection={...protection,autoVerifiedAt:protection.ads.automatic?new Date().toISOString():null};
+    const verifiedProtection={...protection,autoVerifiedAt:protection.ads.automatic?new Date().toISOString():null,disabledAt:!adsSettings.enabled?new Date().toISOString():null};
     verifications[id]={...verifications[id] as object,protection:verifiedProtection};
     // Persist proof with each clip, including when a later clip or the worker fails.
     await ctx.db.update(runs).set({settings:sql`jsonb_set(${runs.settings},'{renderedClips}',
@@ -825,7 +830,7 @@ export async function renderRun(
       segmentKey: segment, version, file: name, mediaStorage,
       // Explicit test batches remain drafts; ordinary automation no longer
       // needs a human checkbox for every clip. Audio claims are independent.
-      state: payload.testBatch || !protection.ads.automatic ? 'draft' : 'ready',
+      state: payload.testBatch || (adsSettings.enabled&&!protection.ads.automatic) ? 'draft' : 'ready',
       trigger, peak: sourceOffset+candidate.peak, start: sourceOffset+candidate.start, end: sourceOffset+candidate.end,
       duration: candidate.end - candidate.start, score: candidate.score,
       parts: candidate.parts, keywords: candidate.keywords, text: candidate.text,
@@ -833,7 +838,7 @@ export async function renderRun(
       fps: media?.fps ?? 30,
       sizeBytes: size,
     }).onConflictDoUpdate({ target: clipsTable.id, set: { runId, file: name, mediaStorage, sizeBytes: size,
-      state:payload.testBatch || !protection.ads.automatic?'draft':'ready', archivedAt:null, archiveReason:null } });
+      state:payload.testBatch || (adsSettings.enabled&&!protection.ads.automatic)?'draft':'ready', archivedAt:null, archiveReason:null } });
     rendered += 1;
     accepted += 1;
     replaced += await dropSuperseded(ctx, row.id, segment, version, report);
@@ -931,7 +936,7 @@ async function dropSuperseded(
  */
 export async function runPipeline(
   ctx: Context,
-  payload: { vodId: string; count?: number; reuse: boolean; skipExisting?:boolean; audioMode?:'original'|'dtln'; testBatch?:boolean },
+  payload: { vodId: string; count?: number; reuse: boolean; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated'; testBatch?:boolean },
   report: JobReport,
 ): Promise<{ runId: string; rendered: number; skipped: number }> {
   const force = !payload.reuse;

@@ -10,6 +10,7 @@ await build({entryPoints:['apps/worker/src/main.ts'],outfile:`${output}/apps/wor
 await cp('workers/python',`${output}/workers/python`,{recursive:true,filter:path=>!path.includes('__pycache__')&&!path.endsWith('.pyc')});
 await cp('scripts/media-pc.mjs',`${output}/supervisor.mjs`);
 await cp('scripts/stop-media-tree.ps1',`${output}/stop-media-tree.ps1`);
+await cp('scripts/launch-media-hidden.py',`${output}/launch-media-hidden.py`);
 await cp('scripts/run-media-limited.py',`${output}/run-media-limited.py`);
 await cp('scripts/media_resources.py',`${output}/media_resources.py`);
 await writeFile(`${output}/release.json`,JSON.stringify({release:process.env.GITHUB_SHA,entry:'apps/worker/dist/main.mjs'}));

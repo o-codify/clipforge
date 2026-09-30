@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query } from "@nestjs/common";
-import { QUEUES, cleanClipPayload, renderRunPayload, preparePreviewPayload } from "@clipforge/jobs";
+import { QUEUES, cleanClipPayload, renderRunPayload, preparePreviewPayload, prepareStreamerPayload } from "@clipforge/jobs";
 import { z } from "zod";
 
 import { AdminOnly, CurrentViewer } from "../auth/auth.guard.js";
@@ -123,6 +123,18 @@ export class JobsController {
     return this.jobs.enqueue(QUEUES.preparePreview,{vodId,...input});
   }
 
+  @AdminOnly()
+  @Post('prepare-streamer/:login')
+  async prepareStreamer(@CurrentViewer() viewer:Viewer, @Param('login') login:string, @Body() body:unknown) {
+    const input=prepareStreamerPayload.parse({...(z.record(z.unknown()).parse(body??{})),login});
+    await this.catalog.streamer(viewer,login);
+    for(const id of input.vodIds??[]) {
+      const vod=await this.catalog.vod(viewer,id);
+      if(vod.streamer!==login)throw new BadRequestException('Эфиры должны принадлежать выбранному стримеру');
+    }
+    return this.jobs.enqueue(QUEUES.prepareStreamer,input);
+  }
+
   @Post("render/:vodId")
   async render(
     @CurrentViewer() viewer: Viewer | null,
@@ -131,7 +143,7 @@ export class JobsController {
   ) {
     const input = renderRunPayload.omit({vodId:true}).strict().parse(body??{});
     if (input.testBatch && !viewer?.isAdmin) throw new ForbiddenException('Тестовая подборка доступна администратору');
-    if (input.testBatch && (input.count ?? 1) > 20) throw new BadRequestException('В тестовой подборке не больше 20 клипов');
+    if (input.testBatch && (input.count ?? 1) > 100) throw new BadRequestException('В подборке не больше 100 клипов');
     await this.catalog.vod(viewer, vodId);
     const queue=input.audioMode!==undefined || input.skipExisting || input.testBatch ? QUEUES.renderVariant : QUEUES.renderRun;
     return this.jobs.enqueue(queue, {vodId,...input});
