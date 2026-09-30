@@ -26,6 +26,7 @@ import {
 import { publishClip } from "./publish.js";
 import { refreshYoutube } from './metrics.js';
 import { cleanClip } from './clean-clip.js';
+import { preparePreview } from './prepare-preview.js';
 import { pruneSources } from "./storage.js";
 import { servesQueue } from "./routing.js";
 import { spawn } from 'node:child_process';
@@ -39,7 +40,7 @@ type Handler = (ctx: Context, payload: never, report: JobReport) => Promise<unkn
 const HANDLERS: Record<string, Handler> = {
   [QUEUES.inspectAds]: inspectAds as Handler,
   [QUEUES.pipeline]: runPipeline as Handler,
-  [QUEUES.preparePreview]: runPipeline as Handler,
+  [QUEUES.preparePreview]: preparePreview as Handler,
   [QUEUES.indexChannel]: indexChannel as Handler,
   [QUEUES.fetchVod]: fetchVod as Handler,
   [QUEUES.transcribeVod]: transcribeVod as Handler,

@@ -603,7 +603,7 @@ export async function renderRun(
   const sourceOffset = prepared?.offsetSeconds ?? 0;
   if (sourceOffset < 0 || !Number.isFinite(sourceOffset)) throw new Error("Неверное начало исходного фрагмента");
   const source = await probeSize(video);
-  const adProfile=await ensureAdProfile(ctx,row.id,video,report);
+  const adProfile=await ensureAdProfile(ctx,row.id,video,report,!!prepared);
   const grid = computeGrid(source.width, source.height, null);
   report.log(`Исходник ${source.width}×${source.height}. Расположение камеры проверяется отдельно для каждого момента.`);
 
