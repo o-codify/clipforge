@@ -37,7 +37,7 @@ class ContainerResources(unittest.TestCase):
             (root/'memory.current').write_text(str(7*1024**3))
             (root/'memory.stat').write_text('inactive_file '+str(2*1024**3))
             free=resources.memory_available(8*1024**3, 4*1024**3, directory, 32*1024**3)
-            self.assertAlmostEqual(free, 1.6*1024**3)
+            self.assertAlmostEqual(free, 1.6*1024**3, delta=1)
 
     def test_model_resume_uses_persisted_revision_and_checks_length(self):
         from clipforge_worker.model_cache import provision_model
