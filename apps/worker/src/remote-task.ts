@@ -7,6 +7,7 @@ import {RemoteClient,RemoteTaskAccess,type Assignment} from './remote-client.js'
 import {fetchVod,transcribeVod,analyzeVod,facecamVod,inspectAds,renderRun,runPipeline,type JobReport} from './handlers.js';
 import {preparePreview} from './prepare-preview.js';
 import {cleanClip} from './clean-clip.js';
+import {restoreAudio} from './restore-audio.js';
 
 /** A fresh process per assignment releases speech models and ffmpeg memory.
  * There is deliberately no createContext(), .env loading or database client. */
@@ -24,7 +25,7 @@ async function main(){
   const handlers:Record<string,Handler>={
     [QUEUES.pipeline]:runPipeline as Handler,[QUEUES.preparePreview]:preparePreview as Handler,[QUEUES.prepareBatchVod]:preparePreview as Handler,
     [QUEUES.fetchVod]:fetchVod as Handler,[QUEUES.transcribeVod]:transcribeVod as Handler,[QUEUES.analyzeVod]:analyzeVod as Handler,[QUEUES.facecamVod]:facecamVod as Handler,
-    [QUEUES.inspectAds]:inspectAds as Handler,[QUEUES.renderRun]:renderRun as Handler,[QUEUES.renderVariant]:renderRun as Handler,[QUEUES.cleanClip]:cleanClip as Handler};
+    [QUEUES.inspectAds]:inspectAds as Handler,[QUEUES.renderRun]:renderRun as Handler,[QUEUES.renderVariant]:renderRun as Handler,[QUEUES.cleanClip]:cleanClip as Handler,[QUEUES.restoreAudio]:restoreAudio as Handler};
   try{const handler=handlers[task.queue];if(!handler)throw new Error('Неизвестное задание');
     const data=PAYLOADS[task.queue as QueueName].parse(task.payload);
     const output=await handler(ctx,data as never,{id:String(task.payload.batchId??task.jobId),log,cancelled:async()=>false});

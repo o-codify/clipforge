@@ -4,6 +4,7 @@ import {clips,games,runs,streamers,transcripts,vods,vodAudioSettings,vodAdSettin
 import {adProfileSchema,audioSignalsResultSchema,rectSchema,transcribeResultSchema} from '@clipforge/contracts';
 import {safeName,segmentKey,clipId,type Candidate} from '@clipforge/pipeline';
 import {join} from 'node:path';
+import {createHash} from 'node:crypto';
 import type {Context} from './context.js';
 import {applyFeedback} from './feedback.js';
 
@@ -77,6 +78,22 @@ export class MediaTaskRepository {
         // Clip proof was saved atomically with each accepted file. Finishing does not overwrite it.
         await db.update(runs).set({finishedAt:new Date()}).where(eq(runs.id,m.runId));return {};}
       case 'clip.get':return this.clip(z.object({id}).parse(input).id);
+      case 'original-audio.save': {
+        if(this.scope.queue!=='heavy.restore-audio')throw new Error('Операция недоступна');
+        const m=z.object({sourceClipId:id,id,runId:id,version:id,file:filename,sizeBytes:number.int().positive().max(1024**3)}).strict().parse(input);
+        if(!(this.scope.payload.clipIds as string[]).includes(m.sourceClipId))throw new Error('Клип не выбран для этого задания');
+        const source=await this.clip(m.sourceClipId),c=source.clip,r=source.run;
+        const version=createHash('sha256').update('original-audio-v1:'+m.sourceClipId).digest('hex').slice(0,12);
+        if(!c||!r||c.state==='blocked'||c.archivedAt||m.version!==version||m.id!==c.id+'_original_'+version)throw new Error('Исходный клип недоступен');
+        if((await this.clip(m.id)).clip)return {};
+        const mediaStorage=await this.assets(m.id),{createdAt,archivedAt,archiveReason,...copy}=c;
+        const oldProof=(r.settings.renderedClips as Record<string,Record<string,unknown>>|undefined)?.[c.id]??{};
+        const oldProtection=(oldProof.protection??{}) as Record<string,unknown>;
+        const proof={...oldProof,protection:{...oldProtection,audio:{method:'original',speechGated:false}}};
+        await db.insert(runs).values({id:m.runId,vodId:v.id,streamer:v.streamer,game:c.game,outDir:join(this.ctx.config.out,'remote',v.id,m.runId),version,candidates:1,finishedAt:new Date(),
+          settings:{...r.settings,jobId:this.reportId(),sourceClipId:c.id,selection:'original-audio',audioMode:'original',audioSettings:{mode:'original',source:'run'},testBatch:true,renderedClips:{[m.id]:proof}}});
+        await db.insert(clips).values({...copy,id:m.id,runId:m.runId,version,file:m.file,sizeBytes:m.sizeBytes,mediaStorage,state:'draft',blockedReason:null});return {};
+      }
       case 'clip.blocked':{const m=range.parse(input);return this.unblocked(m.start,m.end);}
       case 'clip.save': {const m=z.object({clip:clipSchema,proof:object}).parse(input),c=m.clip,r=await this.run(c.runId);
         if(c.vodId!==v.id||c.streamer!==v.streamer||c.end<=c.start||c.end>(v.duration??7*86400)+5||c.end-c.start>180||c.segmentKey!==segmentKey(v.id,c.start,c.end)||c.id!==clipId(v.id,c.segmentKey,c.version))throw new Error('Неверные границы или идентификатор клипа');

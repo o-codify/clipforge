@@ -15,6 +15,9 @@ export async function capacity(){
   const quota=v2quota||(Number(v1quota)>0?`${v1quota} ${v1period}`:''),limit=v2limit||v1limit,current=v2current||v1current;
   if(quota&&quota.split(' ')[0]!=='max'){const [q,p]=quota.split(' ').map(Number);if(q!>0&&p!>0)cpus=Math.min(cpus,q!/p!);}
   if(limit&&limit!=='max'&&Number(limit)>0){memory=Math.min(memory,Number(limit));used=Number(current)||used;}
+  const stats=await read('/sys/fs/cgroup/memory.stat')||await read('/sys/fs/cgroup/memory/memory.stat');
+  const reclaimable=Number(stats.match(/^(?:total_)?inactive_file\s+(\d+)$/m)?.[1]??0);
+  if(current)used=Math.max(0,used-reclaimable);
   return {cpus,memoryMb:Math.round(memory/1048576),usedMb:Math.round(used/1048576)};
 }
 

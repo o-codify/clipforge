@@ -6,6 +6,8 @@ import {join} from 'node:path';
 import {sql} from 'drizzle-orm';
 import {type Database} from '@clipforge/db';
 import {PAYLOADS,QUEUES,type QueueName} from '@clipforge/jobs';
+import {WORKER_PROFILES,type WorkerProfile} from '@clipforge/jobs/worker-profiles';
+import {CatalogTaskRepository} from '@clipforge/worker/catalog-task-repository';
 import {storageFromEnv,type MediaStorage} from '@clipforge/storage';
 import {MediaTaskRepository,type MediaTaskScope} from '@clipforge/worker/media-task-repository';
 import {z} from 'zod';
@@ -19,12 +21,11 @@ const fileId=z.string().regex(/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,219}$/).refine(s=>
 // One active assignment, batch size 1: 4 GiB for speech admission plus the
 // runtime, bounded media windows and a reserve. Users need not size each task.
 export const WORKER_PROFILE={cpu:2,memoryGb:6,downloadKbps:10000,uploadKbps:5000} as const;
-type Policy={cpu:number;memoryGb:number;downloadKbps:number;uploadKbps:number};
+type Policy={cpu:number;memoryGb:number;downloadKbps:number;uploadKbps:number;profile?:WorkerProfile};
 const resourcesSchema=z.object({allocation:z.object({cpus:z.number().positive().max(1024),memoryMb:z.number().positive().max(1048576),usedMb:z.number().nonnegative().max(1048576)}),
   freeGb:z.number().nonnegative().max(1000000),paused:z.boolean(),reason:z.string().max(100).nullable().optional(),memoryMb:z.number().nonnegative().optional(),
   cpuPercent:z.number().min(0).max(100).optional(),downloadKbps:z.number().nonnegative().optional(),uploadKbps:z.number().nonnegative().optional(),
   metrics:z.object({ownMemoryMb:z.number().nonnegative(),freeMb:z.number().nonnegative().optional(),totalMb:z.number().nonnegative().optional()}).optional()});
-const mediaQueues=Object.values(QUEUES).filter(q=>q.startsWith('heavy.')&&q!==QUEUES.prepareStreamer);
 type Lease=MediaTaskScope&{workerId:string;state:string};
 type Worker={workerId:string;policy:Policy};
 type Upload={id:string;clipId:string;kind:'video'|'poster';size:number;sha256:string;received:number;state:string;storageKey:string|null};
@@ -47,14 +48,15 @@ export class WorkerGatewayService implements OnModuleDestroy {
     if(!w)throw new UnauthorizedException('Доступ воркера отозван');return w;
   }
   async connect(raw:unknown){
-    const input=z.object({label:z.string().trim().min(1).max(80).default('Воркер')}).strict().parse(raw);
+    const input=z.object({label:z.string().trim().min(1).max(80).default('Воркер'),profile:z.enum(['catalog','speech','render','media']).default('media')}).strict().parse(raw);
+    const {queues,label:_,...limits}=WORKER_PROFILES[input.profile],policy={...limits,profile:input.profile};
     const token=randomBytes(32).toString('base64url'),id=randomUUID(),name='clipforge-'+id.slice(0,8),expiresAt=new Date(Date.now()+3600000);
     // Origin is configured by the platform; a request Host header cannot inject shell code.
     const origin=new URL(this.config.webOrigin).origin;if(!/^https?:\/\/[a-zA-Z0-9.:-]+$/.test(origin))throw new Error('Неверный адрес платформы');
-    await this.db.execute(sql`insert into remote_worker_enrollments(id,token_hash,label,policy,expires_at) values(${id}::uuid,${hash(token)},${input.label},${JSON.stringify(WORKER_PROFILE)}::jsonb,${expiresAt.toISOString()}::timestamptz)`);
+    await this.db.execute(sql`insert into remote_worker_enrollments(id,token_hash,label,policy,expires_at) values(${id}::uuid,${hash(token)},${input.label},${JSON.stringify(policy)}::jsonb,${expiresAt.toISOString()}::timestamptz)`);
     const launcher="fetch(process.argv[1]+'/api/worker-gateway/bootstrap').then(r=>{if(!r.ok)throw Error('Platform unavailable');return r.text()}).then(s=>require('fs').writeFileSync('/tmp/clipforge-bootstrap.cjs',s)).then(()=>require('/tmp/clipforge-bootstrap.cjs')).catch(()=>process.exit(1))";
-    const p=WORKER_PROFILE;
-    const command=`docker run -d --name ${name} --restart unless-stopped --init --cpus=${p.cpu} --cpu-shares=256 --memory=${p.memoryGb}g --memory-swap=${p.memoryGb}g --pids-limit=256 --mount source=${name},target=/storage node:22-bookworm-slim node -e "${launcher}" ${origin} ${token}`;
+    const p=policy;
+    const command=`docker run -d --name ${name} --restart unless-stopped --init --cpus=${p.cpu} --cpu-shares=128 --memory=${p.memoryGb*1024}m --memory-swap=${p.memoryGb*1024}m --pids-limit=128 --log-opt max-size=5m --log-opt max-file=2 --mount source=${name},target=/storage node:22-bookworm-slim node -e "${launcher}" ${origin} ${token}`;
     return {command,expiresAt,name};
   }
   async enroll(raw:unknown){
@@ -66,7 +68,7 @@ export class WorkerGatewayService implements OnModuleDestroy {
         if(!w)throw new UnauthorizedException('Ключ подключения уже использован');return {workerId:e.workerId,policy:e.policy};}
       if(!e.valid)throw new UnauthorizedException('Срок команды подключения истёк');
       const workerId='remote-'+e.id;
-      await tx.execute(sql`insert into worker_instances(id,label,host,role,queues,state) values(${workerId},${e.label},${m.host},'media',${JSON.stringify(mediaQueues)}::jsonb,'installing')`);
+      await tx.execute(sql`insert into worker_instances(id,label,host,role,queues,state) values(${workerId},${e.label},${m.host},'media',${JSON.stringify(WORKER_PROFILES[e.policy.profile??'media'].queues)}::jsonb,'installing')`);
       await tx.execute(sql`insert into remote_worker_auth(worker_id,secret_hash,policy) values(${workerId},${hash(m.secret)},${JSON.stringify(e.policy)}::jsonb)`);
       await tx.execute(sql`update remote_worker_enrollments set worker_id=${workerId} where id=${e.id}::uuid`);
       return {workerId,policy:e.policy};
@@ -85,7 +87,7 @@ export class WorkerGatewayService implements OnModuleDestroy {
     await this.db.execute(sql`update worker_instances set state='installing',heartbeat_at=now(),resources=${JSON.stringify({stage:m.stage})}::jsonb where id=${w.workerId}`);return {};}
   async heartbeat(auth:string|undefined,raw:unknown){const w=await this.identity(auth);
     const m=z.object({resources:resourcesSchema,leaseId:uid.nullable(),version:z.string().max(100)}).parse(raw);
-    const [r]=await this.db.execute<{draining:boolean}>(sql`update worker_instances set resources=${JSON.stringify(m.resources)}::jsonb,version=${m.version},state='online',heartbeat_at=now() where id=${w.workerId} returning draining`);
+    const [r]=await this.db.execute<{draining:boolean}>(sql`update worker_instances set resources=${JSON.stringify(m.resources)}::jsonb,queues=${JSON.stringify(WORKER_PROFILES[w.policy.profile??'media'].queues)}::jsonb,version=${m.version},state='online',heartbeat_at=now() where id=${w.workerId} returning draining`);
     let accepted=!m.leaseId;
     if(m.leaseId){await this.db.transaction(async tx=>{
       const [lease]=await tx.execute<{jobId:string}>(sql`update remote_worker_leases l set expires_at=now()+interval '75 seconds'
@@ -125,18 +127,31 @@ export class WorkerGatewayService implements OnModuleDestroy {
       const parsed=resourcesSchema.safeParse(worker?.resources);
       if(!worker||worker.draining||!worker.fresh||!parsed.success||parsed.data.paused||(process.env.RELEASE_SHA&&worker.version!==process.env.RELEASE_SHA))return null;
       const resources=parsed.data;
-      if(resources.freeGb<4||resources.allocation.memoryMb-resources.allocation.usedMb<Math.max(256,resources.allocation.memoryMb*.1))return null;
+      const profile=w.policy.profile??'media',catalog=profile==='catalog',queues=WORKER_PROFILES[profile].queues;
+      if(resources.freeGb<(catalog ? .25 : 4)||resources.allocation.memoryMb-resources.allocation.usedMb<Math.max(catalog?32:256,resources.allocation.memoryMb*.1))return null;
       const [active]=await tx.execute(sql`select 1 from remote_worker_leases where worker_id=${w.workerId} and state='active'`);if(active)return null;
       const candidates=await tx.execute<{id:string;name:QueueName;data:Record<string,unknown>}>(sql`select j.id::text,j.name,j.data from jobs.job j
-        where j.name in (${sql.join(mediaQueues.map(q=>sql`${q}`),sql`,`)}) and j.state in ('created','retry') and j.start_after<now()
-        and coalesce(j.policy,'standard')='standard' and j.data->>'vodId' is not null
+        where j.name in (${sql.join(queues.map(q=>sql`${q}`),sql`,`)}) and j.state in ('created','retry') and j.start_after<now()
+        and coalesce(j.policy,'standard')='standard' and (j.data->>'vodId' is not null or j.name=${QUEUES.indexChannel})
+        and not exists(select 1 from remote_worker_leases l where l.queue=j.name and l.payload->>'login'=j.data->>'login' and l.state='active')
         and not exists(select 1 from remote_worker_leases l where l.vod_id=j.data->>'vodId' and l.state='active')
         and not exists(select 1 from jobs.job other where other.id<>j.id and other.state='active' and other.name like 'heavy.%' and other.data->>'vodId'=j.data->>'vodId')
         and (j.data->>'batchId' is null or exists(select 1 from jobs.job p where p.id=(j.data->>'batchId')::uuid and p.state='active'))
-        order by j.priority desc,j.created_on,j.id limit 20 for update skip locked`);
+        order by j.priority desc,case when j.name=${QUEUES.transcribeVod} then 0 when j.name in (${QUEUES.pipeline},${QUEUES.preparePreview},${QUEUES.prepareBatchVod}) then 1 else 2 end,j.created_on,j.id limit 20 for update skip locked`);
       for(const job of candidates){
-        const data=PAYLOADS[job.name].parse(job.data) as Record<string,unknown>,vodId=String(data.vodId);if(!/^v[0-9]+$/.test(vodId))continue;
-        const [lock]=await tx.execute<{ok:boolean}>(sql`select pg_try_advisory_xact_lock(hashtextextended(${'vod:'+vodId},0)) as ok`);if(!lock?.ok)continue;
+        const data=PAYLOADS[job.name].parse(job.data) as Record<string,unknown>,vodId=catalog?null:String(data.vodId);if(!catalog&&!/^v[0-9]+$/.test(vodId!))continue;
+        const [lock]=await tx.execute<{ok:boolean}>(sql`select pg_try_advisory_xact_lock(hashtextextended(${catalog?'catalog:'+String(data.login):'vod:'+vodId},0)) as ok`);if(!lock?.ok)continue;
+        if(catalog&&(await tx.execute(sql`select 1 from remote_worker_leases where queue=${job.name} and payload->>'login'=${String(data.login)} and state='active'`)).length)continue;
+        if(profile==='media'){
+          const [specialist]=await tx.execute(sql`select 1 from worker_instances s join remote_worker_auth a on a.worker_id=s.id
+            where s.id<>${w.workerId} and a.revoked_at is null and a.policy->>'profile' in ('speech','render')
+            and s.queues ? ${job.name} and s.state='online' and not s.draining and s.heartbeat_at>now()-interval '30 seconds'
+            and s.version=${worker.version} and s.resources->>'paused'='false'
+            and coalesce((s.resources->>'freeGb')::float,0)>=4
+            and coalesce((s.resources#>>'{allocation,memoryMb}')::float,0)-coalesce((s.resources#>>'{allocation,usedMb}')::float,0)>=256
+            and not exists(select 1 from remote_worker_leases l where l.worker_id=s.id and l.state='active') limit 1`);
+          if(specialist)continue;
+        }
         const [busy]=await tx.execute(sql`select 1 from remote_worker_leases where vod_id=${vodId} and state='active'`);if(busy)continue;
         const needsSpeech=[QUEUES.pipeline,QUEUES.preparePreview,QUEUES.prepareBatchVod,QUEUES.transcribeVod].includes(job.name as never);
         const speechModel=process.env.SPEECH_MODEL??'large-v3',headroom=/large/.test(speechModel)?4608:2048;
@@ -151,7 +166,8 @@ export class WorkerGatewayService implements OnModuleDestroy {
     });
   }
   async operation(auth:string|undefined,leaseId:string,raw:unknown){const m=z.object({operation:z.string().max(50),input:z.unknown()}).strict().parse(raw);
-    return this.withLease(auth,leaseId,repo=>repo.call(m.operation,m.input));}
+    return this.withLease(auth,leaseId,(repo,db,scope)=>scope.queue===QUEUES.indexChannel
+      ?new CatalogTaskRepository(db,scope).call(m.operation,m.input):repo.call(m.operation,m.input));}
   async progress(auth:string|undefined,leaseId:string,raw:unknown){const m=z.object({messages:z.array(z.string().max(500)).max(30)}).parse(raw);
     return this.withLease(auth,leaseId,async(_,db,l)=>{
       const last=m.messages.at(-1);if(last)await db.execute(sql`update worker_jobs set stage=${last},heartbeat_at=now() where job_id=${l.jobId}::uuid and worker_id=${l.workerId}`);
@@ -195,7 +211,7 @@ export class WorkerGatewayService implements OnModuleDestroy {
     const m=z.object({clipId:fileId,kind:z.enum(['video','poster']),size:z.number().int().positive().max(1024**3),sha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(raw);
     if(m.kind==='poster'&&m.size>2*1024**2)throw new BadRequestException('Слишком большая обложка');
     return this.withLease(auth,leaseId,async(_,db,l)=>{
-      if(!m.clipId.startsWith(l.vodId+'_'))throw new BadRequestException('Файл не относится к заданному эфиру');
+      if(!l.vodId||!m.clipId.startsWith(l.vodId+'_'))throw new BadRequestException('Файл не относится к заданному эфиру');
       const [count]=await db.execute<{n:number}>(sql`select count(*)::int n from remote_worker_uploads where lease_id=${leaseId}::uuid`);if((count?.n??0)>=1000)throw new BadRequestException('Слишком много файлов');
       await db.execute(sql`insert into remote_worker_uploads(id,lease_id,clip_id,kind,size,sha256) values(${randomUUID()}::uuid,${leaseId}::uuid,${m.clipId},${m.kind},${m.size},${m.sha256}) on conflict(lease_id,clip_id,kind) do nothing`);
       const [u]=await db.execute<Upload>(sql`select ${uploadColumns} from remote_worker_uploads where lease_id=${leaseId}::uuid and clip_id=${m.clipId} and kind=${m.kind}`);

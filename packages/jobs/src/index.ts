@@ -48,6 +48,7 @@ export const QUEUES = {
   renderVariant: "heavy.render-variant",
   cleanClip: "heavy.clean-clip",
   inspectAds: "heavy.inspect-ads",
+  restoreAudio: "heavy.restore-audio",
 
   /**
    * Публикация клипа на площадку. Лёгкая очередь: загрузка ждёт сеть,
@@ -173,6 +174,7 @@ export const PAYLOADS = {
   [QUEUES.refreshYoutube]: refreshYoutubePayload,
   [QUEUES.cleanClip]: cleanClipPayload,
   [QUEUES.inspectAds]: z.object({vodId:z.string().min(1)}),
+  [QUEUES.restoreAudio]: z.object({vodId:z.string().min(1),clipIds:z.array(z.string().min(1)).min(1).max(100).refine(ids=>new Set(ids).size===ids.length)}).strict(),
 } as const;
 
 export type PayloadOf<Q extends QueueName> = z.infer<(typeof PAYLOADS)[Q]>;

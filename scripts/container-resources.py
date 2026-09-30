@@ -58,10 +58,12 @@ def main():
     for name in ('data', 'out', 'models'):
         (storage / name).mkdir(parents=True, exist_ok=True)
     # Small licensed model files ship with the image; a named volume caches them.
-    shutil.copytree(Path(os.getenv('MEDIA_BUNDLE_ROOT', '/app')) / 'models', storage / 'models', dirs_exist_ok=True)
+    catalog = os.getenv('WORKER_PROFILE') == 'catalog'
+    if not catalog:
+        shutil.copytree(Path(os.getenv('MEDIA_BUNDLE_ROOT', '/app')) / 'models', storage / 'models', dirs_exist_ok=True)
     memory, cpus = limits()
-    reserve = max(256 * 1048576, memory * .1)
-    if memory < 2 * 1024**3:
+    reserve = max((32 if catalog else 256) * 1048576, memory * .1)
+    if memory < (256 * 1048576 if catalog else 2 * 1024**3):
         raise RuntimeError('Insufficient container memory; use the connection command issued by the platform')
     state_file = storage / 'resources.json'
     env = dict(os.environ, MEDIA_RESOURCE_STATE=str(state_file),

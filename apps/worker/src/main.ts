@@ -245,7 +245,17 @@ async function main(): Promise<void> {
           activeHeavy.delete(job.id);
           await registry.finish(job.id);
         }
-  },async heavy=>!registry.draining&&(!heavy||diskAvailable&&!resourceState().paused),ctx.log);
+  },async (heavy,queue)=>{
+    if(registry.draining||heavy&&(!diskAvailable||resourceState().paused))return false;
+    if(queue===QUEUES.indexChannel){
+      const [remote]=await ctx.db.execute(sql`select 1 from worker_instances w join remote_worker_auth a on a.worker_id=w.id
+        where a.revoked_at is null and a.policy->>'profile'='catalog' and w.state='online' and not w.draining
+        and w.heartbeat_at>now()-interval '30 seconds' and w.resources->>'paused'='false'
+        and w.version=${process.env.RELEASE_SHA??'local'} limit 1`);
+      if(remote)return false;
+    }
+    return true;
+  },ctx.log);
   const recoveryTimer=setInterval(()=>void recoverWorkers(ctx.db,boss).catch(e=>ctx.log(String(e))),30000);
 
   ctx.log(`очередей обслуживается: ${Object.keys(handlers).length}`);

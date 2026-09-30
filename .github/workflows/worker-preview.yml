@@ -37,6 +37,13 @@ jobs:
         env:
           CLIPFORGE_TEST_DB_URL: postgres://clipforge:fixture@127.0.0.1:5432/postgres
       - run: node scripts/build-worker-bundle.mjs
+      - name: Verify original sound with a real media fixture
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg && node --test apps/worker/test/original-audio.test.mjs
+      - name: Verify the small catalog worker
+        env:
+          CLIPFORGE_TEST_DB_URL: postgres://clipforge:fixture@127.0.0.1:5432/postgres
+          CLIPFORGE_REMOTE_CATALOG_TEST: '1'
+        run: node apps/api/test/remote-workers.isolated.mjs
       - name: Verify two workers using the exact platform-generated Docker command
         env:
           CLIPFORGE_TEST_DB_URL: postgres://clipforge:fixture@127.0.0.1:5432/postgres

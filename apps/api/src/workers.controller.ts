@@ -17,6 +17,7 @@ export class WorkersController {
   async list(){
     const rows=await this.db.execute(sql`select w.id,w.label,w.host,w.role,w.queues,w.resources,w.draining,w.version,
       exists(select 1 from remote_worker_auth a where a.worker_id=w.id) as remote,
+      (select coalesce(a.policy->>'profile','media') from remote_worker_auth a where a.worker_id=w.id) as profile,
       w.started_at as "startedAt",w.heartbeat_at as "heartbeatAt",
       case when w.state='revoked' then 'revoked' when w.heartbeat_at<now()-interval '40 seconds' then 'offline' else w.state end as state,
       coalesce((select jsonb_agg(jsonb_build_object('id',j.id,'name',j.name,'stage',x.stage,

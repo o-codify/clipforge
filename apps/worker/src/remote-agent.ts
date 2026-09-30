@@ -32,7 +32,7 @@ async function main(){
     if(!active&&Date.now()-lastContact<15000){try{
       const task=await client.request<Assignment|null>('next',{});if(task){active=task;result=null;lastContact=Date.now();
         const file=join(storage,'tasks',task.leaseId+'.json');await writeFile(file,JSON.stringify(task),{mode:0o600});
-        child=fork(join(root,'remote-task.mjs'),[file],{cwd:root,detached:process.platform!=='win32',...{windowsHide:true},stdio:['ignore','inherit','inherit','ipc'],env:{...process.env,WORKER_FLEET:'true',WORKER_ROLE:'media'}});
+        child=fork(join(root,task.queue==='light.index-channel'?'remote-light-task.mjs':'remote-task.mjs'),[file],{cwd:root,detached:process.platform!=='win32',...{windowsHide:true},stdio:['ignore','inherit','inherit','ipc'],env:{...process.env,WORKER_FLEET:'true',WORKER_ROLE:'media'}});
         child.on('message',(value:unknown)=>{const m=value as {type:string;message?:string;ok:boolean;output?:Record<string,unknown>;error?:string};if(active?.leaseId!==task.leaseId)return;
           if(m.type==='progress'&&m.message){messages.push(m.message.slice(0,500));if(messages.length>30)messages.shift();}
           if(m.type==='result')result={ok:m.ok,output:m.output??{},...(m.error?{error:m.error}:{})};});

@@ -18,6 +18,7 @@ pnpm cf streamer-audio <login> --audio original|dtln|dtln-gated
                                         звук новых клипов всех эфиров стримера
 pnpm cf vod-audio <vodId> --audio inherit|original|dtln|dtln-gated
                                         звук новых клипов конкретного эфира
+pnpm cf original-audio <vodId> --clips id,id
 pnpm cf render <vodId> [--count 1] [--fresh] [--audio dtln] [--test-batch]
                                         создать клип; --fresh выбирает другой момент
                                         --test-batch: до 100 разных черновиков даже в режиме разработки
@@ -62,7 +63,7 @@ export function parseCommand(args:string[]) {
     help:{type:'boolean'},url:{type:'string'},streamer:{type:'string'},page:{type:'string'},limit:{type:'string'},
     metadata:{type:'string'},regions:{type:'string'},timeout:{type:'string'},
     count:{type:'string'},fresh:{type:'boolean'},audio:{type:'string'},'test-batch':{type:'boolean'},
-    ads:{type:'string'},all:{type:'boolean'},vods:{type:'string'},
+    ads:{type:'string'},all:{type:'boolean'},vods:{type:'string'},clips:{type:'string'},
     channel:{type:'string'},interval:{type:'string'},'daily-limit':{type:'string'},
   }});
 }
@@ -82,10 +83,10 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
   const options=parsed.values;
   const noTarget=['accounts','clips','analytics','jobs','active','batch-publications'];
   const optionalTarget=['youtube-check','refresh'];
-  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','streamer-ads','vod-ads','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','resume-batch','wait','cleanup','inspect-ads','approve-clip','draft-clip','pace-batch','pause-batch'];
+  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','streamer-ads','vod-ads','original-audio','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','resume-batch','wait','cleanup','inspect-ads','approve-clip','draft-clip','pace-batch','pause-batch'];
   if(!command||![...noTarget,...optionalTarget,...targets].includes(command))throw new Error('Неизвестная команда. Используйте pnpm cf --help');
   if(extra.length||(noTarget.includes(command)&&target)||(targets.includes(command)&&!target))throw new Error('Неверное число аргументов команды');
-  const allowed:Record<string,string[]>={clips:['streamer','limit'],render:['count','fresh','audio','test-batch'],prepare:['count','audio'],'prepare-streamer':['count','audio','vods'],'streamer-ads':['ads','all'],'vod-ads':['ads'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
+  const allowed:Record<string,string[]>={clips:['streamer','limit'],'original-audio':['clips'],render:['count','fresh','audio','test-batch'],prepare:['count','audio'],'prepare-streamer':['count','audio','vods'],'streamer-ads':['ads','all'],'vod-ads':['ads'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
   allowed['pace-batch']=['channel','interval','daily-limit'];
   for(const key of Object.keys(options))if(!['url','help',...(allowed[command]??[])].includes(key))throw new Error(`Параметр --${key} не относится к команде ${command}`);
   const id=encodeURIComponent(target??'');
@@ -118,6 +119,11 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
       const modes=command==='vod-audio'?['original','dtln','dtln-gated','inherit']:['original','dtln','dtln-gated'];
       if(!options.audio||!modes.includes(options.audio))throw new Error('--audio: '+modes.join(', '));
       return {path:`/api/${command==='vod-audio'?'vods':'streamers'}/${id}/audio`,method:'POST',body:{audioMode:options.audio==='inherit'?null:options.audio}};
+    }
+    case 'original-audio': {
+      const clipIds=options.clips?.split(',').map(s=>s.trim());
+      if(!clipIds?.length||clipIds.length>100||clipIds.some(s=>!s))throw new Error('--clips: идентификаторы клипов через запятую');
+      return {path:`/api/jobs/original-audio/${id}`,method:'POST',body:{clipIds}};
     }
     case 'render': {
       if(options.audio&&!['original','dtln','dtln-gated'].includes(options.audio))throw new Error('--audio: original или dtln');

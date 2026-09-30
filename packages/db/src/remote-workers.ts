@@ -14,6 +14,8 @@ export async function upgradeRemoteWorkers(db:Database){
     state text not null default 'active', expires_at timestamptz not null,
     created_at timestamptz not null default now(), finished_at timestamptz)`);
   await db.execute(sql`create unique index if not exists remote_lease_job_active on remote_worker_leases(job_id) where state='active'`);
+  await db.execute(sql`alter table remote_worker_leases alter column vod_id drop not null`);
+  await db.execute(sql`create unique index if not exists remote_lease_catalog_active on remote_worker_leases(queue,(payload->>'login')) where state='active' and vod_id is null`);
   await db.execute(sql`create unique index if not exists remote_lease_vod_active on remote_worker_leases(vod_id) where state='active'`);
   await db.execute(sql`create unique index if not exists remote_lease_worker_active on remote_worker_leases(worker_id) where state='active'`);
   await db.execute(sql`create table if not exists remote_worker_uploads (

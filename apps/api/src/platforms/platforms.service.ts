@@ -69,7 +69,7 @@ export class PlatformsService {
   }
 
   async batches() {
-    return this.db.execute(sql`select r.value as policy, j.state as "jobState",(j.data->>'count')::int as target,
+    return this.db.execute(sql`select r.value as policy, j.state as "jobState",coalesce((j.data->>'count')::int,jsonb_array_length(j.data->'clipIds')) as target,
       (select count(*)::int from publications u where u.platform='youtube' and u.account=r.value->>'channelId' and u.created_at>now()-interval '24 hours') as "attempts24h",
       (select count(*)::int from clips c join runs n on n.id=c.run_id
         where n.settings->>'jobId'=r.value->>'jobId' and c.archived_at is null and c.state<>'blocked') as ready,
@@ -82,7 +82,8 @@ export class PlatformsService {
   async configureBatch(id:string,options:Pick<BatchPublicationPolicy,'enabled'|'channelId'|'intervalMinutes'|'dailyLimit'|'privacy'>) {
     return this.db.transaction(async tx=>{
       await tx.execute(sql`select pg_advisory_xact_lock(740025)`);
-      const [job]=await tx.execute<{data:{login:string};state:string}>(sql`select data,state from jobs.job where id=${id}::uuid and name=${QUEUES.prepareStreamer}`);
+      const [job]=await tx.execute<{data:{login:string};state:string}>(sql`select j.data||jsonb_build_object('login',coalesce(j.data->>'login',v.streamer)) as data,j.state from jobs.job j
+        left join vods v on v.id=j.data->>'vodId' where j.id=${id}::uuid and j.name in (${QUEUES.prepareStreamer},${QUEUES.restoreAudio})`);
       if(!job) throw new NotFoundException('Подборка не найдена');
       if(options.enabled&&job.state==='cancelled')throw new BadRequestException('Подборка отменена');
       const key=batchPublicationKey(id);

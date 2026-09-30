@@ -9,7 +9,7 @@ import {resolve,join} from 'node:path';
 // never include .env files, API handlers, YouTube clients or database credentials.
 const root=resolve('.'),out=resolve(process.env.WORKER_BUNDLE_BUILD??'.worker-bundle');
 await mkdir(out,{recursive:true});
-for(const name of ['remote-agent','remote-task'])await build({entryPoints:[`apps/worker/src/${name}.ts`],outfile:join(out,name+'.mjs'),bundle:true,platform:'node',format:'esm',target:'node22',
+for(const name of ['remote-agent','remote-task','remote-light-task'])await build({entryPoints:[`apps/worker/src/${name}.ts`],outfile:join(out,name+'.mjs'),bundle:true,platform:'node',format:'esm',target:'node22',
   banner:{js:"import {createRequire as __cfRequire} from 'node:module'; const require=__cfRequire(import.meta.url);"},logLevel:'warning'});
 for(const name of ['container-resources.py','setup-media-protection.py','install-worker-deps.py']){
   await mkdir(join(out,'scripts'),{recursive:true});await cp(join(root,'scripts',name),join(out,'scripts',name));

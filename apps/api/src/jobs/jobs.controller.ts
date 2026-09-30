@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query } from "@nestjs/common";
-import { QUEUES, cleanClipPayload, renderRunPayload, preparePreviewPayload, prepareStreamerPayload } from "@clipforge/jobs";
+import { QUEUES, PAYLOADS, cleanClipPayload, renderRunPayload, preparePreviewPayload, prepareStreamerPayload } from "@clipforge/jobs";
 import { z } from "zod";
 
 import { AdminOnly, CurrentViewer } from "../auth/auth.guard.js";
@@ -22,6 +22,15 @@ export class JobsController {
   @Get("active")
   active(@CurrentViewer() viewer: Viewer) {
     return this.jobs.active(viewer);
+  }
+
+  @AdminOnly()
+  @Post('original-audio/:vodId')
+  async originalAudio(@CurrentViewer() viewer:Viewer,@Param('vodId') vodId:string,@Body() body:unknown){
+    const input=PAYLOADS[QUEUES.restoreAudio].parse({...z.record(z.unknown()).parse(body??{}),vodId});
+    await this.catalog.vod(viewer,vodId);
+    for(const id of input.clipIds){const clip=await this.catalog.clip(viewer,id);if(clip.vodId!==vodId)throw new BadRequestException('Клипы должны относиться к выбранному эфиру');}
+    return this.jobs.enqueue(QUEUES.restoreAudio,input);
   }
 
   @AdminOnly()
