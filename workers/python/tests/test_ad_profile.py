@@ -1,12 +1,14 @@
 import json
+import io
 from contextlib import nullcontext
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 import cv2
 import numpy as np
-from clipforge_worker.ad_profile import profile_ads, source_info, validate_vision, covered_by, persistent_regions, SAMPLES
+from clipforge_worker.ad_profile import profile_ads, source_info, validate_vision, covered_by, persistent_regions, request, SAMPLES
 from clipforge_worker.__main__ import op_prepare_media
 
 
@@ -15,6 +17,17 @@ class Reporter:
 
 
 class AdProfileTest(unittest.TestCase):
+    def test_local_engine_error_preserves_reason_and_never_returns_a_clean_result(self):
+        for body, expected in [(b'{"error":"model requires more memory"}', 'model requires more memory'),
+                               (b'runner stopped', 'runner stopped'),
+                               (b'[]', '[]')]:
+            error = HTTPError('http://127.0.0.1:1/api/chat', 500, 'Internal Server Error', {}, io.BytesIO(body))
+            with self.subTest(body=body), patch('clipforge_worker.ad_profile.urlopen', side_effect=error):
+                with self.assertRaises(RuntimeError) as caught:
+                    request(1, 'chat', {})
+                self.assertIn('HTTP 500', str(caught.exception))
+                self.assertIn(expected, str(caught.exception))
+
     def source(self, root):
         file = root/'source.avi'
         writer = cv2.VideoWriter(str(file),cv2.VideoWriter_fourcc(*'MJPG'),10,(640,360))

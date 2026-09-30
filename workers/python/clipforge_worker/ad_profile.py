@@ -15,6 +15,7 @@ import socket
 import subprocess
 import time
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 import cv2
 from .ads import detect_frame, merge_regions, rectangle
@@ -53,8 +54,18 @@ def request(port, route, payload=None, timeout=600):
     req = Request(f'http://127.0.0.1:{port}/api/{route}',
         data=json.dumps(payload).encode() if payload is not None else None,
         headers={'Content-Type': 'application/json'})
-    with urlopen(req, timeout=timeout) as response:
-        return json.load(response)
+    try:
+        with urlopen(req, timeout=timeout) as response:
+            return json.load(response)
+    except HTTPError as error:
+        # Preserve the local engine's reason (e.g. model allocation failure),
+        # rather than reducing every failure to an unhelpful HTTP 500.
+        detail = error.read(4096).decode('utf-8', errors='replace')
+        try:
+            detail = str(json.loads(detail).get('error', detail))
+        except (ValueError, AttributeError):
+            pass
+        raise RuntimeError(f'Локальная проверка рекламы: HTTP {error.code}: {detail}') from error
 
 
 @contextmanager
@@ -113,7 +124,9 @@ def analyze_frame(port, image):
         'messages': [{'role': 'user', 'content': PROMPT,
             'images': [base64.b64encode(image.read_bytes()).decode()]}]})
     if not response.get('done') or response.get('done_reason') == 'length':
-        raise ValueError('Проверка кадра не завершена')
+        raise ValueError(f"Проверка кадра не завершена: done={response.get('done')}, "
+            f"reason={response.get('done_reason')}, prompt={response.get('prompt_eval_count')}, "
+            f"generated={response.get('eval_count')}")
     result = json.loads(response['message']['content'])
     validate_vision(result)
     return result
