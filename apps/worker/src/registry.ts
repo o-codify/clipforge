@@ -24,6 +24,9 @@ export class WorkerRegistry {
   draining=false;
   constructor(private readonly db:Database) {if(!/^[\w.:-]{1,128}$/.test(this.id))throw new Error('Некорректный WORKER_ID');}
   async register(role:string,queues:string[]){
+    // A fixed cutover prevents legacy recovery from touching jobs fetched by
+    // this generation in the brief interval before their owner is recorded.
+    await this.db.execute(sql`insert into platform_runtime(key,value) values('worker-fleet-cutover',jsonb_build_object('at',now())) on conflict(key) do nothing`);
     await this.db.execute(sql`insert into worker_instances(id,label,host,role,queues,version)
       values(${this.id},${this.label},${hostname()},${role},${JSON.stringify(queues)}::jsonb,${process.env.RELEASE_SHA??'local'})
       on conflict(id) do update set label=excluded.label,host=excluded.host,role=excluded.role,queues=excluded.queues,version=excluded.version,state='online',started_at=now(),heartbeat_at=now()`);
@@ -42,6 +45,18 @@ export class WorkerRegistry {
 
 /** A stale timestamp alone is insufficient: the owning process must have lost its session lease. */
 export async function recoverWorkers(db:Database,boss:Pick<PgBoss,'fail'>){
+  const legacyConnection=await db.sql.reserve();let legacyLock=false;
+  try{
+    // Old media processes held this lock exclusively. Shared acquisition is
+    // proof that they have stopped, including during a rolling server update.
+    legacyLock=!!(await legacyConnection`select pg_try_advisory_lock_shared(740023) as ok`)[0]?.ok;
+    if(legacyLock)await legacyConnection`update jobs.job j set state='retry',start_after=now(),completed_on=null,
+      retry_limit=greatest(retry_limit,retry_count+1),output='{"message":"Продолжение после обновления воркера"}'::jsonb
+      where j.state='active' and j.name like 'heavy.%'
+      and j.started_on<(select (value->>'at')::timestamptz from platform_runtime where key='worker-fleet-cutover')
+      and not exists(select 1 from worker_jobs w where w.job_id=j.id)
+      and not exists(select 1 from remote_worker_leases l where l.job_id=j.id)`;
+  }finally{try{if(legacyLock)await legacyConnection`select pg_advisory_unlock_shared(740023)`;}finally{legacyConnection.release();}}
   const stale=await db.execute<{id:string}>(sql`select id from worker_instances where heartbeat_at<now()-interval '60 seconds'
     and not exists(select 1 from remote_worker_auth a where a.worker_id=worker_instances.id)
     and exists(select 1 from worker_jobs w where w.worker_id=worker_instances.id and w.finished_at is null

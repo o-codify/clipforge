@@ -114,6 +114,16 @@ try{
   await lease`select pg_advisory_unlock(hashtextextended('worker:qa-worker-a',0))`;lease.release();
   await recoverWorkers(db,boss);assert.equal((await boss.getJobById(staleQueue,lost.id)).state,'retry');
 
+  // A rolling upgrade must preserve the old media batch until its exclusive
+  // process lease is gone, then continue the same job/checkpoints immediately.
+  const legacyQueue='heavy.qa-legacy';await boss.createQueue(legacyQueue);
+  await boss.send(legacyQueue,{}, {retryLimit:0});const [legacyJob]=await boss.fetch(legacyQueue);
+  await db.sql`update jobs.job set started_on='2000-01-01' where id=${legacyJob.id}`;
+  const oldMedia=await db.sql.reserve();await oldMedia`select pg_advisory_lock(740023)`;
+  await recoverWorkers(db,boss);assert.equal((await boss.getJobById(legacyQueue,legacyJob.id)).state,'active');
+  await oldMedia`select pg_advisory_unlock(740023)`;oldMedia.release();
+  await recoverWorkers(db,boss);assert.equal((await boss.getJobById(legacyQueue,legacyJob.id)).state,'retry');
+
   await runtimeValue(db,'youtube-quota',{state:'ok',remaining:1,start:new Date(Date.now()-3600000).toISOString(),resetAt:new Date(Date.now()+3600000).toISOString()});
   const admits=await Promise.allSettled([reserveUpload(db,'UCqa','p1'),reserveUpload(db,'UCqa','p2')]);
   assert.equal(admits.filter(x=>x.status==='fulfilled').length,1);assert.match(admits.find(x=>x.status==='rejected').reason.message,/quota-wait/);
