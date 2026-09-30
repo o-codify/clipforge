@@ -142,6 +142,7 @@ export const JOB_LABELS: Record<string, string> = {
   "heavy.render-run": "Рендер",
   "heavy.render-variant": "Монтаж клипов",
   "heavy.clean-clip": "Скрытие QR-кодов и рекламы",
+  "heavy.restore-audio": "Восстановление исходного звука",
   "heavy.inspect-ads": "Проверка рекламы эфира",
   "light.index-channel": "Обход архивов",
   "light.fetch-vod-info": "Метаданные",

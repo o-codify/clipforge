@@ -32,7 +32,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc -b apps/api apps/worker
       - run: pnpm --filter @clipforge/web typecheck
-      - run: node --test packages/youtube/test/source.test.mjs packages/youtube/test/quota.test.mjs apps/worker/test/batch-publication.test.mjs apps/api/test/resume-batch.test.mjs
+      - run: node --test packages/youtube/test/source.test.mjs packages/youtube/test/quota.test.mjs apps/worker/test/batch-publication.test.mjs apps/worker/test/remote-download.test.mjs apps/api/test/resume-batch.test.mjs
       - run: node apps/api/test/workspace-fleet.isolated.mjs
         env:
           CLIPFORGE_TEST_DB_URL: postgres://clipforge:fixture@127.0.0.1:5432/postgres

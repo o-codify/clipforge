@@ -51,10 +51,15 @@ export class RemoteTaskAccess implements RemoteMediaAccess {
   }
   async downloadClip(id:string,file:string){
     await waitForResources();await mkdir(dirname(file),{recursive:true});
+    // Proxies may stream the response without Content-Length. Validate against
+    // the platform's scoped clip record, which describes the decoded media.
+    const {clip}=await this.call<{clip:{sizeBytes:number}|null}>('clip.get',{id});
+    const expected=clip?.sizeBytes;
+    if(!expected||!Number.isSafeInteger(expected)||expected<1)throw new Error('Не удалось проверить размер исходного клипа');
     const response=await fetch(this.client.url(this.path(`source/${encodeURIComponent(id)}`)),{headers:{authorization:`Bearer ${this.client.identity.secret}`},signal:AbortSignal.timeout(600000),redirect:'error'});
     if(!response.ok||!response.body)throw new Error('Платформа не передала исходный клип');
     await pipeline(pacedStream(Readable.fromWeb(response.body as never),'download',this.assignment.policy.downloadKbps*125),createWriteStream(file+'.part'));
-    if((await stat(file+'.part')).size!==Number(response.headers.get('content-length')))throw new Error('Клип передан не полностью');
+    if((await stat(file+'.part')).size!==expected)throw new Error('Клип передан не полностью');
     await rename(file+'.part',file);
   }
 }
