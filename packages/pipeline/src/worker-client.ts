@@ -55,12 +55,26 @@ export class WorkerError extends Error {
   }
 }
 
+/** Admission headroom above the OS reserve, not a fixed process memory cap.
+ * A cold model must fit before loading; otherwise governor preemption would
+ * repeatedly load and discard it while the user's apps need that memory. */
+export function speechHeadroomMb(model:string,warmModel?:string):number {
+  if(model===warmModel)return 256;
+  if(model.includes('turbo'))return 2304;
+  if(model==='tiny'||model==='tiny.en')return 512;
+  if(model==='base'||model==='base.en')return 768;
+  if(model==='small'||model==='small.en')return 1536;
+  if(model==='medium'||model==='medium.en')return 3072;
+  return 4096;
+}
+
 export class PythonWorker {
   private child?: ChildProcessWithoutNullStreams;
   private reader?: Interface;
   private readonly pending = new Map<string, Pending>();
   /** Очередь: воркер обрабатывает задания по одному. */
   private chain: Promise<unknown> = Promise.resolve();
+  private speechModel?:string;
 
   constructor(private readonly options: WorkerClientOptions) {}
 
@@ -100,6 +114,7 @@ export class PythonWorker {
         this.pending.delete(id);
       }
       this.child = undefined;
+      this.speechModel = undefined;
     });
 
     return child;
@@ -154,14 +169,15 @@ export class PythonWorker {
   async call<K extends WorkerOp>(
     op: K,
     params: unknown,
-    hooks: { onEvent?: (event: WorkerEvent) => void } = {},
+    hooks: { onEvent?: (event: WorkerEvent) => void; cancelled?:()=>Promise<boolean> } = {},
   ): Promise<ReturnType<(typeof workerOps)[K]["result"]["parse"]>> {
     const spec = workerOps[op];
     const parsedParams = spec.params.parse(params ?? {});
 
     const run = async () => {
       for (;;) {
-      await waitForResources();
+      const model=op==='transcribe'?String((parsedParams as {model?:string}).model??'large-v3'):undefined;
+      await waitForResources(hooks.cancelled,model?speechHeadroomMb(model,this.speechModel):0);
       const child = this.start();
       const id = randomUUID();
 
@@ -182,7 +198,9 @@ export class PythonWorker {
         child.stdin.write(`${JSON.stringify({ id, op, params: parsedParams })}\n`);
       });
 
-      return spec.result.parse(raw);
+      const result=spec.result.parse(raw);
+      if(model)this.speechModel=model;
+      return result;
       } catch (error) {
         if (!(error instanceof WorkerError) || error.type !== 'ResourcePreempted') throw error;
       }

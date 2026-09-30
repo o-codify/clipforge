@@ -21,7 +21,7 @@ export async function preparePreview(ctx:Context,payload:Parameters<typeof runPi
   const result=await ctx.python.call('transcribe',{
     audio:source.audio,model:ctx.config.speechModel,language:ctx.config.speechLanguage,
     batchSize:ctx.config.speechBatchSize,glossary:ctx.config.glossary,
-  },{onEvent:e=>report.log(e.event==='log'?e.message:`${e.stage}${e.value===null?'':` ${Math.round(e.value*100)}%`}`)});
+  },{cancelled:report.cancelled,onEvent:e=>report.log(e.event==='log'?e.message:`${e.stage}${e.value===null?'':` ${Math.round(e.value*100)}%`}`)});
   await cancelled();
   const signals=await ctx.python.call('audioSignals',{audio:source.audio,out:join(source.directory,'signals.f32')});
   await cancelled();
