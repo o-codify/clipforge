@@ -201,7 +201,7 @@ try{
     await docker('exec',containers[0],'ffmpeg','-v','error','-y','-f','lavfi','-i','testsrc2=size=270x480:rate=10','-f','lavfi','-i','sine=frequency=440','-t','4','-c:v','libx264','-threads','1','-preset','ultrafast','-c:a','aac','/tmp/fixture.mp4');
     await mkdir(join(folder,'source'),{recursive:true});await docker('cp',containers[0]+':/tmp/fixture.mp4',join(folder,'source','source.mp4'));
     const sourceId=ids[4]+'_original';await db.insert(runs).values({id:'source',vodId:ids[4],streamer:login,outDir:join(folder,'source')});
-    await db.insert(clips).values({id:sourceId,runId:'source',vodId:ids[4],streamer:login,segmentKey:'fixture-source',file:'source.mp4',text:'',start:0,end:4,duration:4});
+    await db.insert(clips).values({id:sourceId,runId:'source',vodId:ids[4],streamer:login,segmentKey:'fixture-source',file:'source.mp4',text:'',start:0,end:4,duration:4,sizeBytes:(await stat(join(folder,'source','source.mp4'))).size});
     const cleaned=await jobs.enqueue(QUEUES.cleanClip,{clipId:sourceId,vodId:ids[4],regions:[{x:0,y:0,w:20,h:20}]});
     await check(async()=>{const [j]=await db.sql`select state,output from jobs.job where id=${cleaned.id}`;if(j.state==='failed')throw Error(JSON.stringify(j.output));return j.state==='completed';},180000);
     const [result]=await db.sql`select c.id,c.media_storage,c.size_bytes from clips c where c.id<>${sourceId} and c.vod_id=${ids[4]}`;
