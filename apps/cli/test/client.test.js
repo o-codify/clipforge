@@ -23,6 +23,15 @@ test('DTLN is opt-in for one fresh render; other commands cannot enable audio pr
   await assert.rejects(commandPlan(parseCommand(['render','vod','--audio','dtln-gated'])));
 });
 
+test('prepare only requests a bounded draft pipeline and never changes streamer defaults',async()=>{
+  assert.deepEqual(await commandPlan(parseCommand(['prepare','vod','--count','6','--audio','dtln'])),
+    {path:'/api/jobs/prepare/vod',method:'POST',body:{count:6,audioMode:'dtln'}});
+  assert.deepEqual(await commandPlan(parseCommand(['prepare','vod'])),
+    {path:'/api/jobs/prepare/vod',method:'POST',body:{count:1}});
+  for(const args of [['--count','21'],['--count','0'],['--audio','dtln-gated'],['--metadata','file.json']])
+    await assert.rejects(commandPlan(parseCommand(['prepare','vod',...args])));
+});
+
 test('login and logout use API; reads do not write; mutations are not retried or redirected',async()=>{
   const calls=[];
   const server=createServer(async(req,res)=>{

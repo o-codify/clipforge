@@ -299,6 +299,13 @@ export async function fetchVod(
   report: JobReport,
 ): Promise<{ audio: string; video: string | null }> {
   const ytdlp = { command: ctx.config.pythonBin, args: [join(ctx.config.workerRoot, 'clipforge_worker', 'download.py')] };
+  const cached=await loadVod(ctx,payload.vodId);
+  const cachedVideo=cached.workspace.video(ctx.config.videoFormat);
+  const present=async(file:string)=>(await stat(file).catch(()=>null))?.size??0;
+  if(await present(cached.workspace.audio) && (payload.audioOnly || await present(cachedVideo))) {
+    report.log('Использую сохранённые исходники эфира.');
+    return {audio:cached.workspace.audio,video:payload.audioOnly?null:cachedVideo};
+  }
   // Server discovery uses Helix only. The downloader resolves the selected
   // archive's chapters before choosing its cache path and starting analysis.
   if (ctx.config.role === 'media') {
@@ -924,7 +931,7 @@ async function dropSuperseded(
  */
 export async function runPipeline(
   ctx: Context,
-  payload: { vodId: string; count?: number; reuse: boolean },
+  payload: { vodId: string; count?: number; reuse: boolean; skipExisting?:boolean; audioMode?:'original'|'dtln'; testBatch?:boolean },
   report: JobReport,
 ): Promise<{ runId: string; rendered: number; skipped: number }> {
   const force = !payload.reuse;
@@ -956,7 +963,10 @@ export async function runPipeline(
   report.log("шаг 5/5: нарезка");
   const result = await renderRun(
     ctx,
-    { vodId: payload.vodId, ...(payload.count ? { count: payload.count } : {}) },
+    { vodId: payload.vodId, ...(payload.count ? { count: payload.count } : {}),
+      ...(payload.audioMode ? {audioMode:payload.audioMode} : {}),
+      ...(payload.skipExisting ? {skipExisting:true} : {}),
+      ...(payload.testBatch ? {testBatch:true} : {}) },
     report,
   );
   return { runId: result.runId, rendered: result.rendered, skipped: result.skipped };

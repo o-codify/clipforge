@@ -13,10 +13,11 @@ import {FastifyAdapter} from '@nestjs/platform-fastify';
 import cookie from '@fastify/cookie';
 import PgBoss from 'pg-boss';
 import {createDatabase,upgradeRuntime,vodAudioSettings,accounts,platformAccounts,streamers,games,vods,runs,clips} from '../../../packages/db/dist/index.js';
-import {QUEUES} from '../../../packages/jobs/dist/index.js';
+import {QUEUES,preparePreviewPayload} from '../../../packages/jobs/dist/index.js';
+import {Workspace} from '../../../packages/pipeline/dist/index.js';
 import {collectMetrics,refreshYoutube} from '../../worker/dist/metrics.js';
 import {servesQueue} from '../../worker/dist/routing.js';
-import {renderRun} from '../../worker/dist/handlers.js';
+import {renderRun,fetchVod} from '../../worker/dist/handlers.js';
 import {AuthController} from '../dist/auth/auth.controller.js';
 import {AuthService} from '../dist/auth/auth.service.js';
 import {AuthGuard} from '../dist/auth/auth.guard.js';
@@ -114,6 +115,23 @@ try {
   const [batchJob]=await db.sql`select name,data from jobs.job where id=${batch.id}::uuid`;
   assert.equal(batchJob.name,QUEUES.renderVariant);
   assert.deepEqual(batchJob.data,{vodId:'qa_vod',count:10,skipExisting:true,testBatch:true});
+  const prepared=await cli('prepare','qa_vod','--count','6','--audio','dtln');
+  const [preparedJob]=await db.sql`select name,data from jobs.job where id=${prepared.id}::uuid`;
+  assert.equal(preparedJob.name,QUEUES.preparePreview);
+  assert.deepEqual(preparedJob.data,{vodId:'qa_vod',count:6,audioMode:'dtln',reuse:true,skipExisting:true,testBatch:true});
+  assert.equal((await cli('prepare','qa_vod','--count','6','--audio','dtln')).id,prepared.id);
+  assert.equal((await db.sql`select count(*)::int as n from publications`)[0].n,0,'Prepare must not publish');
+  assert.equal((await vodAudioSettings(db,'qa_future_vod')).mode,'original','Per-batch audio must not change streamer settings');
+  assert.equal(servesQueue('media',QUEUES.preparePreview),true);
+  assert.equal(servesQueue('control',QUEUES.preparePreview),false);
+  for(const override of [{testBatch:false},{skipExisting:false},{count:21}])
+    assert.throws(()=>preparePreviewPayload.parse({...preparedJob.data,...override}));
+  // Saved source remains usable when Twitch has already removed the VOD.
+  const source=await new Workspace({data:join(temp,'data'),out:join(temp,'out')},{game:'qa_dota',streamer:'qa_sany',vodId:'qa_vod'}).prepare();
+  await writeFile(source.audio,'fixture');await writeFile(source.video('720p60'),'fixture');
+  const cached=await fetchVod({db,config:{data:join(temp,'data'),out:join(temp,'out'),role:'media',videoFormat:'720p60',workerRoot:'missing',pythonBin:'must-not-run'}},
+    {vodId:'qa_vod',audioOnly:false},{log:()=>{},cancelled:async()=>false});
+  assert.deepEqual(cached,{audio:source.audio,video:source.video('720p60')});
   assert.equal((await db.sql`select state from clips where id='qa_clip'`)[0].state,'ready','Settings must not edit existing clips');
   // Crash after the final clip commit: the same job must finish its existing run,
   // even if the caller's count/defaults changed; it must never invoke media tools.
@@ -185,7 +203,7 @@ try {
     }
     for(const [path,method,body] of [[`/api/platforms/publications/${first.publicationId}`,'GET'],['/api/platforms/youtube/refresh','POST',{}],['/api/platforms/publish/qa_clip','POST',{}],
       ['/api/vods/qa_vod/audio','POST',{audioMode:'dtln'}],['/api/streamers/qa_sany/audio','POST',{audioMode:'dtln'}],
-      ['/api/jobs/render/qa_vod','POST',{count:10,testBatch:true}]]) {
+      ['/api/jobs/render/qa_vod','POST',{count:10,testBatch:true}],['/api/jobs/prepare/qa_vod','POST',{count:6,audioMode:'dtln'}]]) {
       const response=await originalFetch(origin+path,{method,headers:{...(session?{Cookie:session}:{}),'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
       assert.equal(response.status,role==='anonymous'?401:403,role+' '+path);
     }

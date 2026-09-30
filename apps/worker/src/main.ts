@@ -39,6 +39,7 @@ type Handler = (ctx: Context, payload: never, report: JobReport) => Promise<unkn
 const HANDLERS: Record<string, Handler> = {
   [QUEUES.inspectAds]: inspectAds as Handler,
   [QUEUES.pipeline]: runPipeline as Handler,
+  [QUEUES.preparePreview]: runPipeline as Handler,
   [QUEUES.indexChannel]: indexChannel as Handler,
   [QUEUES.fetchVod]: fetchVod as Handler,
   [QUEUES.transcribeVod]: transcribeVod as Handler,

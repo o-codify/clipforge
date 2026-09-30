@@ -18,6 +18,7 @@ export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
   const latest=[...logs].reverse().map(narrateEvent).find(Boolean);
   const completions:Record<string,string>={
     "heavy.pipeline":"Закончил обработку эфира. Готовые клипы можно посмотреть здесь.",
+    "heavy.prepare-preview":"Подготовил черновики клипов. Они сохранены для просмотра.",
     "heavy.render-run":"Закончил монтаж клипов.","heavy.render-variant":"Подготовил клип с выбранной обработкой.","heavy.fetch-vod":"Загрузил запись эфира.",
     "heavy.clean-clip":"Скрыл рекламу в новой версии клипа.",
     "heavy.inspect-ads":"Проверил кадры эфира и сохранил расположение рекламы для нарезки.",
@@ -46,7 +47,7 @@ export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
     time:new Date(job.createdAt).toISOString(),text,
     streamer: typeof job.streamer==='string'?job.streamer:typeof job.data.login==='string'?job.data.login:undefined,
     context:job.objectHref?.toString().startsWith('/vods/')?String(job.objectTitle??''):undefined,facts,
-    steps:job.name==="heavy.pipeline" ? ["Загрузка","Речь","Анализ","Камера","Монтаж"].map((label,index)=>({label,state:complete||index+1<stage?"done":index+1===stage?failed?"error":"active":"waiting"})) : [],
+    steps:["heavy.pipeline","heavy.prepare-preview"].includes(job.name) ? ["Загрузка","Речь","Анализ","Камера","Монтаж"].map((label,index)=>({label,state:complete||index+1<stage?"done":index+1===stage?failed?"error":"active":"waiting"})) : [],
     actions:job.objectHref?[{id:complete&&job.data.vodId?`clips:${job.data.vodId}`:String(job.objectHref),label:complete&&job.data.vodId?"Клипы в чате":job.data.login?"Открыть канал":"Открыть эфир"}]:[],
     tone:failed?"error":complete?"success":"normal",
     ...(admin?{technical:`job: ${job.id}\nqueue: ${job.name}\n${logs.slice(-12).join("\n")}`}:{})

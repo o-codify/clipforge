@@ -17,6 +17,8 @@ pnpm cf vod-audio <vodId> --audio inherit|original|dtln
 pnpm cf render <vodId> [--count 1] [--fresh] [--audio dtln] [--test-batch]
                                         создать клип; --fresh выбирает другой момент
                                         --test-batch: до 20 разных черновиков даже в режиме разработки
+pnpm cf prepare <vodId> [--count 1] [--audio dtln]
+                                        скачать и обработать эфир; только новые черновики, без публикации
 pnpm cf preview <clipId>                 готовые название, описание, каналы
 pnpm cf publish <clipId> --metadata file.json
                                         отправить клип через очередь
@@ -67,10 +69,10 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
   const options=parsed.values;
   const noTarget=['accounts','clips','analytics','jobs','active'];
   const optionalTarget=['youtube-check','refresh'];
-  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','render','preview','publish','publication','job','cancel','wait','cleanup','inspect-ads','approve-clip','draft-clip'];
+  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','render','prepare','preview','publish','publication','job','cancel','wait','cleanup','inspect-ads','approve-clip','draft-clip'];
   if(!command||![...noTarget,...optionalTarget,...targets].includes(command))throw new Error('Неизвестная команда. Используйте pnpm cf --help');
   if(extra.length||(noTarget.includes(command)&&target)||(targets.includes(command)&&!target))throw new Error('Неверное число аргументов команды');
-  const allowed:Record<string,string[]>={clips:['streamer','limit'],render:['count','fresh','audio','test-batch'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
+  const allowed:Record<string,string[]>={clips:['streamer','limit'],render:['count','fresh','audio','test-batch'],prepare:['count','audio'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
   for(const key of Object.keys(options))if(!['url','help',...(allowed[command]??[])].includes(key))throw new Error(`Параметр --${key} не относится к команде ${command}`);
   const id=encodeURIComponent(target??'');
   switch(command) {
@@ -95,6 +97,10 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
       return {path:`/api/jobs/render/${id}`,method:'POST',body:{count:integer(options.count,1,options['test-batch']?20:200),
         ...(options.fresh||options['test-batch']?{skipExisting:true}:{}),...(options.audio?{audioMode:options.audio}:{}),
         ...(options['test-batch']?{testBatch:true}:{})}};
+    }
+    case 'prepare': {
+      if(options.audio&&!['original','dtln'].includes(options.audio))throw new Error('--audio: original или dtln');
+      return {path:`/api/jobs/prepare/${id}`,method:'POST',body:{count:integer(options.count,1,20),...(options.audio?{audioMode:options.audio}:{})}};
     }
     case 'preview':return {path:`/api/platforms/publish/${id}`};
     case 'publish':return {path:`/api/platforms/publish/${id}`,method:'POST',body:await jsonFile(options.metadata)};

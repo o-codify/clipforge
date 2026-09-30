@@ -198,7 +198,7 @@ export async function fetchVodInfo(
     300_000,
   );
 
-  if (result.code !== 0 && chunks.length === 0) {
+  if (result.code !== 0) {
     throw new Error(`не удалось получить метаданные ${video}:\n${result.lines.slice(-5).join("\n")}`);
   }
 
@@ -207,6 +207,9 @@ export async function fetchVodInfo(
     raw = JSON.parse(chunks.join(""));
   } catch (error) {
     throw new Error(`yt-dlp вернул не JSON для ${video}: ${String(error)}`);
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Twitch не вернул доступную запись эфира ${video}`);
   }
 
   const chapters = Array.isArray(raw.chapters)

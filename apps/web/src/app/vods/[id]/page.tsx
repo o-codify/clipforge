@@ -150,7 +150,7 @@ export default function VodPage() {
               страницы. Загрузка исходников - первый шаг конвейера. */}
           <JobButton
             target={vod.id}
-            kinds={["pipeline", "render-run", "render-variant", "transcribe-vod", "analyze-vod", "facecam-vod"]}
+            kinds={["pipeline", "prepare-preview", "render-run", "render-variant", "transcribe-vod", "analyze-vod", "facecam-vod"]}
             variant="primary"
             icon="✂"
             disabled={Boolean(anyJob)}

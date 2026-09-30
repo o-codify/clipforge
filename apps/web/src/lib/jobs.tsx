@@ -133,6 +133,7 @@ export function useLiveReload(load: () => void): void {
 /** Человеческое имя очереди: «heavy.pipeline» ничего не говорит. */
 export const JOB_LABELS: Record<string, string> = {
   "heavy.pipeline": "Нарезка",
+  "heavy.prepare-preview": "Подготовка черновиков",
   "heavy.fetch-vod": "Загрузка исходников",
   "heavy.transcribe-vod": "Распознавание речи",
   "heavy.analyze-vod": "Сигналы звука",

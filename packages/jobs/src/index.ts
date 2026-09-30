@@ -35,6 +35,8 @@ export const QUEUES = {
 
   /** Весь конвейер по эфиру: шаги вызываются по порядку, внутри одного задания. */
   pipeline: "heavy.pipeline",
+  /** Draft-only pipeline; isolated from legacy workers that omit preview options. */
+  preparePreview: "heavy.prepare-preview",
   fetchVod: "heavy.fetch-vod",
   transcribeVod: "heavy.transcribe-vod",
   analyzeVod: "heavy.analyze-vod",
@@ -127,6 +129,13 @@ export const publishClipPayload = z.object({
   /** Ряд publications: создаётся бэкендом до постановки задания. */
   publicationId: z.string().min(1),
 });
+
+export const preparePreviewPayload = renderRunPayload.extend({
+  count: z.number().int().min(1).max(20).default(1),
+  skipExisting: z.literal(true).default(true),
+  testBatch: z.literal(true).default(true),
+  reuse: z.literal(true).default(true),
+}).strict();
 export const refreshYoutubePayload = z.object({
   publicationId: z.string().min(1).max(200).optional(),
 }).strict();
@@ -138,6 +147,7 @@ export const cleanClipPayload = z.object({
 
 export const PAYLOADS = {
   [QUEUES.pipeline]: pipelinePayload,
+  [QUEUES.preparePreview]: preparePreviewPayload,
   [QUEUES.indexChannel]: indexChannelPayload,
   [QUEUES.fetchVodInfo]: fetchVodInfoPayload,
   [QUEUES.refreshStreamer]: refreshStreamerPayload,
@@ -166,7 +176,7 @@ export function singletonKey<Q extends QueueName>(
   queue: Q,
   payload: PayloadOf<Q>,
 ): string {
-  if((queue===QUEUES.renderRun || queue===QUEUES.renderVariant) && 'vodId' in payload && ('audioMode' in payload || 'skipExisting' in payload || 'testBatch' in payload)) {
+  if((queue===QUEUES.renderRun || queue===QUEUES.renderVariant || queue===QUEUES.preparePreview) && 'vodId' in payload && ('audioMode' in payload || 'skipExisting' in payload || 'testBatch' in payload)) {
     const render=payload as PayloadOf<typeof QUEUES.renderRun>;
     return `${queue}:${render.vodId}:${render.audioMode??'inherit'}:${render.skipExisting?'fresh':'all'}:${render.count??'default'}:${render.testBatch?'test':'normal'}`;
   }

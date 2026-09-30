@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query } from "@nestjs/common";
-import { QUEUES, cleanClipPayload, renderRunPayload } from "@clipforge/jobs";
+import { QUEUES, cleanClipPayload, renderRunPayload, preparePreviewPayload } from "@clipforge/jobs";
 import { z } from "zod";
 
 import { AdminOnly, CurrentViewer } from "../auth/auth.guard.js";
@@ -113,6 +113,14 @@ export class JobsController {
   async fetch(@CurrentViewer() viewer: Viewer | null, @Param("vodId") vodId: string) {
     await this.catalog.vod(viewer, vodId);
     return this.jobs.enqueue(QUEUES.fetchVod, { vodId, audioOnly: false });
+  }
+
+  @AdminOnly()
+  @Post('prepare/:vodId')
+  async prepare(@CurrentViewer() viewer:Viewer, @Param('vodId') vodId:string, @Body() body:unknown) {
+    const input=preparePreviewPayload.pick({count:true,audioMode:true}).strict().parse(body??{});
+    await this.catalog.vod(viewer,vodId);
+    return this.jobs.enqueue(QUEUES.preparePreview,{vodId,...input});
   }
 
   @Post("render/:vodId")

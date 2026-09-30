@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {downloadVideo} from '../src/ytdlp.ts';
+import {downloadVideo,fetchVodInfo} from '../src/ytdlp.ts';
+
+test('unavailable VOD returns an actionable error instead of dereferencing null',async()=>{
+  const options={command:process.execPath,args:['-e','process.stdout.write("null");process.stderr.write("Video does not exist");process.exit(1);','--']};
+  await assert.rejects(fetchVodInfo('v123',options),/Video does not exist/);
+  await assert.rejects(fetchVodInfo('v123',{command:process.execPath,args:['-e','process.stdout.write("null")','--']}),/Twitch не вернул доступную запись/);
+});
 test('downloads serialize, cap overrides at 40 Mbps and never cache a failed partial file',async()=>{
   const root=await mkdtemp(join(tmpdir(),'clipforge-download-'));
   try {
