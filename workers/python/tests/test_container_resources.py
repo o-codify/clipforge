@@ -56,6 +56,21 @@ class ContainerResources(unittest.TestCase):
                 self.assertEqual(provision_model('tiny'),str(target))
                 self.assertEqual((target/'model.bin').read_bytes(),b'abcdef')
 
+    def test_complete_partial_survives_interrupted_rename_without_network(self):
+        import hashlib
+        from clipforge_worker.model_cache import provision_model
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'speech/tiny';target.mkdir(parents=True)
+            (target/'.manifest.json').write_text(json.dumps({'sha':'pinned','siblings':[
+                {'rfilename':'config.json','size':2},
+                {'rfilename':'model.bin','size':6,'lfs':{'sha256':hashlib.sha256(b'abcdef').hexdigest()}},
+                {'rfilename':'tokenizer.json','size':2}]}))
+            (target/'config.json').write_text('{}');(target/'tokenizer.json').write_text('{}')
+            (target/'model.bin.part').write_bytes(b'abcdef')
+            with patch.dict('os.environ',{'MODELS_ROOT':directory}),patch('urllib.request.urlopen',side_effect=AssertionError('No network expected')):
+                provision_model('tiny')
+                self.assertEqual((target/'model.bin').read_bytes(),b'abcdef')
+
 
 if __name__ == '__main__':
     unittest.main()

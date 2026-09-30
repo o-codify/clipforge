@@ -17,7 +17,7 @@ try{
     docker('run','--rm','--mount',`source=${volumes[i]},target=/storage`,'--entrypoint','python',image,'-c',
       "import wave,pathlib; [(lambda p: (p.mkdir(parents=True,exist_ok=True), (lambda f: (f.setparams((1,2,16000,0,'NONE','not compressed')),f.writeframes(bytes(16000*2*30)),f.close()))(wave.open(str(p/'audio.m4a'),'wb'))))(pathlib.Path('/storage/data/games/unknown/fixture')/('vqa'+str(i))) for i in range(8)]");
     docker('run','-d','--name',names[i],'--network',network,'--init','--cpus','2','--cpu-shares','256','--memory','3g','--memory-swap','3g','--pids-limit','256',
-      ...dbEnv,'-e','WORKER_QUEUES=heavy.analyze-vod','-e','S3_ENDPOINT=https://unused.invalid','-e','S3_REGION=test','-e','S3_BUCKET=fixture','-e','S3_ACCESS_KEY_ID=fixture','-e','S3_SECRET_ACCESS_KEY=fixture',
+      ...dbEnv,'-e','MIN_FREE_GB=1','-e','WORKER_QUEUES=heavy.analyze-vod','-e','S3_ENDPOINT=https://unused.invalid','-e','S3_REGION=test','-e','S3_BUCKET=fixture','-e','S3_ACCESS_KEY_ID=fixture','-e','S3_SECRET_ACCESS_KEY=fixture',
       '--mount',`source=${volumes[i]},target=/storage`,image);
   }
   console.log(fixture('check'));

@@ -41,6 +41,18 @@ def provision_model(name):
             continue
         temporary = destination.with_suffix(destination.suffix + '.part')
         offset = temporary.stat().st_size if temporary.exists() else 0
+        # A crash can occur after the final write but before the atomic rename.
+        # Verify that completed partial instead of requesting an invalid Range.
+        if expected_size and offset >= expected_size:
+            valid = offset == expected_size
+            if valid and expected_sha:
+                with temporary.open('rb') as source:
+                    valid = hashlib.file_digest(source, 'sha256').hexdigest() == expected_sha
+            if valid:
+                temporary.replace(destination)
+                continue
+            temporary.unlink()
+            offset = 0
         request = urllib.request.Request(f'https://huggingface.co/{repo}/resolve/{revision}/{file}', headers={'Range': f'bytes={offset}-'} if offset else {})
         with urllib.request.urlopen(request, timeout=30) as response:
             resume = offset and response.status == 206

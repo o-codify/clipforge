@@ -12,7 +12,7 @@
  * делается здесь же, в TypeScript.
  */
 import { createHash } from "node:crypto";
-import { cpus } from "node:os";
+import { capacity } from './registry.js';
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -373,7 +373,7 @@ export async function transcribeVod(
   payload: { vodId: string; force: boolean },
   report: JobReport,
 ): Promise<{ words: number; segments: number }> {
-  const { row, workspace } = await loadVod(ctx, payload.vodId);
+  let { row, workspace } = await loadVod(ctx, payload.vodId);
 
   if (!payload.force) {
     const [existing] = await ctx.db
@@ -391,6 +391,10 @@ export async function transcribeVod(
     }
   }
 
+  if(process.env.WORKER_FLEET==='true'&&!await stat(workspace.audio).then(s=>s.size>0).catch(()=>false)){
+    await fetchVod(ctx,{vodId:row.id,audioOnly:true},report);
+    ({row,workspace}=await loadVod(ctx,row.id));
+  }
   const result = await ctx.python.call("transcribe", {
     audio: workspace.audio,
     model: ctx.config.speechModel,
@@ -431,13 +435,17 @@ export async function analyzeVod(
   payload: { vodId: string; force: boolean },
   report: JobReport,
 ): Promise<{ frames: number }> {
-  const { row, workspace } = await loadVod(ctx, payload.vodId);
+  let { row, workspace } = await loadVod(ctx, payload.vodId);
 
   if (!payload.force && row.signals && await stat(row.signals.file).then(s => s.size === row.signals!.frames * row.signals!.series.length * 4).catch(() => false)) {
     report.log("сигналы уже посчитаны");
     return { frames: row.signals.frames };
   }
 
+  if(process.env.WORKER_FLEET==='true'&&!await stat(workspace.audio).then(s=>s.size>0).catch(()=>false)){
+    await fetchVod(ctx,{vodId:row.id,audioOnly:true},report);
+    ({row,workspace}=await loadVod(ctx,row.id));
+  }
   const result = await ctx.python.call("audioSignals", {
     audio: workspace.audio,
     out: workspace.signals,
@@ -467,13 +475,17 @@ export async function facecamVod(
   payload: { vodId: string; force: boolean },
   report: JobReport,
 ): Promise<{ found: boolean }> {
-  const { row, workspace } = await loadVod(ctx, payload.vodId);
+  let { row, workspace } = await loadVod(ctx, payload.vodId);
 
   if (!payload.force && row.facecam?.detectorVersion === CAMERA_HINT_VERSION) {
     report.log(`камера уже искалась: ${row.facecam.note}`);
     return { found: row.facecam.found };
   }
 
+  if(process.env.WORKER_FLEET==='true'&&!await stat(workspace.video(ctx.config.videoFormat)).then(s=>s.size>0).catch(()=>false)){
+    await fetchVod(ctx,{vodId:row.id,audioOnly:false},report);
+    ({row,workspace}=await loadVod(ctx,row.id));
+  }
   const result = await ctx.python.call("facecam", {
     video: workspace.video(ctx.config.videoFormat),
     game: row.game ?? undefined,
@@ -504,6 +516,7 @@ export async function facecamVod(
 // --- нарезка ------------------------------------------------------------
 
 export async function inspectAds(ctx:Context,payload:{vodId:string},report:JobReport) {
+  if(process.env.WORKER_FLEET==='true')await fetchVod(ctx,{vodId:payload.vodId,audioOnly:false},report);
   const {workspace}=await loadVod(ctx,payload.vodId);
   const profile=await ensureAdProfile(ctx,payload.vodId,workspace.video(ctx.config.videoFormat),report);
   return {vodId:payload.vodId,profileId:profile.signature,regions:profile.regions.length,samples:profile.samples};
@@ -523,7 +536,7 @@ export async function renderRun(
   report: JobReport,
   prepared?: PreparedRenderSource,
 ): Promise<{ runId: string; rendered: number; skipped: number; replaced: number }> {
-  const { row, workspace } = await loadVod(ctx, payload.vodId);
+  let { row, workspace } = await loadVod(ctx, payload.vodId);
   const [resuming] = report.id&&payload.testBatch ? await ctx.db.select().from(runs).where(and(
     eq(runs.vodId,row.id),sql`${runs.settings}->>'jobId' = ${report.id}`)).limit(1) : [];
   const audioSettings=resuming?.settings.audioSettings as Awaited<ReturnType<typeof vodAudioSettings>>|undefined
@@ -540,7 +553,10 @@ export async function renderRun(
   }
   if(!prepared&&process.env.WORKER_FLEET==='true'){
     // A standalone render job may move to a different container with an empty cache.
-    if(!await stat(workspace.video(ctx.config.videoFormat)).then(s=>s.size>0).catch(()=>false))await fetchVod(ctx,{vodId:row.id,audioOnly:false},report);
+    if(!await stat(workspace.video(ctx.config.videoFormat)).then(s=>s.size>0).catch(()=>false)){
+      await fetchVod(ctx,{vodId:row.id,audioOnly:false},report);
+      ({row,workspace}=await loadVod(ctx,row.id));
+    }
     if(!row.signals||!await stat(row.signals.file).then(s=>s.size>0).catch(()=>false)){
       await analyzeVod(ctx,{vodId:row.id,force:false},report);
       const [updated]=await ctx.db.select({signals:vods.signals}).from(vods).where(eq(vods.id,row.id));row.signals=updated!.signals;
@@ -687,8 +703,9 @@ export async function renderRun(
    * По одному остаются только GPU-шаги (распознавание делит видеопамять)
    * и загрузка (Twitch и диск) - там параллельность замедляет.
    */
-  const concurrency = Math.max(1, Math.min(ctx.config.renderConcurrency, count));
-  const threadsPerProcess = Math.max(2, Math.floor(cpus().length / concurrency));
+  const allocatedCpus=(await capacity()).cpus;
+  const concurrency = Math.max(1, Math.min(ctx.config.renderConcurrency, count,Math.floor(allocatedCpus)));
+  const threadsPerProcess = Math.max(1, Math.floor(allocatedCpus / concurrency));
   if (concurrency > 1) {
     report.log(`рендер в ${concurrency} процесса, по ${threadsPerProcess} потоков`);
   }

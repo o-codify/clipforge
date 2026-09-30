@@ -1,5 +1,5 @@
 "use client";
-import {useEffect,useMemo,useState} from 'react';
+import {useEffect,useMemo,useRef,useState} from 'react';
 import Link from 'next/link';
 import {api,when,hhmm} from '@/lib/api';
 import {useSession} from '@/lib/session';
@@ -59,13 +59,19 @@ export function ShortsWorkspace({analytics=false}:{analytics?:boolean}){
 
 function HistoryChart({points,metric,title,days}:{points:Point[];metric:'views'|'likes'|'comments';title:string;days:number}){
   const [hidden,setHidden]=useState<string[]>([]),[cursor,setCursor]=useState<number|null>(null);
+  const svgRef=useRef<SVGSVGElement>(null),[width,setWidth]=useState(780);
+  useEffect(()=>{if(!svgRef.current)return;const observer=new ResizeObserver(([entry])=>{if(entry)setWidth(Math.max(260,entry.contentRect.width));});observer.observe(svgRef.current);return()=>observer.disconnect();},[points.length>0]);
+  const end=Date.now(),start=end-days*86400000;
+  points=points.filter(p=>Date.parse(p.at)>=start&&Date.parse(p.at)<=end);
   const series=[...new Set(points.map(p=>p.id))].map((id,i)=>({id,color:colors[i%colors.length]!,points:points.filter(p=>p.id===id),label:points.find(p=>p.id===id)!.title}));
-  const end=Date.now(),start=end-days*86400000,max=Math.max(1,...points.filter(p=>!hidden.includes(p.id)).map(p=>p[metric]??0));
-  const x=(at:string)=>50+(Date.parse(at)-start)/(end-start)*700,y=(n:number)=>195-n/max*165;
-  return <section className="history-chart metric-panel"><header><h2>{title}</h2><span className="muted">YouTube</span></header>{!points.length?<div className="empty">История появится после сбора статистики</div>:<><svg viewBox="0 0 780 230" role="img" aria-label={`${title}: история за ${days} дней`} onMouseLeave={()=>setCursor(null)} onMouseMove={e=>setCursor((e.clientX-e.currentTarget.getBoundingClientRect().left)/e.currentTarget.getBoundingClientRect().width*780)}>
-    {[0,.25,.5,.75,1].map(t=><g key={t}><line x1="50" x2="750" y1={y(max*t)} y2={y(max*t)} stroke="var(--border,#44394e)"/><text x="42" y={y(max*t)+4} textAnchor="end">{Intl.NumberFormat('ru',{notation:'compact'}).format(max*t)}</text></g>)}
+  const max=Math.max(1,...points.filter(p=>!hidden.includes(p.id)).map(p=>p[metric]??0));
+  const x=(at:string)=>64+(Date.parse(at)-start)/(end-start)*(width-84),y=(n:number)=>195-n/max*165;
+  const hoveredAt=cursor==null?null:start+(cursor-64)/(width-84)*(end-start);
+  const hover=hoveredAt==null?[]:series.filter(s=>!hidden.includes(s.id)).map(s=>({...s,point:s.points.reduce((closest,p)=>Math.abs(Date.parse(p.at)-hoveredAt)<Math.abs(Date.parse(closest.at)-hoveredAt)?p:closest)}));
+  return <section className="history-chart metric-panel"><header><h2>{title}</h2><span className="muted">YouTube</span></header>{!points.length?<div className="empty">История появится после сбора статистики</div>:<><svg ref={svgRef} viewBox={`0 0 ${width} 230`} role="img" aria-label={`${title}: история за ${days} дней`} onMouseLeave={()=>setCursor(null)} onMouseMove={e=>{const px=e.clientX-e.currentTarget.getBoundingClientRect().left;setCursor(px>=64&&px<=width-20?px:null);}}>
+    {[0,.25,.5,.75,1].map(t=><g key={t}><line x1="64" x2={width-20} y1={y(max*t)} y2={y(max*t)} stroke="var(--border,#44394e)"/><text x="56" y={y(max*t)+4} textAnchor="end">{Intl.NumberFormat('ru',{notation:'compact'}).format(max*t)}</text></g>)}
     {series.filter(s=>!hidden.includes(s.id)).map(s=><g key={s.id}>{s.points.map((p,i)=>{const previous=s.points[i-1];return p[metric]==null?null:<g key={p.at}>{previous&&previous[metric]!=null&&Date.parse(p.at)-Date.parse(previous.at)<3*3600000&&<line x1={x(previous.at)} y1={y(previous[metric]!)} x2={x(p.at)} y2={y(p[metric]!)} stroke={s.color} strokeWidth="2"/>}<circle cx={x(p.at)} cy={y(p[metric]!)} r="3" fill={s.color}><title>{s.label} · {when(p.at)} · {count(p[metric])}</title></circle></g>;})}</g>)}
-    {[0,.5,1].map(t=><text key={t} x={50+t*700} y="220" textAnchor={t===0?'start':t===1?'end':'middle'}>{new Date(start+t*(end-start)).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'})}</text>)}
-    {cursor!==null&&cursor>=50&&cursor<=750&&<line x1={cursor} x2={cursor} y1="25" y2="195" stroke="#fff" strokeDasharray="3 4"/>}
-  </svg><div className="chart-legend">{series.map(s=><button key={s.id} title={s.label} aria-pressed={!hidden.includes(s.id)} onClick={()=>setHidden(old=>old.includes(s.id)?old.filter(id=>id!==s.id):[...old,s.id])}><i style={{background:s.color}}/>{s.label}</button>)}</div></>}</section>;
+    {[0,.5,1].map(t=><text key={t} x={64+t*(width-84)} y="220" textAnchor={t===0?'start':t===1?'end':'middle'}>{new Date(start+t*(end-start)).toLocaleString('ru-RU',days===1?{hour:'2-digit',minute:'2-digit'}:{day:'2-digit',month:'2-digit'})}</text>)}
+    {cursor!==null&&<line x1={cursor} x2={cursor} y1="25" y2="195" stroke="#fff" strokeDasharray="3 4"/>}
+  </svg>{hover.length>0&&<div className="chart-tooltip">{hover.map(s=><div key={s.id}><i style={{background:s.color}}/><span>{s.label}<small>{when(s.point.at)}</small></span><b>{count(s.point[metric])}</b></div>)}</div>}<div className="chart-legend">{series.map(s=><button key={s.id} title={s.label} aria-pressed={!hidden.includes(s.id)} onClick={()=>setHidden(old=>old.includes(s.id)?old.filter(id=>id!==s.id):[...old,s.id])}><i style={{background:s.color}}/>{s.label}</button>)}</div></>}</section>;
 }

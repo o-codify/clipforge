@@ -113,6 +113,9 @@ try{
   const admits=await Promise.allSettled([reserveUpload(db,'UCqa','p1'),reserveUpload(db,'UCqa','p2')]);
   assert.equal(admits.filter(x=>x.status==='fulfilled').length,1);assert.match(admits.find(x=>x.status==='rejected').reason.message,/quota-wait/);
   assert(await uploadWait(db,'another-channel'),'Quota is shared by all channels in the project');
+  const publicationState=await new PublicationProcessController(db).status();
+  assert.equal(publicationState.available,0);assert.equal(publicationState.reserved,1);
+  assert.equal(publicationState.channels[0].attemptsToday,1,'Count API initiations, not queued publication records');
   await runtimeValue(db,'feedback:sany',{samples:6});
   await beginYoutubeDisconnect(db,'channel');assert.equal((await shorts.list({})).total,0);assert.equal((await shorts.analytics({})).aggregate.length,0);
   assert.equal((await db.sql`select key from platform_runtime where key='feedback:sany'`).length,0);

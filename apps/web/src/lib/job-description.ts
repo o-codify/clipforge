@@ -10,6 +10,11 @@ const actions: Record<string, string> = {
   "light.refresh-youtube": "Проверка публикаций YouTube",
 };
 export const jobAction = (job: Pick<JobRow,"name">) => actions[job.name] ?? "Обработка материала";
+export function jobResult(output:unknown){
+  if(!output||typeof output!=='object')return '—';
+  const labels:Record<string,string>={rendered:'Клипов',replaced:'Заменено',skipped:'Пропущено',found:'Эфиров',added:'Новых',words:'Слов',segments:'Фраз',collected:'Видео обновлено'};
+  return Object.entries(labels).flatMap(([key,label])=>typeof (output as Record<string,unknown>)[key]==='number'?[`${label}: ${Number((output as Record<string,unknown>)[key]).toLocaleString('ru-RU')}`]:[]).join(' · ')||'Готово';
+}
 export function jobNarration(job: JobRow) {
   const action = jobAction(job).toLocaleLowerCase();
   if (job.state === "active") {

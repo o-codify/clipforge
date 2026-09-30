@@ -149,6 +149,7 @@ async function main(): Promise<void> {
   await recoverWorkers(ctx.db,boss);
 
   const activeHeavy = new Set<string>();
+  let diskAvailable=true;
   let lastResourceBeat = Date.now();
   let beating = false;
   const heartbeat = async () => {
@@ -163,6 +164,8 @@ async function main(): Promise<void> {
         freeGb = Math.min(...disks.map(d => d.bavail * d.bsize)) / 1024 ** 3;
       }
       const resources = resourceState();
+      const minimumGb=Math.max(1,Number(process.env.MIN_FREE_GB)||20);
+      diskAvailable=freeGb===undefined||freeGb>=minimumGb;
       const pausedSeconds = Math.min(30, (Date.now()-lastResourceBeat)/1000);
       lastResourceBeat = Date.now();
       // Queue expiry measures working time as well. Extend only jobs owned by
@@ -172,7 +175,7 @@ async function main(): Promise<void> {
           where id = ${id}::uuid and state = 'active'`);
       }
       const allocation=await capacity();
-      await registry.beat({...resources,allocation,freeGb,heavySlots:1});
+      await registry.beat({...resources,paused:resources.paused||!diskAvailable,reason:!diskAvailable?'disk-pressure':resources.reason,allocation,freeGb,heavySlots:1});
       // Compatibility for older controllers; worker_instances is the fleet source of truth.
       await runtimeValue(ctx.db, runtimeKey, { pid: process.pid, state: "online", role, freeGb, resources,workerId:registry.id });
       await localHeartbeat("online");
@@ -238,7 +241,7 @@ async function main(): Promise<void> {
           activeHeavy.delete(job.id);
           await registry.finish(job.id);
         }
-  },async heavy=>!registry.draining&&(!heavy||!resourceState().paused),ctx.log);
+  },async heavy=>!registry.draining&&(!heavy||diskAvailable&&!resourceState().paused),ctx.log);
   const recoveryTimer=setInterval(()=>void recoverWorkers(ctx.db,boss).catch(e=>ctx.log(String(e))),30000);
 
   ctx.log(`очередей обслуживается: ${Object.keys(handlers).length}`);

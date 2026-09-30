@@ -17,7 +17,7 @@ export class WorkersController {
         'startedAt',x.started_at,'streamer',coalesce(j.data->>'login',v.streamer,c.streamer),'vodId',coalesce(j.data->>'vodId',c.vod_id)))
         from worker_jobs x join jobs.job j on j.id=x.job_id
         left join vods v on v.id=j.data->>'vodId'
-        left join publications p on p.id=j.data->>'publicationId' left join clips c on c.id=p.clip_id
+        left join publications p on p.id=j.data->>'publicationId' left join clips c on c.id=coalesce(p.clip_id,j.data->>'clipId')
         where x.worker_id=w.id and x.finished_at is null and j.state='active'),'[]'::jsonb) as active
       from worker_instances w order by w.heartbeat_at desc`);
     // Existing processes remain visible during a rolling upgrade, but cannot be controlled as new workers.
@@ -36,11 +36,11 @@ export class WorkersController {
   async jobs(@Query() raw:unknown){
     const q=z.object({worker:z.string().max(128).optional(),state:z.enum(['active','waiting','completed','failed']).optional(),page:z.coerce.number().int().min(1).max(10000).default(1)}).parse(raw);
     const rows=await this.db.execute(sql`select j.id::text,j.name,j.state,j.created_on as "createdAt",j.started_on as "startedAt",j.completed_on as "completedAt",
-      x.worker_id as "workerId",w.label as "workerName",x.stage,
+      x.worker_id as "workerId",w.label as "workerName",x.stage,j.output,
       coalesce(j.data->>'login',v.streamer,c.streamer) as streamer,s.display_name as "streamerName",s.avatar,
       coalesce(j.data->>'vodId',c.vod_id) as "vodId",count(*) over()::int as total
       from jobs.job j left join worker_jobs x on x.job_id=j.id left join worker_instances w on w.id=x.worker_id
-      left join publications p on p.id=j.data->>'publicationId' left join clips c on c.id=p.clip_id
+      left join publications p on p.id=j.data->>'publicationId' left join clips c on c.id=coalesce(p.clip_id,j.data->>'clipId')
       left join vods v on v.id=j.data->>'vodId' left join streamers s on s.login=coalesce(j.data->>'login',v.streamer,c.streamer)
       where true ${q.worker?sql`and x.worker_id=${q.worker}`:sql``}
       ${q.state==='waiting'?sql`and j.state in ('created','retry')`:q.state?sql`and j.state=${q.state}`:sql``}

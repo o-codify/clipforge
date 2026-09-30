@@ -7,7 +7,7 @@ export const WORKSPACE_LINKS = [
   { href: "/jobs", label: "Задания", icon: "jobs" },
   { href: "/workers", label: "Воркеры", icon: "workers" },
   { href: "/publications", label: "Публикация", icon: "publications" },
-  { href: "/shorts", label: "Опубликованные", icon: "clips" },
+  { href: "/shorts", label: "На YouTube", icon: "clips" },
   { href: "/analytics", label: "Статистика", icon: "analytics" },
 ] as const;
 
@@ -19,6 +19,7 @@ export function activeSection(path: string) {
 }
 
 export function pageTitle(path: string, isAdmin: boolean) {
+  if (path === "/shorts") return "Опубликованные Shorts";
   if (path === "/me") return "Мой профиль";
   if (path === "/settings/accounts") return "Аккаунты";
   if (path === "/settings/publication") return "Публикации";

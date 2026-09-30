@@ -1,7 +1,7 @@
 import {Controller,Get,Post,Inject} from '@nestjs/common';
 import {sql} from 'drizzle-orm';
 import {runtimeValue,type Database} from '@clipforge/db';
-import {cloudUploadQuota,quotaDay} from '@clipforge/youtube';
+import {cloudUploadQuota,quotaDay,type CloudQuota} from '@clipforge/youtube';
 import {DATABASE} from './config.js';
 import {AdminOnly} from './auth/auth.guard.js';
 @Controller('api/publication-process')
@@ -17,9 +17,12 @@ export class PublicationProcessController {
   @Get()
   async status(){
     const window=quotaDay();
-    const [quota]=await this.db.execute(sql`select value,updated_at as "updatedAt" from platform_runtime where key='youtube-quota'`);
+    const [quota]=await this.db.execute<{value:CloudQuota}>(sql`select value from platform_runtime where key='youtube-quota'`);
+    const q=quota?.value;
+    const [reserved]=q?.state==='ok'&&q.remaining!==null&&Date.parse(q.resetAt)>Date.now()
+      ?await this.db.execute<{n:number}>(sql`select count(*)::int n from platform_runtime where key like 'upload-attempt:%' and updated_at>=${q.usageThrough??q.start}::timestamptz`):[];
     const channels=await this.db.execute(sql`select a.external_id as id,a.label,
-      count(p.id) filter(where p.created_at>=${window.start}::timestamptz)::int as "attemptsToday",
+      (select count(*)::int from platform_runtime r where r.key like 'upload-attempt:%' and r.value->>'channel'=a.external_id and r.updated_at>=${window.start}::timestamptz) as "attemptsToday",
       count(p.id) filter(where p.created_at>=${window.start}::timestamptz and p.media_id is not null)::int as "uploadedToday",
       count(p.id) filter(where p.created_at>now()-interval '24 hours')::int as "attempts24h",b.value as restriction
       from platform_accounts a left join publications p on p.account=a.external_id and p.platform='youtube'
@@ -32,6 +35,6 @@ export class PublicationProcessController {
       left join platform_runtime progress on progress.key='upload-progress:'||p.id
       where p.platform='youtube' and a.disconnect_requested_at is null and p.status in ('queued','uploading','processing','failed')
       order by case when p.status='failed' then 1 else 0 end,p.created_at desc limit 50`);
-    return {quota:quota?.value??null,channels,uploads,...window,serverTime:new Date().toISOString()};
+    return {quota:q??null,reserved:reserved?.n??null,available:reserved&&q?.remaining!==null?Math.max(0,q!.remaining!-reserved.n):null,channels,uploads,...window,serverTime:new Date().toISOString()};
   }
 }
