@@ -36,4 +36,8 @@ test('clean audio is the only mapped source, including censorship and outro dura
  const {args,graph}=buildFfmpegArgs(options,null);
  assert.ok(args.includes('speech.wav'));assert.match(graph,/\[1:a\]volume/);assert.doesNotMatch(graph,/\[0:a\]/);
  assert.equal(args[args.indexOf('[vout]')+2],'[aout]');
+ assert.equal(args[args.indexOf('-filter_complex_threads')+1],'1');
+ for(let i=0;i<args.length;i++)if(args[i]==='-i'){
+   assert.deepEqual(args.slice(i-2,i),['-threads','2']);
+ }
 });

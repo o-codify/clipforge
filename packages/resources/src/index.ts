@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 export interface ResourceState {
   at: number; paused: boolean; reason?: string; cpuPercent?: number;
   downloadKbps?: number; uploadKbps?: number; preempted?: Record<string, number>;
+  memoryMb?: number; metrics?: { ownMemoryMb: number };
 }
 export function resourceState(file = process.env.MEDIA_RESOURCE_STATE): ResourceState {
   if (!file) return { at: Date.now(), paused: false };
@@ -15,8 +16,11 @@ export function resourceState(file = process.env.MEDIA_RESOURCE_STATE): Resource
     return state;
   } catch { return { at: 0, paused: true, reason: 'governor-offline' }; }
 }
-export async function waitForResources(cancelled?: () => Promise<boolean>): Promise<void> {
-  while (resourceState().paused) {
+export async function waitForResources(cancelled?: () => Promise<boolean>, headroomMb = 0): Promise<void> {
+  for (;;) {
+    const state = resourceState();
+    const available = (state.memoryMb ?? 0) - (state.metrics?.ownMemoryMb ?? 0);
+    if (!state.paused && (!process.env.MEDIA_RESOURCE_STATE || available >= headroomMb)) return;
     if (await cancelled?.()) throw new Error('Задание отменено');
     await delay(500);
   }

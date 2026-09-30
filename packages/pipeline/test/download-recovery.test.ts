@@ -10,6 +10,16 @@ test('unavailable VOD returns an actionable error instead of dereferencing null'
   await assert.rejects(fetchVodInfo('v123',options),/Video does not exist/);
   await assert.rejects(fetchVodInfo('v123',{command:process.execPath,args:['-e','process.stdout.write("null")','--']}),/Twitch не вернул доступную запись/);
 });
+test('Twitch source-only archives can fall back without selecting an audio-only format',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'clipforge-format-'));
+  try {
+    const script=join(root,'formats.mjs');
+    await writeFile(script,`import{writeFile}from'node:fs/promises';const a=process.argv.slice(2);const selector=a[a.indexOf('-f')+1];if(selector!=='720p60/best[height<=720][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]'){process.stderr.write('Requested format is not available');process.exit(1);}await writeFile(a[a.indexOf('-o')+1],'source rendition');`);
+    const path=join(root,'video.mp4');
+    await downloadVideo('v123',path,'720p60',1,{command:process.execPath,args:[script]});
+    assert.equal(await readFile(path,'utf8'),'source rendition');
+  }finally{await rm(root,{recursive:true,force:true});}
+});
 test('downloads serialize, cap overrides at 40 Mbps and never cache a failed partial file',async()=>{
   const root=await mkdtemp(join(tmpdir(),'clipforge-download-'));
   try {

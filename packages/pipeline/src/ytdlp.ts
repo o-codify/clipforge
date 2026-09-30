@@ -361,6 +361,12 @@ export async function downloadVideo(
 
   await mkdir(dirname(target), { recursive: true });
   const [command, args] = base(options);
+  // Twitch may expose only the source rendition. Prefer the requested quality,
+  // then a smaller combined stream, and finally the available source.
+  const height = /^(\d+)p(?:\d+)?$/.exec(format)?.[1];
+  const selector = height
+    ? `${format}/best[height<=${height}][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]`
+    : format;
   const pending=target.replace(/\.[^.]+$/,'.pending')+extname(target);
   // Preserve native HLS checkpoints from the previous downloader layout.
   if(!existsSync(`${pending}.part`) && existsSync(`${target}.part`)) {
@@ -372,7 +378,7 @@ export async function downloadVideo(
     command,
     [
       ...args,
-      "-f", format,
+      "-f", selector,
       // Один фрагмент за раз: лимит скорости не умножается числом соединений.
       ...downloadArgs(options),
       "-o", pending,

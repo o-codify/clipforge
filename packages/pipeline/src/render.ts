@@ -110,9 +110,10 @@ export async function runMediaCommand(
   command: string,
   args: readonly string[],
   timeoutMs: number,
+  headroomMb = 0,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   for (;;) {
-  await waitForResources();
+  await waitForResources(undefined, headroomMb);
   const started = Date.now();
   const result = await new Promise<{ code: number; stdout: string; stderr: string; pid?: number }>((resolve, reject) => {
     const child = spawn(command, args, { windowsHide: true });
@@ -249,6 +250,7 @@ export function buildFfmpegArgs(options: RenderOptions, assPath: string | null):
   const readDuration = duration + outroSeconds;
 
   const inputs: string[] = [];
+  const threads = Math.max(1, Math.min(4, options.threads ?? 2));
   const overlays: Overlay[] = [];
   const scrim: Scrim | undefined =
     outroSeconds > 0 && outro
@@ -259,7 +261,7 @@ export function buildFfmpegArgs(options: RenderOptions, assPath: string | null):
     const logo = headerLogoPath(assets, header);
     if (existsSync(logo)) {
       const box = headerGeometry(assets, header, OUT_WIDTH);
-      inputs.push("-loop", "1", "-framerate", String(fps),
+      inputs.push("-threads", String(threads), "-loop", "1", "-framerate", String(fps),
                   "-t", readDuration.toFixed(3), "-i", logo);
       overlays.push({
         input: overlays.length + 1,
@@ -276,7 +278,7 @@ export function buildFfmpegArgs(options: RenderOptions, assPath: string | null):
     const logo = outroLogoPath(assets, outro);
     if (existsSync(logo)) {
       const box = outroLayout(assets, outro, OUT_WIDTH, OUT_HEIGHT);
-      inputs.push("-loop", "1", "-framerate", String(fps),
+      inputs.push("-threads", String(threads), "-loop", "1", "-framerate", String(fps),
                   "-t", readDuration.toFixed(3), "-i", logo);
       overlays.push({
         input: overlays.length + 1,
@@ -288,7 +290,7 @@ export function buildFfmpegArgs(options: RenderOptions, assPath: string | null):
   }
 
   const audioInput = options.audioSource ? `${1 + inputs.filter(v => v === '-i').length}:a` : '0:a';
-  if (options.audioSource) inputs.push('-i', options.audioSource);
+  if (options.audioSource) inputs.push('-threads', String(threads), '-i', options.audioSource);
   const audio = buildAudioFilter(censorSpans, start, readDuration, censorBeep, audioInput);
   let graph = buildFilter(grid, {
     ...(assPath ? { subtitlesPath: assPath } : {}),
@@ -302,14 +304,17 @@ export function buildFfmpegArgs(options: RenderOptions, assPath: string | null):
 
   const args = [
     "-nostdin", "-y", "-loglevel", "error",
+    // Encoder threads alone do not constrain decoding or the complex filter
+    // graph, which otherwise allocate buffers for every logical CPU.
+    "-filter_complex_threads", "1", "-filter_threads", "1",
     // -ss до -i: быстрый поиск по ключевым кадрам.
     "-ss", start.toFixed(3), "-t", readDuration.toFixed(3),
-    "-i", source,
+    "-threads", String(threads), "-i", source,
     ...inputs,
     "-filter_complex", graph,
     "-map", "[vout]", "-map", audio.output,
     "-c:v", "libx264", "-preset", preset, "-crf", String(crf),
-    ...(options.threads ? ["-threads", String(options.threads)] : []),
+    "-threads", String(threads),
     "-pix_fmt", "yuv420p", "-profile:v", "high",
     "-r", String(fps),
     "-c:a", "aac", "-b:a", audioBitrate, "-ac", "2",
@@ -359,7 +364,7 @@ export async function renderClip(options: RenderOptions): Promise<RenderResult> 
     }
 
     const { args } = buildFfmpegArgs(options, assPath);
-    const result = await runMediaCommand("ffmpeg", args, options.timeoutMs ?? 600_000);
+    const result = await runMediaCommand("ffmpeg", args, options.timeoutMs ?? 600_000, 512);
     const seconds = (Date.now() - started) / 1000;
 
     if (result.code !== 0 || !existsSync(options.out)) {
@@ -367,7 +372,9 @@ export async function renderClip(options: RenderOptions): Promise<RenderResult> 
         path: options.out,
         ok: false,
         seconds,
-        error: result.stderr.slice(-400),
+        error: result.stderr.length > 4000
+          ? `${result.stderr.slice(0, 3000)}\n…\n${result.stderr.slice(-1000)}`
+          : result.stderr,
         command: ["ffmpeg", ...args],
       };
     }

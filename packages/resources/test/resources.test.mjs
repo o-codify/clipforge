@@ -4,7 +4,20 @@ import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {ByteBudget,resourceState,activeTimeout,resourceRequest,ResourcePauseError} from '../dist/index.js';
+import {ByteBudget,resourceState,activeTimeout,resourceRequest,ResourcePauseError,waitForResources} from '../dist/index.js';
+
+test('render admission waits for allocation room above the desktop reserve',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'cf-admission-')),file=join(dir,'state.json'),old=process.env.MEDIA_RESOURCE_STATE;
+ process.env.MEDIA_RESOURCE_STATE=file;
+ let admitted=false;
+ const snapshot=memoryMb=>writeFileSync(file,JSON.stringify({at:Date.now(),paused:false,memoryMb,metrics:{ownMemoryMb:300}}));
+ try {
+  snapshot(600);
+  const pending=waitForResources(undefined,512).then(()=>{admitted=true;});
+  await delay(100);assert.equal(admitted,false);
+  snapshot(900);await pending;assert.equal(admitted,true);
+ }finally{if(old===undefined)delete process.env.MEDIA_RESOURCE_STATE;else process.env.MEDIA_RESOURCE_STATE=old;rmSync(dir,{recursive:true});}
+});
 test('missing/stale governor fails closed and preserves the preemption receipt',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'cf-resources-')),file=join(dir,'state.json');
  try {
