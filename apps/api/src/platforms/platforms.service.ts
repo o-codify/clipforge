@@ -12,7 +12,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from "@nes
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { clips, games, streamers, runs, platformAccounts, publications, runtimeValue, beginYoutubeDisconnect, forgetYoutubeAccount, type Database } from "@clipforge/db";
-import { QUEUES, type PayloadOf } from "@clipforge/jobs";
+import { QUEUES, batchPublicationKey, type BatchPublicationPolicy, type PayloadOf } from "@clipforge/jobs";
 import {
   authUrl,
   exchangeCode,
@@ -68,6 +68,42 @@ export class PlatformsService {
       .from(platformAccounts);
   }
 
+  async batches() {
+    return this.db.execute(sql`select r.value as policy, j.state as "jobState",
+      (select count(*)::int from clips c join runs n on n.id=c.run_id
+        where n.settings->>'jobId'=r.value->>'jobId' and c.archived_at is null and c.state<>'blocked') as ready,
+      (select count(*)::int from publications p join clips c on c.id=p.clip_id join runs n on n.id=c.run_id
+        where n.settings->>'jobId'=r.value->>'jobId' and p.account=r.value->>'channelId' and p.media_id is not null) as uploaded
+      from platform_runtime r left join jobs.job j on j.id::text=r.value->>'jobId'
+      where r.key like 'batch-publication:%' order by r.updated_at desc limit 50`);
+  }
+
+  async configureBatch(id:string,options:Pick<BatchPublicationPolicy,'enabled'|'channelId'|'intervalMinutes'|'dailyLimit'|'privacy'>) {
+    return this.db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(740025)`);
+      const [job]=await tx.execute<{data:{login:string};state:string}>(sql`select data,state from jobs.job where id=${id}::uuid and name=${QUEUES.prepareStreamer}`);
+      if(!job) throw new NotFoundException('Подборка не найдена');
+      if(options.enabled&&job.state==='cancelled')throw new BadRequestException('Подборка отменена');
+      const key=batchPublicationKey(id);
+      const [saved]=await tx.execute<{value:BatchPublicationPolicy}>(sql`select value from platform_runtime where key=${key} for update`);
+      if(saved?.value.pendingPublicationId&&saved.value.channelId!==options.channelId)throw new BadRequestException('Сначала завершите текущую публикацию');
+      const policy:BatchPublicationPolicy={...saved?.value,...options,jobId:id,login:job.data.login,
+        authorizedAt:new Date().toISOString(),state:options.enabled?'waiting':'paused',error:null};
+      await tx.execute(sql`insert into platform_runtime(key,value) values(${key},${JSON.stringify(policy)}::jsonb)
+        on conflict(key) do update set value=excluded.value,updated_at=now()`);
+      return policy;
+    });
+  }
+
+  async pauseBatch(id:string) {
+    await this.db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(740025)`);
+      await tx.execute(sql`update platform_runtime set value=value || '{"enabled":false,"state":"paused"}'::jsonb,updated_at=now()
+        where key=${batchPublicationKey(id)}`);
+    });
+    return {paused:true};
+  }
+
   /** Stored facts only: reading this endpoint never uploads or contacts Google. */
   async publication(id:string) {
     const [row] = await this.db.execute<{id:string;videoId:string|null;status:string;collectedAt:Date|null}>(sql`
@@ -81,7 +117,7 @@ export class PlatformsService {
       join platform_accounts a on a.platform=p.platform and a.external_id=p.account
       left join lateral (select * from publication_metrics where publication_id=p.id
         order by collected_at desc,id desc limit 1) m on true
-      left join lateral (select id,state from jobs.job where name=${QUEUES.publishClip}
+      left join lateral (select id,state from jobs.job where name in (${QUEUES.publishClip},${QUEUES.publishBatchClip})
         and data->>'publicationId'=p.id order by created_on desc limit 1) j on true
       where p.id=${id} and p.platform='youtube' and a.disconnect_requested_at is null`);
     if(!row) throw new NotFoundException('Публикация недоступна');

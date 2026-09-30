@@ -5,6 +5,10 @@ import { PlatformClient } from './client.js';
 export const HELP=`ClipForge — управление через API платформы
 
 pnpm cf accounts                         подключённые каналы
+pnpm cf batch-publications               очередь публикации подборок
+pnpm cf pace-batch <jobId> --channel UC… [--interval 10] [--daily-limit 100]
+                                        публично, по одному готовому клипу с интервалом
+pnpm cf pause-batch <jobId>               приостановить публикацию подборки
 pnpm cf youtube-check [accountId]        проверить авторизацию канала
 pnpm cf clips [--streamer login]         найти клипы
 pnpm cf clip <clipId>                    клип, проверка рекламы, публикации
@@ -58,6 +62,7 @@ export function parseCommand(args:string[]) {
     metadata:{type:'string'},regions:{type:'string'},timeout:{type:'string'},
     count:{type:'string'},fresh:{type:'boolean'},audio:{type:'string'},'test-batch':{type:'boolean'},
     ads:{type:'string'},all:{type:'boolean'},vods:{type:'string'},
+    channel:{type:'string'},interval:{type:'string'},'daily-limit':{type:'string'},
   }});
 }
 function integer(value:string|undefined,fallback:number,max:number) {
@@ -74,16 +79,24 @@ async function jsonFile(path:string|undefined) {
 export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promise<Plan> {
   const [command,target,...extra]=parsed.positionals;
   const options=parsed.values;
-  const noTarget=['accounts','clips','analytics','jobs','active'];
+  const noTarget=['accounts','clips','analytics','jobs','active','batch-publications'];
   const optionalTarget=['youtube-check','refresh'];
-  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','streamer-ads','vod-ads','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','wait','cleanup','inspect-ads','approve-clip','draft-clip'];
+  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','streamer-ads','vod-ads','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','wait','cleanup','inspect-ads','approve-clip','draft-clip','pace-batch','pause-batch'];
   if(!command||![...noTarget,...optionalTarget,...targets].includes(command))throw new Error('Неизвестная команда. Используйте pnpm cf --help');
   if(extra.length||(noTarget.includes(command)&&target)||(targets.includes(command)&&!target))throw new Error('Неверное число аргументов команды');
   const allowed:Record<string,string[]>={clips:['streamer','limit'],render:['count','fresh','audio','test-batch'],prepare:['count','audio'],'prepare-streamer':['count','audio','vods'],'streamer-ads':['ads','all'],'vod-ads':['ads'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
+  allowed['pace-batch']=['channel','interval','daily-limit'];
   for(const key of Object.keys(options))if(!['url','help',...(allowed[command]??[])].includes(key))throw new Error(`Параметр --${key} не относится к команде ${command}`);
   const id=encodeURIComponent(target??'');
   switch(command) {
     case 'accounts':return {path:'/api/platforms'};
+    case 'batch-publications':return {path:'/api/platforms/batches'};
+    case 'pause-batch':return {path:`/api/platforms/batches/${id}`,method:'DELETE'};
+    case 'pace-batch': {
+      if(!options.channel||!/^UC[\w-]{22}$/.test(options.channel))throw new Error('--channel: идентификатор канала UC…');
+      return {path:`/api/platforms/batches/${id}`,method:'POST',body:{enabled:true,channelId:options.channel,
+        intervalMinutes:integer(options.interval,10,1440),dailyLimit:integer(options['daily-limit'],100,100),privacy:'public'}};
+    }
     case 'youtube-check':return {path:'/api/platforms/youtube/check',method:'POST',body:target?{accountId:target}:{}};
     case 'clips': {
       const query=new URLSearchParams({limit:String(integer(options.limit,30,100))});

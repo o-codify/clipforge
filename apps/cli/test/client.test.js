@@ -43,6 +43,14 @@ test('mass drafts and independent inherited ad preferences are explicit API oper
     await assert.rejects(commandPlan(parseCommand(args)));
 });
 
+test('paced publication explicitly scopes one batch and has a separate pause action',async()=>{
+  assert.deepEqual(await commandPlan(parseCommand(['pace-batch','batch','--channel','UC-P-55QVYfT8SBtGnCNAtog'])),
+    {path:'/api/platforms/batches/batch',method:'POST',body:{enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog',intervalMinutes:10,dailyLimit:100,privacy:'public'}});
+  assert.deepEqual(await commandPlan(parseCommand(['pause-batch','batch'])),{path:'/api/platforms/batches/batch',method:'DELETE'});
+  await assert.rejects(commandPlan(parseCommand(['pace-batch','batch','--channel','anything'])));
+  await assert.rejects(commandPlan(parseCommand(['pace-batch','batch','--channel','UC-P-55QVYfT8SBtGnCNAtog','--daily-limit','101'])));
+});
+
 test('login and logout use API; reads do not write; mutations are not retried or redirected',async()=>{
   const calls=[];
   const server=createServer(async(req,res)=>{

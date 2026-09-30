@@ -1,9 +1,21 @@
 import unittest
 from unittest.mock import patch
 import numpy as np
-from clipforge_worker.facecam import Rect, _dominant_cluster, valid_eye_landmarks, find_facecam
+from clipforge_worker.facecam import Rect, SampleFrames, _dominant_cluster, valid_eye_landmarks, find_facecam
 
 class CameraChecks(unittest.TestCase):
+    def test_samples_keep_exact_pixels_on_disk_instead_of_ram(self):
+        samples=SampleFrames()
+        try:
+            frame=np.arange(240*320*3,dtype=np.uint8).reshape((240,320,3))
+            for i in range(200): samples.append(frame)
+            self.assertEqual(len(samples),200)
+            self.assertTrue(all(isinstance(n,int) for n in samples.offsets))
+            np.testing.assert_array_equal(samples[137],frame)
+            self.assertEqual(len(samples[::50]),4)
+            self.assertEqual(sum(1 for _ in samples),200)
+        finally: samples.close()
+        self.assertTrue(samples.file.closed)
     def test_duplicate_faces_do_not_inflate_coverage(self):
         group, _ = _dominant_cluster([(Rect(10,10,40,50),.9,0)]*20)
         self.assertEqual(len(group),1)

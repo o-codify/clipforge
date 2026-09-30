@@ -7,6 +7,7 @@ import { SettingsCard, LoadError } from "@/components/SettingsCard";
 import { Modal } from "@/components/Modal";
 import { toast } from "@/lib/toast";
 import { PublicationAnalytics } from "@/components/PublicationAnalytics";
+import { BatchPublications } from '@/components/BatchPublications';
 export default function PublicationSettings(){
   const [platforms,setPlatforms]=useState<PlatformAccount[]|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState("");
   const [checked,setChecked]=useState<Record<string,{state:string;reason?:string}>>({}),[disconnect,setDisconnect]=useState<PlatformAccount|null>(null);
@@ -26,6 +27,7 @@ export default function PublicationSettings(){
     </SettingsCard>)}</div>
     {platforms?.length===0&&<div className="settings-empty"><span className="service-mark youtube-mark" aria-hidden>▶</span><h2>Каналы пока не подключены</h2><p>Подключите YouTube-канал для отправки готовых клипов.</p><Button variant="primary" busy={busy==="connect"} onClick={connect}>Подключить канал</Button></div>}
     {disconnect&&<Modal title="Отключить канал" onClose={()=>{if(!busy)setDisconnect(null);}}><p>Отключить «{disconnect.label}»? Доступ будет отозван, сведения о канале и его статистика удалены из ClipForge. Видео на YouTube сохранятся.</p><div className="dialog-actions"><Button disabled={!!busy} onClick={()=>setDisconnect(null)}>Отмена</Button><Button variant="danger" busy={busy==="disconnect"} onClick={()=>void action("disconnect",async()=>{const result=await api.del<{state:string}>("/api/platforms/"+disconnect.id);toast.info(result.state==="pending"?"Отключение ожидает ответа Google":"Канал отключён");setDisconnect(null);await load();})}>Отключить канал</Button></div></Modal>}
+    <BatchPublications/>
     <PublicationAnalytics/>
   </>;
 }

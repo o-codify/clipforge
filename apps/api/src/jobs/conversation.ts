@@ -27,6 +27,7 @@ export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
     "light.index-channel":"Проверил записи канала и обновил список эфиров.",
     "light.fetch-vod-info":"Обновил информацию об эфире.","light.refresh-streamer":"Обновил профиль стримера.",
     "light.publish-clip":"Завершил задание публикации. Результат можно проверить в карточке клипа.",
+    "light.publish-batch-clip":"Загрузил клип подборки. Следующий отправлю после интервала.",
     "light.refresh-youtube":"Проверил видимость видео, ограничения и обновил статистику YouTube.",
   };
   const text=complete ? completions[job.name]??"Закончил задание. Результаты сохранены."

@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Res } from "@nestjs/common";
 import { z } from "zod";
-import { refreshYoutubePayload } from '@clipforge/jobs';
+import { refreshYoutubePayload, batchPublicationOptions } from '@clipforge/jobs';
 import type { FastifyReply } from "fastify";
 
 import { AdminOnly, Public } from "../auth/auth.guard.js";
@@ -20,6 +20,20 @@ export class PlatformsController {
   accounts() {
     return this.platforms.accounts();
   }
+
+  @AdminOnly()
+  @Get('batches')
+  batches() { return this.platforms.batches(); }
+
+  @AdminOnly()
+  @Post('batches/:id')
+  configureBatch(@Param('id') id:string,@Body() body:unknown) {
+    return this.platforms.configureBatch(z.string().uuid().parse(id),batchPublicationOptions.parse(body));
+  }
+
+  @AdminOnly()
+  @Delete('batches/:id')
+  pauseBatch(@Param('id') id:string) { return this.platforms.pauseBatch(z.string().uuid().parse(id)); }
 
   @AdminOnly()
   @Get('publications/:id')

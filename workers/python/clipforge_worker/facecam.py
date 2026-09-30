@@ -5,6 +5,9 @@ Uncertain or missing detections disable the separate camera panel.
 from __future__ import annotations
 
 import logging
+import tempfile
+from collections.abc import Sequence
+from functools import lru_cache
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -68,9 +71,37 @@ class FacecamResult:
     note: str = ""
 
 
+class SampleFrames(Sequence):
+    """Lossless scratch storage: hundreds of 1080p frames do not live in RAM.
+
+    Keep source pixels and sample indices unchanged (small masked faces matter).
+    The temporary file is removed on close, including an exception during decode.
+    """
+    def __init__(self):
+        self.file = tempfile.TemporaryFile(prefix='clipforge-frames-')
+        self.offsets = []
+
+    def append(self, frame):
+        self.file.seek(0, 2)
+        self.offsets.append(self.file.tell())
+        np.save(self.file, frame, allow_pickle=False)
+
+    def __len__(self):
+        return len(self.offsets)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self[i] for i in range(*index.indices(len(self))) ]
+        self.file.seek(self.offsets[index])
+        return np.load(self.file, allow_pickle=False)
+
+    def close(self):
+        self.file.close()
+
+
 def grab_frames(
     video: Path | str, count: int = 40, skip_edges: float = 0.04, start: float | None = None, end: float | None = None
-) -> list[np.ndarray]:
+) -> SampleFrames:
     """Достать кадры, равномерно раскиданные по всей длине файла.
 
     Края пропускаются: в начале и конце стрима обычно заставка, стартовый
@@ -83,39 +114,36 @@ def grab_frames(
         raise RuntimeError(f"не удалось открыть видео: {video}")
 
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    frames: list[np.ndarray] = []
+    frames = SampleFrames()
 
-    if total <= 0:
-        # Некоторые контейнеры не отдают число кадров - читаем подряд.
-        for _ in range(count):
+    try:
+        if total <= 0:
+            # Некоторые контейнеры не отдают число кадров - читаем подряд.
+            for _ in range(count):
+                ok, frame = capture.read()
+                if not ok: break
+                frames.append(frame)
+            return frames
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        if start is not None and end is not None:
+            if fps <= 0 or end <= start: return frames
+            lo, hi = max(0, int(start * fps)), min(total - 1, int(end * fps) - 1)
+            if hi < lo: return frames
+        else:
+            lo, hi = int(total * skip_edges), int(total * (1 - skip_edges))
+        for position in np.linspace(lo, hi, count).astype(int):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, int(position))
             ok, frame = capture.read()
-            if not ok:
-                break
-            frames.append(frame)
-        capture.release()
+            if ok: frames.append(frame)
         return frames
-
-    fps = float(capture.get(cv2.CAP_PROP_FPS))
-    if start is not None and end is not None:
-        if fps <= 0 or end <= start:
-            capture.release()
-            return []
-        lo, hi = max(0, int(start * fps)), min(total - 1, int(end * fps) - 1)
-        if hi < lo:
-            capture.release()
-            return []
-    else:
-        lo, hi = int(total * skip_edges), int(total * (1 - skip_edges))
-    for position in np.linspace(lo, hi, count).astype(int):
-        capture.set(cv2.CAP_PROP_POS_FRAMES, int(position))
-        ok, frame = capture.read()
-        if ok:
-            frames.append(frame)
-    capture.release()
-    return frames
+    except BaseException:
+        frames.close()
+        raise
+    finally:
+        capture.release()
 
 
-def _detect_faces(frames: list[np.ndarray], min_score: float = 0.75,
+def _detect_faces(frames: Sequence, min_score: float = 0.75,
                   model_path: Path | str | None = None) -> list[tuple[Rect, float, int]]:
     """Прогнать детектор по кадрам. Возвращает найденные лица с оценками."""
     import cv2
@@ -259,8 +287,10 @@ def _track_short_gaps(frames, detections, group, max_gap_frames):
     for rect,score,i in detections:
         if any(rect==r for r in group) and (i not in by_frame or score>by_frame[i][1]):
             by_frame[i]=(rect,score)
-    gray=[cv2.cvtColor(f,cv2.COLOR_BGR2GRAY) for f in frames]
-    height,width=gray[0].shape
+    @lru_cache(maxsize=3)
+    def gray(index):
+        return cv2.cvtColor(frames[index],cv2.COLOR_BGR2GRAY)
+    height,width=gray(0).shape
     recovered=list(detections)
     tracked=0
     for i in range(len(frames)):
@@ -275,10 +305,10 @@ def _track_short_gaps(frames, detections, group, max_gap_frames):
             # Track the head silhouette as well as the visible face. Hair and
             # mask remain useful features while a hand briefly covers the eyes.
             r=Rect(max(0,r.x-r.w//4),max(0,r.y-r.h//2),int(r.w*1.5),int(r.h*1.5)).clamped(width,height)
-            template=gray[neighbour][r.y:r.y+r.h,r.x:r.x+r.w]
+            template=gray(neighbour)[r.y:r.y+r.h,r.x:r.x+r.w]
             if template.size==0 or np.std(template)<8:break
             roi=Rect(max(0,r.x-r.w//2),max(0,r.y-r.h//2),r.w*2,r.h*2).clamped(width,height)
-            area=gray[i][roi.y:roi.y+roi.h,roi.x:roi.x+roi.w]
+            area=gray(i)[roi.y:roi.y+roi.h,roi.x:roi.x+roi.w]
             if area.shape[0]<r.h or area.shape[1]<r.w:break
             _,correlation,_,location=cv2.minMaxLoc(cv2.matchTemplate(area,template,cv2.TM_CCOEFF_NORMED))
             if correlation>=.8:
@@ -290,9 +320,9 @@ def _track_short_gaps(frames, detections, group, max_gap_frames):
             corners=cv2.goodFeaturesToTrack(template,40,.01,3)
             if corners is None or len(corners)<8:break
             points=corners+np.array([r.x,r.y],dtype=np.float32)
-            moved,status,error=cv2.calcOpticalFlowPyrLK(gray[neighbour],gray[i],points,None,winSize=(15,15),maxLevel=2)
+            moved,status,error=cv2.calcOpticalFlowPyrLK(gray(neighbour),gray(i),points,None,winSize=(15,15),maxLevel=2)
             if moved is None:break
-            returned,back_status,_=cv2.calcOpticalFlowPyrLK(gray[i],gray[neighbour],moved,None,winSize=(15,15),maxLevel=2)
+            returned,back_status,_=cv2.calcOpticalFlowPyrLK(gray(i),gray(neighbour),moved,None,winSize=(15,15),maxLevel=2)
             if returned is None:break
             good=(status.ravel()==1)&(back_status.ravel()==1)&(error.ravel()<20)&(np.linalg.norm(returned-points,axis=2).ravel()<1.5)
             if np.count_nonzero(good)<6 or np.mean(good)<.5:break
@@ -325,6 +355,13 @@ def find_facecam(
     стримера, который часто отходит от экрана.
     """
     frames = grab_frames(video, samples, start=start, end=end)
+    try:
+        return _find_facecam_frames(frames,samples,min_hit_ratio,model_path,start,end,reference_rect,game)
+    finally:
+        if hasattr(frames,'close'): frames.close()
+
+
+def _find_facecam_frames(frames,samples,min_hit_ratio,model_path,start,end,reference_rect,game):
     if not frames:
         return FacecamResult(False, note="не удалось прочитать кадры")
 

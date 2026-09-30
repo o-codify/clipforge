@@ -17,7 +17,7 @@ export async function prepareStreamer(ctx:Context,input:PayloadOf<typeof QUEUES.
   if(ids.some(id=>!available.some(v=>v.id===id)))throw new Error('Все эфиры подборки должны принадлежать выбранному стримеру');
   const plan:Plan=saved?.value??{vodIds:ids,requested:{},finished:[],errors:{}};
   const results=async()=>ctx.db.select({id:clips.id,vodId:clips.vodId}).from(clips).innerJoin(runs,eq(runs.id,clips.runId))
-    .where(and(eq(runs.streamer,input.login),isNull(clips.archivedAt),sql`${runs.settings}->>'jobId'=${report.id}`));
+    .where(and(eq(runs.streamer,input.login),isNull(clips.archivedAt),sql`${clips.state}<>'blocked'`,sql`${runs.settings}->>'jobId'=${report.id}`));
   const save=async()=>{const list=await results();await runtimeValue(ctx.db,key,{...plan,target:input.count,ready:list.length,clipIds:list.map(c=>c.id),publication:'hold-for-user-review'});return list;};
   await save();
   for(const vodId of plan.vodIds) {

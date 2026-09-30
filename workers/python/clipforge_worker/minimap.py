@@ -182,7 +182,19 @@ def detect_minimap(frames,game,exclude_rect=None):
         result.note='Для этой игры проверенный детектор мини-карты пока не настроен';return result
     if not frames:result.note='Нет кадров для проверки карты';return result
     original_h,original_w=frames[0].shape[:2];scale=720/original_h
-    frames=[cv2.resize(f,(round(original_w*scale),720)) for f in frames]
+    # Resize on demand, with bounded cache; do not retain 200 full HUD frames.
+    from collections.abc import Sequence
+    from functools import lru_cache
+    source=frames
+    class ResizedFrames(Sequence):
+        def __len__(self): return len(source)
+        @lru_cache(maxsize=3)
+        def frame(self,index): return cv2.resize(source[index],(round(original_w*scale),720))
+        def __getitem__(self,index):
+            if isinstance(index,slice): return [self.frame(i) for i in range(*index.indices(len(self)))]
+            if index>=len(self): raise IndexError(index)
+            return self.frame(index)
+    frames=ResizedFrames()
     exclude=Rect(*(round(v*scale) for v in (exclude_rect.x,exclude_rect.y,exclude_rect.w,exclude_rect.h))) if exclude_rect else None
     propose=_dota_proposals if profile=='dota2' else _grid_proposals
     score=_dota_score if profile=='dota2' else _grid_score
@@ -203,7 +215,7 @@ def detect_minimap(frames,game,exclude_rect=None):
         if len(support)<required:continue
         scores=[];details=[];patches=[]
         for frame in frames:
-            patch=frame[box.y:box.y+box.h,box.x:box.x+box.w];patches.append(patch)
+            patch=frame[box.y:box.y+box.h,box.x:box.x+box.w].copy();patches.append(patch)
             value,evidence=score(patch);scores.append(value);details.append(evidence)
         confirmed=[i for i,s in enumerate(scores) if s>=.65]
         if len(confirmed)>=max(2,len(frames)*.4):
@@ -232,6 +244,9 @@ def detect_minimap(frames,game,exclude_rect=None):
 
 def find_minimap(video: Path | str,game: str,start: float,end: float,samples: int=12,exclude_rect: Rect | None=None):
     frames=grab_frames(video,samples,start=start,end=end)
-    result=detect_minimap(frames,game,exclude_rect)
-    if len(frames)!=samples:result.found=False;result.rect=None;result.note='Не все кадры карты прочитаны'
-    return result
+    try:
+        result=detect_minimap(frames,game,exclude_rect)
+        if len(frames)!=samples:result.found=False;result.rect=None;result.note='Не все кадры карты прочитаны'
+        return result
+    finally:
+        if hasattr(frames,'close'): frames.close()

@@ -5,7 +5,7 @@ const actions: Record<string, string> = {
   "heavy.transcribe-vod": "Распознавание речи", "heavy.analyze-vod": "Поиск ярких звуковых моментов",
   "heavy.facecam-vod": "Поиск камеры стримера", "heavy.render-run": "Монтаж вертикальных клипов", "heavy.render-variant": "Монтаж клипов с выбранной обработкой", "heavy.clean-clip":"Скрытие QR-кодов и рекламы", "heavy.inspect-ads":"Проверка рекламы эфира",
   "light.index-channel": "Поиск новых эфиров", "light.fetch-vod-info": "Обновление информации об эфире",
-  "light.refresh-streamer": "Обновление профиля стримера", "light.publish-clip": "Публикация клипа",
+  "light.refresh-streamer": "Обновление профиля стримера", "light.publish-clip": "Публикация клипа", "light.publish-batch-clip": "Публикация клипа подборки",
   "light.refresh-youtube": "Проверка публикаций YouTube",
 };
 export const jobAction = (job: Pick<JobRow,"name">) => actions[job.name] ?? "Обработка материала";

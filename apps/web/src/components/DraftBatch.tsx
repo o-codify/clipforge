@@ -6,6 +6,7 @@ import {useJobs} from '@/lib/jobs';
 import {JobButton} from './ui';
 import {Select} from './Select';
 import type {AudioMode} from './AudioSetting';
+import {BatchPublications} from './BatchPublications';
 
 export function DraftBatch({login}:{login:string}) {
   const [count,setCount]=useState('100');
@@ -27,5 +28,6 @@ export function DraftBatch({login}:{login:string}) {
         toast.info('Подборка поставлена в очередь. Результаты появятся в черновиках.');
       }}>Подготовить черновики</JobButton>
     </div>
+    <BatchPublications login={login} batchId={job?.id}/>
   </div>;
 }

@@ -53,6 +53,8 @@ export const QUEUES = {
    * а не видеокарту, и не должна стоять за часовым рендером.
    */
   publishClip: "light.publish-clip",
+  // Media worker owns paced batches, independently of its serial render lane.
+  publishBatchClip: "light.publish-batch-clip",
   refreshYoutube: "light.refresh-youtube",
 } as const;
 
@@ -165,6 +167,7 @@ export const PAYLOADS = {
   [QUEUES.renderRun]: renderRunPayload,
   [QUEUES.renderVariant]: renderRunPayload,
   [QUEUES.publishClip]: publishClipPayload,
+  [QUEUES.publishBatchClip]: publishClipPayload.extend({batchId:z.string().uuid()}).strict(),
   [QUEUES.refreshYoutube]: refreshYoutubePayload,
   [QUEUES.cleanClip]: cleanClipPayload,
   [QUEUES.inspectAds]: z.object({vodId:z.string().min(1)}),
@@ -172,6 +175,18 @@ export const PAYLOADS = {
 
 export type PayloadOf<Q extends QueueName> = z.infer<(typeof PAYLOADS)[Q]>;
 export type PayloadInput<Q extends QueueName> = z.input<(typeof PAYLOADS)[Q]>;
+
+export const batchPublicationOptions = z.object({
+  enabled:z.boolean(), channelId:z.string().regex(/^UC[\w-]{22}$/),
+  intervalMinutes:z.number().int().min(1).max(1440).default(10),
+  dailyLimit:z.number().int().min(1).max(100).default(100),
+  privacy:z.enum(['private','unlisted','public']).default('public'),
+}).strict();
+export type BatchPublicationPolicy = z.infer<typeof batchPublicationOptions> & {
+  jobId:string; login:string; authorizedAt:string; state:string;
+  pendingPublicationId?:string|null; nextAt?:string|null; error?:string|null;
+};
+export const batchPublicationKey = (id:string) => `batch-publication:${id}`;
 
 /**
  * Ключ, по которому задание считается уже стоящим в очереди.

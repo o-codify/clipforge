@@ -24,6 +24,7 @@ import {
   transcribeVod, inspectAds, type JobReport,
 } from "./handlers.js";
 import { publishClip } from "./publish.js";
+import { publishBatchClip, startBatchPublications } from './batch-publication.js';
 import { refreshYoutube } from './metrics.js';
 import { cleanClip } from './clean-clip.js';
 import { prepareStreamer } from './prepare-streamer.js';
@@ -51,6 +52,7 @@ const HANDLERS: Record<string, Handler> = {
   [QUEUES.renderRun]: renderRun as Handler,
   [QUEUES.renderVariant]: renderRun as Handler,
   [QUEUES.publishClip]: publishClip as Handler,
+  [QUEUES.publishBatchClip]: publishBatchClip as Handler,
   [QUEUES.refreshYoutube]: refreshYoutube as Handler,
   [QUEUES.cleanClip]: cleanClip as Handler,
 };
@@ -90,7 +92,7 @@ async function releaseStaleJobs(boss: PgBoss, ctx: Context, queues: ReadonlySet<
   if (stale.length === 0) return;
 
   for (const job of stale) {
-    if (job.name === QUEUES.publishClip && job.data.publicationId) {
+    if ((job.name === QUEUES.publishClip || job.name === QUEUES.publishBatchClip) && job.data.publicationId) {
       await ctx.db.execute(sql`update publications set status = 'failed',
         error = '[upload-uncertain] Процесс прервался во время загрузки. Проверьте канал перед повторной отправкой.'
         where id = ${job.data.publicationId} and status = 'uploading' and media_id is null
@@ -284,6 +286,7 @@ async function main(): Promise<void> {
   // Автоматика: активные каналы обходятся сами, кандидаты из каталога
   // подключаются сами, нарезку запускает планировщик.
   const stopAutomation = role === "media" || requestedQueues ? () => {} : startAutomation(boss, ctx, automationDefaults(process.env));
+  const stopBatchPublications = selectedQueues.has(QUEUES.publishBatchClip) ? startBatchPublications(ctx,boss) : () => {};
   let pruning = false;
   const pruneTimer = role === "media" && !requestedQueues ? setInterval(async () => {
     if (pruning) return;
@@ -298,6 +301,7 @@ async function main(): Promise<void> {
     stopping = true;
     ctx.log("остановка");
     stopAutomation();
+    stopBatchPublications();
     clearInterval(heartbeatTimer);
     clearInterval(pruneTimer);
     if (process.env.WORKER_HEARTBEAT_FILE) await rm(process.env.WORKER_HEARTBEAT_FILE, { force: true });
