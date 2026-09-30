@@ -1,6 +1,7 @@
-import {eq} from 'drizzle-orm';
+import {and,eq} from 'drizzle-orm';
 import {vods} from '@clipforge/db';
-import {Workspace,readSignals} from '@clipforge/pipeline';
+import {Workspace,readSignals,speechHeadroomMb} from '@clipforge/pipeline';
+import {resourceState} from '@clipforge/resources';
 import {join} from 'node:path';
 import {cachedPreview} from './cached-preview.js';
 import {renderRun,runPipeline,type JobReport} from './handlers.js';
@@ -15,9 +16,16 @@ export async function preparePreview(ctx:Context,payload:Parameters<typeof runPi
     {game:row.game??'unknown',streamer:row.streamer,vodId:row.id});
   const source=await cachedPreview(workspace,ctx.config.videoFormat);
   if(!source)return runPipeline(ctx,draft,report);
+  await ctx.db.update(vods).set({state:'known',error:null})
+    .where(and(eq(vods.id,row.id),eq(vods.state,'fetching')));
   const cancelled=async()=>{if(await report.cancelled())throw new Error('Подготовка черновиков отменена');};
   await cancelled();
   report.log(`Отбор из сохранённых ${source.seconds/60} минут эфира. Полная запись остаётся нескачанной.`);
+  const resources=resourceState();
+  if(process.env.MEDIA_RESOURCE_STATE&&(resources.paused
+    ||(resources.memoryMb??0)-(resources.metrics?.ownMemoryMb??0)<speechHeadroomMb(ctx.config.speechModel))) {
+    report.log('Ожидаю свободных ресурсов для распознавания речи; сохранённый фрагмент готов.');
+  }
   const result=await ctx.python.call('transcribe',{
     audio:source.audio,model:ctx.config.speechModel,language:ctx.config.speechLanguage,
     batchSize:ctx.config.speechBatchSize,glossary:ctx.config.glossary,
