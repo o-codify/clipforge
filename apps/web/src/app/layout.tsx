@@ -8,6 +8,7 @@ import "./editorial.css";
 import "./site-frame.css";
 import "./workspace-components.css";
 import './media-cleanup.css';
+import './workspace-panels.css';
 import { Shell } from "@/components/Shell";
 
 export const metadata: Metadata = {

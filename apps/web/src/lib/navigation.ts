@@ -5,6 +5,10 @@ export const WORKSPACE_LINKS = [
   { href: "/streamers", label: "Стримеры", icon: "streamers" },
   { href: "/games", label: "Игры", icon: "games" },
   { href: "/jobs", label: "Задания", icon: "jobs" },
+  { href: "/workers", label: "Воркеры", icon: "workers" },
+  { href: "/publications", label: "Публикация", icon: "publications" },
+  { href: "/shorts", label: "Опубликованные", icon: "clips" },
+  { href: "/analytics", label: "Статистика", icon: "analytics" },
 ] as const;
 
 export function activeSection(path: string) {
@@ -28,13 +32,13 @@ export function pageTitle(path: string, isAdmin: boolean) {
 }
 
 export function sectionNumber(path: string) {
-  return ({"/":"01", "/clips":"02", "/streamers":"03", "/games":"04", "/jobs":"05", "/settings":"06", "/me":"07"} as Record<string,string>)[activeSection(path)] ?? "01";
+  return ({"/":"01", "/clips":"02", "/streamers":"03", "/games":"04", "/jobs":"05", "/workers":"06", "/publications":"07", "/shorts":"08", "/analytics":"09", "/settings":"10", "/me":"11"} as Record<string,string>)[activeSection(path)] ?? "01";
 }
 
 export function workspaceLinks(viewer: Viewer): {href:string;label:string;icon:string}[] {
   const channel = viewer.actingAs && viewer.actingAs !== "__unlinked_account__" ? viewer.actingAs : null;
   return [
-    ...WORKSPACE_LINKS.flatMap<{href:string;label:string;icon:string}>(item => item.href === "/streamers" && viewer.role === "user"
+    ...WORKSPACE_LINKS.filter(item=>viewer.isAdmin||!['/workers','/publications','/shorts','/analytics'].includes(item.href)).flatMap<{href:string;label:string;icon:string}>(item => item.href === "/streamers" && viewer.role === "user"
       ? channel ? [{...item, href:`/streamers/${channel}`, label:"Мой канал"}] : [] : [item]),
     ...(viewer.isAdmin ? [{href:"/settings",label:"Управление",icon:"settings"}] : []),
     {href:"/me",label:"Мой профиль",icon:"profile"},

@@ -44,7 +44,18 @@ HEALTHCHECK --interval=15s --timeout=8s --start-period=150s --retries=3 \
 ENTRYPOINT ["dumb-init", "--single-child", "--"]
 CMD ["node", "scripts/production.mjs"]
 
-# Production server: UI, API and scheduler. Media stays on the local PC.
+# Standalone media image. One container is one independently scheduled worker.
+FROM cpu-worker AS media-worker
+ARG RELEASE_SHA=local
+ENV RELEASE_SHA=$RELEASE_SHA
+RUN python scripts/setup-media-protection.py --dtln-only --models /app/models --kibps 512
+ENV WORKER_ROLE=media WORKER_FLEET=true WORKER_HEARTBEAT_FILE=/storage/heartbeat.json \
+    MEDIA_DOWNLOAD_KBPS=10000 MEDIA_UPLOAD_KBPS=5000
+HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=3 \
+    CMD ["node", "scripts/worker-health.mjs"]
+CMD ["python", "scripts/container-resources.py"]
+
+# Production server: UI, API and scheduler.
 FROM node:22-bookworm-slim AS server
 RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates dumb-init \
     && rm -rf /var/lib/apt/lists/*

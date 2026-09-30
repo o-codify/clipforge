@@ -13,14 +13,15 @@ import { join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 
 import {
-  clips, games, platformAccounts, publications, runs, streamers, type Database,
+  clips, games, platformAccounts, publications, runs, streamers, runtimeValue, type Database,
 } from "@clipforge/db";
 import type { PayloadOf, QUEUES } from "@clipforge/jobs";
-import { refreshAccessToken, uploadVideo, videoStatus, suggestVideoMetadata, prepareVideoMetadata, videoTags, validateVideoMetadata, UploadSessionExpiredError } from "@clipforge/youtube";
+import { refreshAccessToken, uploadVideo, videoStatus, suggestVideoMetadata, prepareVideoMetadata, videoTags, validateVideoMetadata, UploadSessionExpiredError, quotaDay } from "@clipforge/youtube";
 
 import type { Context } from "./context.js";
 import type { JobReport } from "./handlers.js";
 import { collectMetrics } from "./metrics.js";
+import {reserveUpload} from './upload-quota.js';
 
 async function setStatus(
   db: Database,
@@ -105,6 +106,7 @@ export async function publishClip(
   });
 
   try {
+    let progressAt=0;
     const accessToken = await refreshAccessToken(ctx.youtube, refreshToken);
     const source = row.storage && ctx.storage ? await ctx.storage.openVideo(row.storage.videoKey) : undefined;
     if (ctx.config.role === 'control' && !source) throw new Error('Клип ещё не загружен в S3');
@@ -116,6 +118,9 @@ export async function publishClip(
         await ctx.db.execute(sql`insert into youtube_upload_sessions(publication_id,url,size) values(${row.publication.id},${session.url},${session.size})`);
       },
       ...metadata,
+      beforeInitiate:()=>reserveUpload(ctx.db,row.publication.account,row.publication.id),
+      onProgress:(bytes,total)=>{if(Date.now()-progressAt<2000&&bytes<total)return;progressAt=Date.now();
+        void runtimeValue(ctx.db,'upload-progress:'+row.publication.id,{bytes,total,at:progressAt}).catch(()=>{});},
       tags: videoTags(row.login, row.gameTitle),
     });
 
@@ -158,6 +163,11 @@ export async function publishClip(
 
     return { message: "Проверка загрузки завершена" };
   } catch (error) {
+    if(/quotaExceeded|dailyLimitExceeded|uploadLimitExceeded/.test(String(error))){
+      const channelLimit=String(error).includes('uploadLimitExceeded');
+      await runtimeValue(ctx.db,'youtube-upload-block:'+(channelLimit?row.publication.account:'project'),{reason:channelLimit?'channel-limit':'project-quota',
+        until:channelLimit?new Date(Date.now()+86400000).toISOString():quotaDay().resetAt,publicationId:row.publication.id});
+    }
     await setStatus(ctx.db, row.publication.id, {
       status: "failed",
       error: `${error instanceof UploadSessionExpiredError ? "[upload-uncertain] " : ""}${String(error)}`.slice(0, 500),

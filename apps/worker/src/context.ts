@@ -6,6 +6,7 @@
  * переменная, которой нет.
  */
 import { config as loadEnv } from "dotenv";
+import type PgBoss from 'pg-boss';
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,6 +86,7 @@ export function loadConfig(): WorkerConfig {
 }
 
 export interface Context {
+  queue?:PgBoss;
   storage: MediaStorage | null;
   config: WorkerConfig;
   db: Database;

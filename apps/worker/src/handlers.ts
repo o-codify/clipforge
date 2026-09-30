@@ -538,6 +538,14 @@ export async function renderRun(
     await ctx.db.update(runs).set({finishedAt:new Date()}).where(eq(runs.id,resuming!.id));
     return {runId:resuming!.id,rendered:previousClips.length,skipped:0,replaced:0};
   }
+  if(!prepared&&process.env.WORKER_FLEET==='true'){
+    // A standalone render job may move to a different container with an empty cache.
+    if(!await stat(workspace.video(ctx.config.videoFormat)).then(s=>s.size>0).catch(()=>false))await fetchVod(ctx,{vodId:row.id,audioOnly:false},report);
+    if(!row.signals||!await stat(row.signals.file).then(s=>s.size>0).catch(()=>false)){
+      await analyzeVod(ctx,{vodId:row.id,force:false},report);
+      const [updated]=await ctx.db.select({signals:vods.signals}).from(vods).where(eq(vods.id,row.id));row.signals=updated!.signals;
+    }
+  }
   if (!prepared && row.facecam?.detectorVersion !== CAMERA_HINT_VERSION) {
     await facecamVod(ctx, {vodId:row.id,force:false}, report);
     const [updated] = await ctx.db.select({facecam:vods.facecam}).from(vods).where(eq(vods.id,row.id));
@@ -570,7 +578,7 @@ export async function renderRun(
   });
   report.log(`кандидатов ${candidates.length} (${Math.round((candidates.length / audio.duration) * 3600)} в час)`);
 
-  const feedback = await applyFeedback(ctx, row.streamer, candidates);
+  const feedback = await applyFeedback(ctx, row.streamer, candidates, row.game);
   report.log(`Отбор: ${feedback.evidence.mode}, публичных наблюдений ${feedback.evidence.samples}`);
   if (mode?.value.developmentMode&&!payload.testBatch) report.log("Режим разработки: создаю только один проверочный клип.");
   report.log(`Звук новых клипов: ${audioMode==='original'?'исходный':audioMode==='dtln-gated'?'DTLN с паузами':'DTLN'}.`);
@@ -656,6 +664,7 @@ export async function renderRun(
       sourceWindow: {start:sourceOffset,end:sourceOffset+audio.duration}, selection:"automatic",
       audioMode,audioSettings,adsSettings,skipExisting,testBatch:payload.testBatch??false,requestedCount:count,jobId:report.id },
   });
+  else if(resuming.outDir!==outDir)await ctx.db.update(runs).set({outDir}).where(eq(runs.id,runId));
 
   const profanityHits = findProfanity(words);
   let rendered = previousClips.length;
@@ -756,7 +765,7 @@ export async function renderRun(
     const [existing] = await ctx.db
       .select().from(clipsTable).where(eq(clipsTable.id, id));
     const [existingRun] = existing ? await ctx.db.select().from(runs).where(eq(runs.id, existing.runId)) : [];
-    const validFile = existingRun && existing ? await stat(join(existingRun.outDir, existing.file)).then(s => s.size > 0).catch(() => false) : false;
+    const validFile = existing?.mediaStorage && ctx.storage ? true : existingRun && existing ? await stat(join(existingRun.outDir, existing.file)).then(s => s.size > 0).catch(() => false) : false;
     if (existing && !existing.archivedAt && validFile) {
       if (ctx.storage && !existing.mediaStorage) {
         const mediaStorage = await storeClip(ctx, id, join(existingRun!.outDir, existing.file));

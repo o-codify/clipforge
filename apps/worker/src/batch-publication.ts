@@ -7,6 +7,7 @@ import {prepareVideoMetadata,suggestVideoMetadata,validateVideoMetadata} from '@
 import type {Context} from './context.js';
 import type {JobReport} from './handlers.js';
 import {publishClip} from './publish.js';
+import {uploadWait} from './upload-quota.js';
 
 export function publicationWindow(now:number,intervalMinutes:number,dailyLimit:number,recentDates:number[],nextAt?:string|null) {
   const recent=recentDates.filter(at=>at>now-24*3600_000).sort((a,b)=>a-b);
@@ -37,6 +38,16 @@ export async function dispatchBatchPublications(ctx:Context,boss:Pick<PgBoss,'se
       if(!account){await save('waiting-channel');continue;}
       if(p.pendingPublicationId) {
         const [pub]=await tx.execute<{status:string;mediaId:string|null;error:string|null}>(sql`select status,media_id as "mediaId",error from publications where id=${p.pendingPublicationId}`);
+        if(pub?.status==='failed'&&!pub.mediaId&&/youtube upload init.*(?:quotaExceeded|dailyLimitExceeded|uploadLimitExceeded)|\[quota-wait\]/.test(pub.error??'')){
+          const wait=await uploadWait(tx,p.channelId,now);
+          if(wait){p.nextAt=wait.until;await save('youtube-limit',wait.message);continue;}
+          // Only an explicitly rejected init can be retried automatically. Never an uncertain body upload.
+          const session=await tx.execute(sql`select publication_id from youtube_upload_sessions where publication_id=${p.pendingPublicationId}`);
+          if(!session.length){
+            await tx.execute(sql`update publications set status='queued',error=null,updated_at=now() where id=${p.pendingPublicationId}`);
+            pub.status='queued';p.nextAt=null;
+          }
+        }
         if(!pub||['failed','takedown'].includes(pub.status)){await save('error',pub?.error??'Публикация остановлена');continue;}
         if(['uploaded','published'].includes(pub.status)) {
           p.pendingPublicationId=null;p.nextAt=new Date(now+p.intervalMinutes*60_000).toISOString();
@@ -52,9 +63,15 @@ export async function dispatchBatchPublications(ctx:Context,boss:Pick<PgBoss,'se
             pub.status='queued';
           }
         }
-        if(pub.status==='queued') outbox.push({batchId:p.jobId,publicationId:p.pendingPublicationId});
+        if(pub.status==='queued') {
+          const wait=await uploadWait(tx,p.channelId,now);
+          if(wait){p.nextAt=wait.until;await save('youtube-limit',wait.message);continue;}
+          outbox.push({batchId:p.jobId,publicationId:p.pendingPublicationId});
+        }
         await save('uploading');continue;
       }
+      const wait=await uploadWait(tx,p.channelId,now);
+      if(wait){p.nextAt=wait.until;await save('youtube-limit',wait.message);continue;}
       const active=await tx.execute(sql`select id from publications where platform='youtube' and account=${p.channelId}
         and status in ('queued','uploading','processing') limit 1`);
       if(active.length){await save('waiting-upload');continue;}

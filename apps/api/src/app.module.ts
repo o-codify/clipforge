@@ -6,6 +6,9 @@ import { TwitchClient } from "@clipforge/twitch";
 
 import { TwitchController } from "./auth/twitch.controller.js";
 import { OperationsController } from "./operations.controller.js";
+import { ShortsController } from './shorts.controller.js';
+import { PublicationProcessController } from './publication-process.controller.js';
+import {WorkersController} from './workers.controller.js';
 import { HealthController } from "./health.controller.js";
 import { AuthController } from "./auth/auth.controller.js";
 import { AuthGuard } from "./auth/auth.guard.js";
@@ -25,7 +28,7 @@ import { WebAssetsController } from "./web-assets.controller.js";
 
 @Module({
   controllers: [
-    HealthController, TwitchController, OperationsController, AuthController, CatalogController, JobsController,
+    HealthController, TwitchController, OperationsController, ShortsController, PublicationProcessController, WorkersController, AuthController, CatalogController, JobsController,
     MediaController, DiscoveryController, PlatformsController, WebAssetsController,
   ],
   providers: [

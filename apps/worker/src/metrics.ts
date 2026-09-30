@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { platformAccounts, publications, publicationMetrics, runtimeValue, forgetYoutubeAccount, clearYoutubePublications, pruneYoutubeData, YOUTUBE_DATA_RETENTION_DAYS, YOUTUBE_REVOCATION_RETRY_HOURS } from "@clipforge/db";
-import { refreshAccessToken, videoSnapshots, myChannel, revokeToken, YoutubeAccessRevokedError } from "@clipforge/youtube";
+import { refreshAccessToken, videoSnapshots, myChannel, revokeToken, YoutubeAccessRevokedError, cloudUploadQuota } from "@clipforge/youtube";
 import type { Context } from "./context.js";
 import type { PayloadOf } from '@clipforge/jobs';
 import type { JobReport } from './handlers.js';
@@ -96,7 +96,10 @@ async function collectUnlocked(ctx: Context, publicationId?: string) {
   }
   const result = {state:failed?'error' as const:'ok' as const,collected,failed};
   // A check of one video must not claim that the entire catalog was refreshed.
-  if (!publicationId) await runtimeValue(ctx.db,"metrics",result);
+  if (!publicationId) {
+    await runtimeValue(ctx.db,"metrics",result);
+    await runtimeValue(ctx.db,'youtube-quota',await cloudUploadQuota());
+  }
   return result;
 }
 

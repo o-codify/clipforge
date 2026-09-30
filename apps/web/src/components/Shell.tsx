@@ -45,7 +45,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener(SESSION_EXPIRED, expired);
   }, [isPublic, router]);
 
-  const privateAdminPage = path.startsWith("/settings") || path === "/discovery";
+  const privateAdminPage = path.startsWith("/settings") || ['/discovery','/workers','/publications','/shorts','/analytics'].includes(path);
   const redirect = viewer && !viewer.isAdmin && privateAdminPage ? "/" :
     viewer?.role === "user" && path === "/streamers" ?
       (viewer.actingAs && viewer.actingAs !== "__unlinked_account__" ? `/streamers/${viewer.actingAs}` : "/me") : null;

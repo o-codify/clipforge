@@ -69,7 +69,8 @@ export class PlatformsService {
   }
 
   async batches() {
-    return this.db.execute(sql`select r.value as policy, j.state as "jobState",
+    return this.db.execute(sql`select r.value as policy, j.state as "jobState",(j.data->>'count')::int as target,
+      (select count(*)::int from publications u where u.platform='youtube' and u.account=r.value->>'channelId' and u.created_at>now()-interval '24 hours') as "attempts24h",
       (select count(*)::int from clips c join runs n on n.id=c.run_id
         where n.settings->>'jobId'=r.value->>'jobId' and c.archived_at is null and c.state<>'blocked') as ready,
       (select count(*)::int from publications p join clips c on c.id=p.clip_id join runs n on n.id=c.run_id

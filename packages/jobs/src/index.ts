@@ -38,6 +38,7 @@ export const QUEUES = {
   /** Draft-only pipeline; isolated from legacy workers that omit preview options. */
   preparePreview: "heavy.prepare-preview",
   prepareStreamer: "heavy.prepare-streamer",
+  prepareBatchVod: "heavy.prepare-batch-vod",
   fetchVod: "heavy.fetch-vod",
   transcribeVod: "heavy.transcribe-vod",
   analyzeVod: "heavy.analyze-vod",
@@ -157,6 +158,7 @@ export const PAYLOADS = {
   [QUEUES.pipeline]: pipelinePayload,
   [QUEUES.preparePreview]: preparePreviewPayload,
   [QUEUES.prepareStreamer]: prepareStreamerPayload,
+  [QUEUES.prepareBatchVod]: preparePreviewPayload.extend({batchId:z.string().uuid()}),
   [QUEUES.indexChannel]: indexChannelPayload,
   [QUEUES.fetchVodInfo]: fetchVodInfoPayload,
   [QUEUES.refreshStreamer]: refreshStreamerPayload,

@@ -22,3 +22,5 @@ out/
 /Twitch-Brand.zip
 /models/dtln/
 /models/deepfilter/
+**/worker.env
+**/cloud-quota-credentials.json

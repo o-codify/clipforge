@@ -1,0 +1,18 @@
+services:
+  worker:
+    image: ${CLIPFORGE_WORKER_IMAGE:-ghcr.io/o-codify/clipforge-worker:fleet-preview}
+    restart: unless-stopped
+    init: true
+    env_file: worker.env
+    cpus: ${WORKER_CPUS:-4}
+    cpu_shares: 256
+    mem_limit: ${WORKER_MEMORY:-8g}
+    memswap_limit: ${WORKER_MEMORY:-8g}
+    pids_limit: 256
+    stop_grace_period: 45s
+    # Anonymous persistent volume per replica, so two workers cannot share model/cache writes.
+    volumes:
+      - /storage
+    logging:
+      driver: json-file
+      options: {max-size: '20m', max-file: '3'}

@@ -7,7 +7,7 @@ function service(row, competing=false) {
   const retries=[];
   let reads=0;
   const db={
-    execute:async()=>++reads===1?(row?[row]:[]):[{state:'retry'}],
+    execute:async()=>++reads===1?(row?[row]:[]):reads===2?[]:[{state:'retry'}],
     transaction:async work=>{
       let statements=0;
       return work({execute:async()=>++statements===1?[]:competing?[{id:'other-batch'}]:[]});

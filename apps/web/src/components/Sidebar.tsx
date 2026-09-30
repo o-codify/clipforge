@@ -13,6 +13,9 @@ const icons: Record<string, React.ReactNode> = {
   streamers: <><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></>,
   games: <><path d="M7 7h10c3 0 5 11 3 12-2 2-5-3-6-3h-4c-1 0-4 5-6 3C2 18 4 7 7 7Z"/><path d="M7 10v4m-2-2h4m7-1h.01m2 3h.01"/></>,
   jobs: <><path d="M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1"/></>,
+  workers: <><rect x="3" y="3" width="18" height="7"/><rect x="3" y="14" width="18" height="7"/><path d="M6 6h1m-1 11h1m4-11h7m-7 11h7"/></>,
+  publications: <><path d="M12 16V3m-5 5 5-5 5 5M4 14v7h16v-7"/></>,
+  analytics: <><path d="M3 3v18h18M7 16l4-7 4 3 5-8"/></>,
   settings: <><path d="m12 3 3 2 3 .5.5 3 2 3-2 3-.5 3-3 .5-3 2-3-2-3-.5-.5-3-2-3 2-3 .5-3L9 5Z"/><circle cx="12" cy="11.5" r="3"/></>,
 };
 

@@ -24,6 +24,9 @@ export async function clearYoutubePublications(db: Database, ids: string[]): Pro
   if (!ids.length) return;
   const selected=sql.join(ids.map(id=>sql`${id}`),sql`, `);
   await db.transaction(async tx => {
+    await tx.execute(sql`delete from platform_runtime where key like 'feedback:%' or key in
+      (select 'upload-progress:'||id from publications where id in (${selected}))`);
+    await tx.execute(sql`update runs set settings=settings-'feedback' where settings ? 'feedback'`);
     await tx.execute(sql`delete from youtube_upload_sessions where publication_id in (${selected})`);
     await tx.delete(publicationMetrics).where(inArray(publicationMetrics.publicationId,ids));
     await tx.update(publications).set({account:sql`'removed:' || ${publications.id}`,status:"takedown",
@@ -31,8 +34,8 @@ export async function clearYoutubePublications(db: Database, ids: string[]): Pro
     }).where(and(eq(publications.platform,"youtube"),inArray(publications.id,ids)));
     // Publication logs may contain provider video IDs/URLs. Queue payloads only contain our own ID.
     await tx.execute(sql`delete from job_events where job_id in
-      (select id from jobs.job where name='light.publish-clip' and data->>'publicationId' in (${selected}))`);
-    await tx.execute(sql`update jobs.job set output=null where name='light.publish-clip' and data->>'publicationId' in (${selected})`);
+      (select id from jobs.job where name in ('light.publish-clip','light.publish-batch-clip') and data->>'publicationId' in (${selected}))`);
+    await tx.execute(sql`update jobs.job set output=null where data->>'publicationId' in (${selected})`);
   });
 }
 
@@ -49,6 +52,10 @@ export async function forgetYoutubeAccount(db: Database, id: string): Promise<vo
 /** Live data expires before backups, so their combined retention stays below 30 days. */
 export async function pruneYoutubeData(db: Database): Promise<void> {
   await db.transaction(async tx=>{
+    await tx.execute(sql`delete from platform_runtime where (key like 'feedback:%' or key like 'upload-progress:%')
+      and updated_at<now()-${YOUTUBE_DATA_RETENTION_DAYS}*interval '1 day'`);
+    await tx.execute(sql`update runs set settings=settings-'feedback' where started_at<now()-${YOUTUBE_DATA_RETENTION_DAYS}*interval '1 day' and settings ? 'feedback'`);
+    await tx.execute(sql`delete from platform_runtime where key like 'upload-attempt:%' and updated_at<now()-interval '2 days'`);
     await tx.execute(sql`update publications set status='failed',error='[upload-uncertain] Сессия загрузки истекла; проверьте канал.',updated_at=now()
       where media_id is null and status<>'takedown' and id in
       (select publication_id from youtube_upload_sessions where created_at < now()-${YOUTUBE_DATA_RETENTION_DAYS}*interval '1 day')`);

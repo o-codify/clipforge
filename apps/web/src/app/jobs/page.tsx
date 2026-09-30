@@ -11,6 +11,7 @@ import { StreamerBadge } from "@/components/StreamerBadge";
 import { Modal } from "@/components/Modal";
 import { LoadError } from "@/components/SettingsCard";
 import { Button, Pill } from "@/components/ui";
+import {WorkerJobs} from '@/components/WorkersWorkspace';
 
 const states:Record<string,[string,""|"ok"|"warn"|"bad"]>={created:["В очереди",""],active:["В работе","warn"],completed:["Завершено","ok"],failed:["Сбой","bad"],cancelled:["Отменено",""],expired:["Истекло время","bad"],retry:["Ожидает повтора","warn"]};
 const pending=new Set(["created","active","retry"]);
@@ -28,6 +29,11 @@ function resultFacts(output:unknown){
   return Object.entries(labels).flatMap(([key,label])=>typeof values[key]==="number"?[{label,value:Number(values[key]).toLocaleString("ru-RU")}]:[]);
 }
 export default function JobsPage(){
+  const {viewer}=useSession();const [groups,setGroups]=useState(false);
+  if(!viewer.isAdmin)return <RecurringJobs/>;
+  return groups?<><div className="page-toolbar"><Button onClick={()=>setGroups(false)}>Все запуски и воркеры</Button></div><RecurringJobs/></>:<WorkerJobs onGroups={()=>setGroups(true)}/>;
+}
+function RecurringJobs(){
   const [groups,setGroups]=useState<JobGroup[]|null>(null),[error,setError]=useState("");
   const [filter,setFilter]=useState("all"),[query,setQuery]=useState(""),[selected,setSelected]=useState<JobGroup|null>(null);
   const load=useCallback(()=>{void api.get<JobGroup[]>("/api/jobs/groups").then(rows=>{setGroups(rows);setError("");}).catch(()=>setError("Не удалось загрузить задания"));},[]);

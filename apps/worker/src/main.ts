@@ -27,7 +27,7 @@ import { publishClip } from "./publish.js";
 import { publishBatchClip, startBatchPublications } from './batch-publication.js';
 import { refreshYoutube } from './metrics.js';
 import { cleanClip } from './clean-clip.js';
-import { prepareStreamer } from './prepare-streamer.js';
+import { prepareStreamer,prepareBatchVod } from './prepare-streamer.js';
 import { preparePreview } from './prepare-preview.js';
 import { pruneSources } from "./storage.js";
 import { servesQueue } from "./routing.js";
@@ -36,6 +36,8 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from './context.js';
 import { resourceState, waitForResources } from '@clipforge/resources';
+import {WorkerRegistry,capacity,recoverWorkers} from './registry.js';
+import {startConsumers} from './consumers.js';
 
 type Handler = (ctx: Context, payload: never, report: JobReport) => Promise<unknown>;
 
@@ -44,6 +46,7 @@ const HANDLERS: Record<string, Handler> = {
   [QUEUES.pipeline]: runPipeline as Handler,
   [QUEUES.preparePreview]: preparePreview as Handler,
   [QUEUES.prepareStreamer]: prepareStreamer as Handler,
+  [QUEUES.prepareBatchVod]: prepareBatchVod as Handler,
   [QUEUES.indexChannel]: indexChannel as Handler,
   [QUEUES.fetchVod]: fetchVod as Handler,
   [QUEUES.transcribeVod]: transcribeVod as Handler,
@@ -56,54 +59,6 @@ const HANDLERS: Record<string, Handler> = {
   [QUEUES.refreshYoutube]: refreshYoutube as Handler,
   [QUEUES.cleanClip]: cleanClip as Handler,
 };
-
-/**
- * Общий замок на тяжёлые задания.
- *
- * Префикс heavy. в имени очереди сам по себе ничего не гарантирует:
- * очереди разные, и pg-boss обслуживает каждую своим циклом. Замок
- * держит в процессе ровно одно тяжёлое задание - иначе распознавание и
- * рендер поделят видеопамять и замедлят друг друга.
- */
-function createLane(): <T>(task: () => Promise<T>) => Promise<T> {
-  let chain: Promise<unknown> = Promise.resolve();
-  return <T>(task: () => Promise<T>): Promise<T> => {
-    const next = chain.then(task, task);
-    // Сбой одного задания не должен рвать очередь следующих.
-    chain = next.catch(() => undefined);
-    return next;
-  };
-}
-
-/**
- * Отпустить задания, зависшие в состоянии «выполняется».
- *
- * Воркер один, и если при старте в базе есть активные задания - значит,
- * прошлый процесс умер, не доделав их. Сами они не отвалятся: pg-boss
- * держит их активными до истечения срока, а это часы. В интерфейсе это
- * выглядит как вечно идущая работа, которая блокирует кнопку и врёт про
- * происходящее.
- */
-async function releaseStaleJobs(boss: PgBoss, ctx: Context, queues: ReadonlySet<string>): Promise<void> {
-  const active = await ctx.db.execute<{ id: string; name: string; data: { publicationId?: string } }>(
-    sql`select id::text, name, data from jobs.job where state = 'active'`,
-  );
-  const stale = active.filter(job => queues.has(job.name));
-  if (stale.length === 0) return;
-
-  for (const job of stale) {
-    if ((job.name === QUEUES.publishClip || job.name === QUEUES.publishBatchClip) && job.data.publicationId) {
-      await ctx.db.execute(sql`update publications set status = 'failed',
-        error = '[upload-uncertain] Процесс прервался во время загрузки. Проверьте канал перед повторной отправкой.'
-        where id = ${job.data.publicationId} and status = 'uploading' and media_id is null
-          and not exists(select 1 from youtube_upload_sessions s where s.publication_id=publications.id)`);
-    }
-    await boss.fail(job.name, job.id, {
-      message: "воркер был перезапущен во время выполнения",
-    });
-  }
-  ctx.log(`отпущено зависших заданий: ${stale.length}`);
-}
 
 async function main(): Promise<void> {
   if (process.argv.includes('--check-runtime')) {
@@ -129,13 +84,16 @@ async function main(): Promise<void> {
   }
   const ctx = createContext();
   const role = ctx.config.role;
+  if(process.env.WORKER_FLEET==='true'&&role!=='control'&&!ctx.storage)throw new Error('Для нескольких воркеров настройте общее хранилище S3');
   const requestedQueues=process.env.WORKER_QUEUES?.split(',').map(name=>name.trim()).filter(Boolean);
   if(requestedQueues?.some(name=>!HANDLERS[name]||!servesQueue(role,name as QueueName)))throw new Error('WORKER_QUEUES содержит недоступную для этой роли очередь');
   const handlers = Object.fromEntries(Object.entries(HANDLERS).filter(([queue]) => servesQueue(role, queue as QueueName)
     && (!requestedQueues || requestedQueues.includes(queue))));
   const selectedQueues=new Set(Object.keys(handlers));
   const runtimeKey = role === "control" ? "control" : "worker";
-  // all needs both leases, so it cannot overlap a distributed installation.
+  const registry=new WorkerRegistry(ctx.db);
+  // The scheduler remains exclusive. New media workers share the legacy media
+  // lease: they can coexist, but cannot overlap an older single-worker binary.
   const lockKeys = role === "all" ? [740021, 740023] : [role === "control" ? 740021 : 740023];
   ctx.log(`воркер запускается: ${role}`);
   await upgradeRuntime(ctx.db);
@@ -154,20 +112,25 @@ async function main(): Promise<void> {
   for (let attempt = 0; role === "control" || attempt < 60; attempt++) {
     const acquired: number[] = [];
     for (const key of lockKeys) {
-      const [locked] = await lease`select pg_try_advisory_lock(${key}) as ok, pg_backend_pid() as pid`;
+      const [locked] = key===740023
+        ? await lease`select pg_try_advisory_lock_shared(${key}) as ok, pg_backend_pid() as pid`
+        : await lease`select pg_try_advisory_lock(${key}) as ok, pg_backend_pid() as pid`;
       if (!locked?.ok) break;
       acquired.push(key);
       if (acquired.length === lockKeys.length) leasePid = Number(locked.pid);
     }
     if (leasePid) break;
-    for (const key of acquired) await lease`select pg_advisory_unlock(${key})`;
+    for (const key of acquired) {if(key===740023)await lease`select pg_advisory_unlock_shared(${key})`;else await lease`select pg_advisory_unlock(${key})`;}
     if (attempt === 0) ctx.log("ожидание остановки предыдущего воркера");
     // A replacement can serve HTTP while the old controller drains. Do not
     // overwrite its shared heartbeat or touch its jobs before owning the lease.
     if (role === "control") await localHeartbeat("standby");
     await new Promise(r => setTimeout(r, 1000));
   }
-  if (!leasePid) throw new Error("Другой воркер всё ещё работает");
+  if (!leasePid) throw new Error("Предыдущая версия воркера всё ещё работает");
+  const [identity]=await lease`select pg_try_advisory_lock(hashtextextended(${"worker:"+registry.id},0)) as ok`;
+  if(!identity?.ok)throw new Error("WORKER_ID уже используется другим процессом");
+  await registry.register(role,[...selectedQueues]);
 
   const boss = new PgBoss({
     connectionString: ctx.config.databaseUrl,
@@ -177,14 +140,14 @@ async function main(): Promise<void> {
   boss.on("error", (error) => ctx.log(`очередь: ${String(error)}`));
 
   await boss.start();
+  ctx.queue=boss;
 
   for (const queue of selectedQueues) {
     await boss.createQueue(queue);
   }
 
-  await releaseStaleJobs(boss, ctx,selectedQueues);
+  await recoverWorkers(ctx.db,boss);
 
-  const heavyLane = createLane();
   const activeHeavy = new Set<string>();
   let lastResourceBeat = Date.now();
   let beating = false;
@@ -208,7 +171,10 @@ async function main(): Promise<void> {
         await ctx.db.execute(sql`update jobs.job set expire_in = expire_in + make_interval(secs => ${pausedSeconds})
           where id = ${id}::uuid and state = 'active'`);
       }
-      await runtimeValue(ctx.db, runtimeKey, { pid: process.pid, state: "online", role, freeGb, resources });
+      const allocation=await capacity();
+      await registry.beat({...resources,allocation,freeGb,heavySlots:1});
+      // Compatibility for older controllers; worker_instances is the fleet source of truth.
+      await runtimeValue(ctx.db, runtimeKey, { pid: process.pid, state: "online", role, freeGb, resources,workerId:registry.id });
       await localHeartbeat("online");
       if (process.connected) process.send?.({type:'heartbeat'});
     } catch (error) {
@@ -220,22 +186,17 @@ async function main(): Promise<void> {
   await heartbeat();
   const heartbeatTimer = setInterval(heartbeat, 10_000);
 
-  for (const [queue, handler] of Object.entries(handlers)) {
-    const schema = PAYLOADS[queue as QueueName];
-    const heavy = queue.startsWith("heavy.");
-
-    await boss.work(
-      queue,
-      // Тяжёлые - строго по одному. Лёгкие могут идти по несколько:
-      // они ждут сеть, а не железо.
-      { batchSize: 1, pollingIntervalSeconds: heavy ? 2 : 1 },
-      async ([job]) => {
-        if (!job) return;
+  const stopConsumers=startConsumers(boss,[...selectedQueues],async(queue,job)=>{
+        const handler=handlers[queue]!;
+        const schema=PAYLOADS[queue as QueueName];
+        const heavy=queue.startsWith('heavy.');
+        await registry.claim(job.id);
         const started = Date.now();
         const report: JobReport = {
           id: job.id,
           log: (message) => {
             ctx.log(`  ${message}`);
+            void registry.stage(job.id,message).catch(()=>{});
             void ctx.db.execute(sql`insert into job_events(job_id, message) values (${job.id}::uuid, ${message.slice(0, 2000)})`).catch(e => ctx.log(String(e)));
           },
           cancelled: async () => {
@@ -262,9 +223,8 @@ async function main(): Promise<void> {
               ? withVodLock(ctx.db, payload.vodId, () => handler(ctx,payload as never,report))
               : handler(ctx, payload as never, report);
           };
-          const result = heavy ? await heavyLane(work) : await work();
+          const result = await work();
           if (queue === QUEUES.pipeline) await ctx.db.execute(sql`update pipeline_attempts set state = ${await report.cancelled() ? "cancelled" : "completed"}, error = null, updated_at = now() where vod_id = ${(payload as {vodId:string}).vodId}`);
-          const took = ((Date.now() - started) / 1000).toFixed(1);
           report.log(`Результат: ${JSON.stringify(result ?? {})}`);
           return result;
 
@@ -276,10 +236,10 @@ async function main(): Promise<void> {
           throw error;
         } finally {
           activeHeavy.delete(job.id);
+          await registry.finish(job.id);
         }
-      },
-    );
-  }
+  },async heavy=>!registry.draining&&(!heavy||!resourceState().paused),ctx.log);
+  const recoveryTimer=setInterval(()=>void recoverWorkers(ctx.db,boss).catch(e=>ctx.log(String(e))),30000);
 
   ctx.log(`очередей обслуживается: ${Object.keys(handlers).length}`);
 
@@ -304,10 +264,15 @@ async function main(): Promise<void> {
     stopBatchPublications();
     clearInterval(heartbeatTimer);
     clearInterval(pruneTimer);
+    clearInterval(recoveryTimer);
+    registry.draining=true;
+    await Promise.race([stopConsumers(),new Promise(r=>setTimeout(r,30000))]);
     if (process.env.WORKER_HEARTBEAT_FILE) await rm(process.env.WORKER_HEARTBEAT_FILE, { force: true });
-    await runtimeValue(ctx.db, runtimeKey, { state: "offline", role }).catch(() => {});
+    await registry.offline().catch(()=>{});
+    if(role==='control')await runtimeValue(ctx.db,runtimeKey,{state:"offline",role}).catch(()=>{});
     await boss.stop({ graceful: true, timeout: 30_000 });
-    for (const key of lockKeys) await lease`select pg_advisory_unlock(${key})`;
+    for (const key of lockKeys) {if(key===740023)await lease`select pg_advisory_unlock_shared(${key})`;else await lease`select pg_advisory_unlock(${key})`;}
+    await lease`select pg_advisory_unlock(hashtextextended(${"worker:"+registry.id},0))`;
     lease.release();
     await ctx.close();
     process.exit(0);

@@ -14,14 +14,18 @@ export async function schedulePipelines(boss: PgBoss, ctx: Context): Promise<voi
   }
   const minimumGb = numberEnv(process.env,"MIN_FREE_GB",20,5,10000);
   let freeGb: number;
+  const fleet=await ctx.db.execute<{resources:{freeGb?:number};queues:string[]}>(sql`select resources,queues from worker_instances
+    where role in ('media','all') and state='online' and not draining and heartbeat_at>now()-interval '40 seconds'
+      and queues ? ${QUEUES.pipeline} and coalesce(resources->>'paused','false')<>'true'`);
+  const slots=Math.max(1,fleet.length);
   if (ctx.config.role === "control") {
     const [worker] = await ctx.db.execute<{value:{state?:string;freeGb?:number};fresh:boolean}>(sql`
       select value, updated_at > now() - interval '40 seconds' as fresh from platform_runtime where key='worker'`);
-    if (!worker?.fresh || worker.value.state !== "online" || !Number.isFinite(worker.value.freeGb)) {
+    if (!fleet.length&&(!worker?.fresh || worker.value.state !== "online" || !Number.isFinite(worker.value.freeGb))) {
       await runtimeValue(ctx.db,"scheduler",{state:"waiting",reason:"ПК обработки не подключён. Сайт работает; очередь продолжится после подключения."});
       return;
     }
-    freeGb = worker.value.freeGb!;
+    freeGb = fleet.length?Math.max(...fleet.map(w=>w.resources.freeGb??0)):worker!.value.freeGb!;
   } else {
     const disks = await Promise.all([statfs(ctx.config.data), statfs(ctx.config.out)]);
     freeGb = Math.min(...disks.map(d => d.bavail * d.bsize)) / 1024 ** 3;
@@ -31,7 +35,7 @@ export async function schedulePipelines(boss: PgBoss, ctx: Context): Promise<voi
   const [used] = await ctx.db.execute<{ n: number }>(sql`select count(*)::int n from pipeline_attempts where updated_at > now() - interval '24 hours'`);
   const reason = setting?.value.paused ? "Автоматика приостановлена администратором"
     : freeGb < minimumGb ? `Мало места: ${freeGb.toFixed(1)} ГБ, резерв ${minimumGb} ГБ`
-    : (busy?.n ?? 0) > 0 ? "Очередь обработки занята"
+    : (busy?.n ?? 0) >= slots ? "Все воркеры обработки заняты"
     : (used?.n ?? 0) >= dailyLimit ? "Достигнут дневной бюджет эфиров" : null;
   if (reason) {
     await runtimeValue(ctx.db, "scheduler", { state: "waiting", reason, freeGb, dailyLimit });
@@ -59,19 +63,21 @@ export async function schedulePipelines(boss: PgBoss, ctx: Context): Promise<voi
       and v.duration > 60 and v.duration <= ${numberEnv(process.env,"AUTO_MAX_VOD_HOURS",4,0.1,24) * 3600}
       and (a.vod_id is null or (a.state = 'failed' and a.attempts < 3 and a.updated_at < now() - interval '1 hour'))
       and (a.state = 'failed' or not exists (select 1 from clips c where c.vod_id = v.id and c.archived_at is null))
+      and not exists(select 1 from jobs.job j where j.data->>'vodId'=v.id and j.state in ('created','active','retry'))
       and v.duration * 1.2 / 1024 < ${Math.max(0,freeGb-minimumGb)}
     order by ${explore ? sql`(select count(*) from runs r where r.streamer = s.login) asc,` : sql``}
-      score desc, v.published_at desc nulls last limit 1
+      score desc, v.published_at desc nulls last limit ${Math.max(1,Math.min(slots-(busy?.n??0),dailyLimit-(used?.n??0)))}
   `);
-  const candidate = candidates[0];
-  if (!candidate) {
+  if (!candidates.length) {
     await runtimeValue(ctx.db, "scheduler", { state: "waiting", reason: "Нет подходящих необработанных эфиров; поиск продолжается", freeGb, dailyLimit });
     return;
   }
+  for(const candidate of candidates){
   const payload = { vodId: candidate.id, count: ctx.config.clipsPerRun, reuse: true };
   const key = singletonKey(QUEUES.pipeline, payload);
   const id = await enqueueUnique(ctx.db, QUEUES.pipeline, key, () => boss.send(QUEUES.pipeline, payload,
     { singletonKey: key, retryLimit: 2, retryDelay: 120, retryBackoff: true, expireInSeconds: 6 * 3600 }));
   await runtimeValue(ctx.db, "scheduler", { state: "scheduled", vodId: candidate.id, streamer: candidate.streamer,
     score: candidate.score, explore, freeGb, dailyLimit, reason: explore ? "Эксперимент с менее обработанным каналом" : "Приоритет по аудитории и результатам публикаций", jobId: id });
+  }
 }

@@ -26,6 +26,18 @@ export async function upgradeRuntime(db: Database): Promise<void> {
     created_at timestamptz NOT NULL DEFAULT now()
   )`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS job_events_job_idx ON job_events(job_id, id)`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS worker_instances (
+    id text PRIMARY KEY,label text NOT NULL,host text NOT NULL,role text NOT NULL,
+    queues jsonb NOT NULL DEFAULT '[]',resources jsonb NOT NULL DEFAULT '{}',
+    state text NOT NULL DEFAULT 'online',draining boolean NOT NULL DEFAULT false,
+    started_at timestamptz NOT NULL DEFAULT now(),heartbeat_at timestamptz NOT NULL DEFAULT now(),version text
+  )`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS worker_jobs (
+    job_id uuid PRIMARY KEY,worker_id text NOT NULL REFERENCES worker_instances(id),
+    started_at timestamptz NOT NULL DEFAULT now(),finished_at timestamptz,stage text,
+    heartbeat_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS worker_jobs_worker_idx ON worker_jobs(worker_id,started_at desc)`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS pipeline_attempts (
     vod_id text PRIMARY KEY REFERENCES vods(id) ON DELETE CASCADE,
     attempts integer NOT NULL DEFAULT 0, state text NOT NULL DEFAULT 'pending',

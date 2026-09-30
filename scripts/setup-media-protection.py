@@ -17,10 +17,11 @@ MODELS=[
 def digest(file):
     with file.open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
-def install(destination,kibps,check=False):
-    if os.name!='nt':
+def install(destination,kibps,check=False,dtln_only=False):
+    if os.name!='nt' and not dtln_only:
         raise RuntimeError('This pinned executable is for the Windows media worker. Control servers do not need it.')
     for relative,url,sha,size in MODELS:
+        if dtln_only and not relative.startswith('dtln/'):continue
         file=destination/relative
         if file.is_file() and file.stat().st_size==size and digest(file)==sha:
             print('Verified:',relative,flush=True);continue
@@ -49,6 +50,7 @@ if __name__=='__main__':
     parser.add_argument('--models',type=Path,default=ROOT/'models')
     parser.add_argument('--kibps',type=int,default=256)
     parser.add_argument('--check',action='store_true')
+    parser.add_argument('--dtln-only',action='store_true')
     args=parser.parse_args()
     if not 16<=args.kibps<=2048:parser.error('--kibps must be between 16 and 2048')
-    install(args.models,args.kibps,args.check)
+    install(args.models,args.kibps,args.check,args.dtln_only)

@@ -119,8 +119,11 @@ export class JobsService implements OnModuleDestroy {
     if (['created','retry','active'].includes(row.state)) return {id,resumed:false};
     if (row.state!=='failed') throw new BadRequestException('Продолжить можно только подборку после сбоя');
     const boss=await this.queue();
-    const resumed=await enqueueUnique(this.db,QUEUES.prepareStreamer,row.singletonKey,async()=>{
-      await boss.retry(QUEUES.prepareStreamer,id);
+      const resumed=await enqueueUnique(this.db,QUEUES.prepareStreamer,row.singletonKey,async()=>{
+        const children=await this.db.execute<{id:string}>(sql`select id::text from jobs.job
+          where name=${QUEUES.prepareBatchVod} and data->>'batchId'=${id} and state='failed'`);
+        for(const child of children)await boss.retry(QUEUES.prepareBatchVod,child.id);
+        await boss.retry(QUEUES.prepareStreamer,id);
       const [current]=await this.db.execute<{state:string}>(sql`select state from jobs.job where id=${id}::uuid`);
       return current&&['retry','active','completed'].includes(current.state)?id:null;
     });

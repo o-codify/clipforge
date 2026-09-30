@@ -45,7 +45,7 @@ test('publication scope and rate must be explicit and bounded',()=>{
   assert.equal(batchPublicationOptions.safeParse({enabled:true}).success,false);
 });
 
-function fixture({connected=true,sendFails=false}={}) {
+function fixture({connected=true,sendFails=false,block=null,quota=null}={}) {
   const jobId='097c3667-a92b-4eba-9393-4fd84bb2b83b';
   let policy={jobId,login:'sany',enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog',intervalMinutes:10,dailyLimit:100,privacy:'public'};
   const pubs=[],sent=[],jobs=[];let candidates=2;
@@ -57,6 +57,8 @@ function fixture({connected=true,sendFails=false}={}) {
     if(q.startsWith('update platform_runtime')){policy=JSON.parse(p[0]);return [];}
     if(q.startsWith('select state from jobs.job'))return [{state:'active'}];
     if(q.startsWith('select id from platform_accounts'))return connected?[{id:'account'}]:[];
+    if(q.startsWith('select value from platform_runtime'))return q.includes("key='youtube-quota'")?(quota?[{value:quota}]:[]):block?[{value:block}]:[];
+    if(q.startsWith('select count(*)::int n from platform_runtime'))return [{n:0}];
     if(q.startsWith('select status,media_id'))return pubs.filter(row=>row.id===p[0]);
     if(q.startsWith('select id from publications'))return pubs.filter(row=>['queued','uploading','processing'].includes(row.status));
     if(q.startsWith('select created_at'))return [];
@@ -101,4 +103,14 @@ test('disconnected channel creates no upload and keeps a visible waiting state',
   const f=fixture({connected:false});
   await dispatchBatchPublications(f.ctx,f.boss,now);
   assert.equal(f.policy().state,'waiting-channel');assert.equal(f.pubs.length,0);assert.equal(f.sent.length,0);
+});
+
+test('known provider limit stops new uploads but records a completed pending upload',async()=>{
+  const f=fixture({block:{until:new Date(now+3600000).toISOString(),reason:'project-quota'}});
+  await dispatchBatchPublications(f.ctx,f.boss,now);
+  assert.equal(f.policy().state,'youtube-limit');assert.equal(f.sent.length,0);
+  const active=fixture();await dispatchBatchPublications(active.ctx,active.boss,now);
+  active.pubs[0].status='published';active.pubs[0].mediaId='video';
+  await dispatchBatchPublications(active.ctx,active.boss,now+minute);
+  assert.equal(active.policy().pendingPublicationId,null);assert.equal(active.policy().state,'interval');
 });
