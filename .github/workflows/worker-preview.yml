@@ -38,7 +38,13 @@ jobs:
           CLIPFORGE_TEST_DB_URL: postgres://clipforge:fixture@127.0.0.1:5432/postgres
       - run: node scripts/build-worker-bundle.mjs
       - name: Verify original sound with a real media fixture
-        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg && node --test apps/worker/test/original-audio.test.mjs
+        timeout-minutes: 5
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo timeout 90s apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq || true
+            sudo timeout 120s apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y ffmpeg
+          fi
+          node --test apps/worker/test/original-audio.test.mjs
       - name: Verify the small catalog worker
         env:
           CLIPFORGE_TEST_DB_URL: postgres://clipforge:fixture@127.0.0.1:5432/postgres
