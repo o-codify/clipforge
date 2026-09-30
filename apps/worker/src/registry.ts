@@ -43,13 +43,17 @@ export class WorkerRegistry {
 /** A stale timestamp alone is insufficient: the owning process must have lost its session lease. */
 export async function recoverWorkers(db:Database,boss:Pick<PgBoss,'fail'>){
   const stale=await db.execute<{id:string}>(sql`select id from worker_instances where heartbeat_at<now()-interval '60 seconds'
-    and exists(select 1 from worker_jobs w join jobs.job j on j.id=w.job_id where w.worker_id=worker_instances.id and j.state='active' and w.finished_at is null)`);
+    and exists(select 1 from worker_jobs w where w.worker_id=worker_instances.id and w.finished_at is null
+      and (exists(select 1 from jobs.job j where j.id=w.job_id and j.state='active')
+        or exists(select 1 from automation_runs a where a.id=w.job_id and a.state='active')))`);
   for(const worker of stale){const connection=await db.sql.reserve();let acquired=false;try{
     const [lock]=await connection`select pg_try_advisory_lock(hashtextextended(${'worker:'+worker.id},0)) as ok`;
     if(!lock?.ok)continue;
     acquired=true;
     const jobs=await db.execute<{id:string;name:string}>(sql`select j.id::text,j.name from worker_jobs w join jobs.job j on j.id=w.job_id where w.worker_id=${worker.id} and w.finished_at is null and j.state='active'`);
     for(const job of jobs)await boss.fail(job.name,job.id,{message:'Воркер отключился; задание будет повторено с сохранённого этапа'});
+    await db.execute(sql`update automation_runs set state='failed',completed_at=now()
+      where state='active' and id in (select job_id from worker_jobs where worker_id=${worker.id} and finished_at is null)`);
     await db.execute(sql`update worker_jobs set finished_at=now() where worker_id=${worker.id} and finished_at is null`);
     await db.execute(sql`update worker_instances set state='offline' where id=${worker.id}`);
   }finally{

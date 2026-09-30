@@ -86,6 +86,7 @@ export function loadConfig(): WorkerConfig {
 }
 
 export interface Context {
+  worker?:import('./registry.js').WorkerRegistry;
   queue?:PgBoss;
   storage: MediaStorage | null;
   config: WorkerConfig;
@@ -113,7 +114,7 @@ export function createContext(
     );
   }
 
-  const db = createDatabase({ url: config.databaseUrl });
+  const db = createDatabase({ url: config.databaseUrl,max:Math.floor(numberEnv(process.env,'WORKER_DB_POOL_SIZE',6,4,30)) });
   const log = (message: string) => {
     process.stdout.write(`${new Date().toISOString().slice(11, 19)} ${message}\n`);
   };

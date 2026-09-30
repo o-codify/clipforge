@@ -4,6 +4,8 @@ import {type Database} from '@clipforge/db';
 import {z} from 'zod';
 import {DATABASE} from './config.js';
 import {AdminOnly} from './auth/auth.guard.js';
+const tasks=sql`(select id,name,state::text,data,created_on,started_on,completed_on,output from jobs.job
+  union all select id,name,state,'{}'::jsonb,started_at,started_at,completed_at,output from automation_runs)`;
 @Controller('api/workers')
 @AdminOnly()
 export class WorkersController {
@@ -15,7 +17,7 @@ export class WorkersController {
       case when w.heartbeat_at<now()-interval '40 seconds' then 'offline' else w.state end as state,
       coalesce((select jsonb_agg(jsonb_build_object('id',j.id,'name',j.name,'stage',x.stage,
         'startedAt',x.started_at,'streamer',coalesce(j.data->>'login',v.streamer,c.streamer),'vodId',coalesce(j.data->>'vodId',c.vod_id)))
-        from worker_jobs x join jobs.job j on j.id=x.job_id
+        from worker_jobs x join ${tasks} j on j.id=x.job_id
         left join vods v on v.id=j.data->>'vodId'
         left join publications p on p.id=j.data->>'publicationId' left join clips c on c.id=coalesce(p.clip_id,j.data->>'clipId')
         where x.worker_id=w.id and x.finished_at is null and j.state='active'),'[]'::jsonb) as active
@@ -39,7 +41,7 @@ export class WorkersController {
       x.worker_id as "workerId",w.label as "workerName",x.stage,j.output,
       coalesce(j.data->>'login',v.streamer,c.streamer) as streamer,s.display_name as "streamerName",s.avatar,
       coalesce(j.data->>'vodId',c.vod_id) as "vodId",count(*) over()::int as total
-      from jobs.job j left join worker_jobs x on x.job_id=j.id left join worker_instances w on w.id=x.worker_id
+      from ${tasks} j left join worker_jobs x on x.job_id=j.id left join worker_instances w on w.id=x.worker_id
       left join publications p on p.id=j.data->>'publicationId' left join clips c on c.id=coalesce(p.clip_id,j.data->>'clipId')
       left join vods v on v.id=j.data->>'vodId' left join streamers s on s.login=coalesce(j.data->>'login',v.streamer,c.streamer)
       where true ${q.worker?sql`and x.worker_id=${q.worker}`:sql``}

@@ -313,7 +313,7 @@ export function startAutomation(
   const running = new Set<string>();
   let stopping = false;
   const guard = (name: string, task: () => Promise<unknown>) => async () => {
-    if (stopping || running.has(name) || name === "поиск" && !ctx.twitch) return;
+    if (stopping || ctx.worker?.draining || running.has(name) || name === "поиск" && !ctx.twitch) return;
     running.add(name);
     let runId: string | null = null;
     const kind = name === "поиск" ? "discovery" : name === "статистика" ? "metrics" : "sweep";
@@ -323,6 +323,8 @@ export function startAutomation(
       if (name === "статистика" || !setting?.value.paused) {
         runId = randomUUID();
         await ctx.db.execute(sql`insert into automation_runs(id,name,state) values (${runId}::uuid,${'platform.'+kind},'active')`);
+        await ctx.worker?.claim(runId);
+        await ctx.worker?.stage(runId,name==='статистика'?'Обновление статистики YouTube':name==='поиск'?'Поиск стримеров':'Проверка каналов и планирование');
         await task();
         const [result] = await ctx.db.execute<{value:{state?:string}}>(sql`select value from platform_runtime where key=${kind==='sweep'?'scheduler':kind}
           and updated_at >= (select started_at from automation_runs where id=${runId}::uuid)`);
@@ -333,6 +335,7 @@ export function startAutomation(
       await runtimeValue(ctx.db, name === "поиск" ? "discovery" : name === "статистика" ? "metrics" : "scheduler", {state:"error", reason:String(error)}).catch(() => {});
       if (runId) await ctx.db.execute(sql`update automation_runs set state='failed',completed_at=now() where id=${runId}::uuid`).catch(()=>{});
     } finally {
+      if(runId)await ctx.worker?.finish(runId).catch(()=>{});
       running.delete(name);
       // Only recent execution details are retained; the UI displays a single recurring task.
       await ctx.db.execute(sql`delete from automation_runs where started_at < now()-interval '14 days'`).catch(()=>{});

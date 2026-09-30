@@ -8,6 +8,7 @@ import {Select} from './Select';
 import {Button,Pill} from './ui';
 import {LoadError} from './SettingsCard';
 import {StreamerBadge} from './StreamerBadge';
+import {toast} from '@/lib/toast';
 
 type Options={value:string;label:string}[];
 type Short={id:string;clipId:string;videoId:string;title:string;streamer:string;streamerName:string;avatar:string|null;gameTitle:string|null;vodId:string;vodTitle:string;vodDate:string;duration:number;channel:string;privacy:string;publishedAt:string|null;uploadedAt:string;views:number|null;likes:number|null;comments:number|null;collectedAt:string|null;details:Record<string,unknown>};
@@ -41,7 +42,7 @@ export function ShortsWorkspace({analytics=false}:{analytics?:boolean}){
     <Select label="Видимость" value={privacy} onValueChange={filter(setPrivacy)} options={[{value:'',label:'Любая видимость'},{value:'public',label:'Публичные'},{value:'private',label:'Приватные'},{value:'unlisted',label:'По ссылке'}]}/>
     {analytics?<Select label="Период графиков" value={days} onValueChange={setDays} options={[{value:'1',label:'24 часа'},{value:'7',label:'7 дней'},{value:'21',label:'21 день'}]}/>:<Select label="Порядок" value={sort} onValueChange={filter(setSort)} options={[{value:'newest',label:'Сначала новые'},{value:'oldest',label:'Сначала старые'},{value:'views',label:'По просмотрам'},{value:'likes',label:'По лайкам'}]}/>}
     <input className="field toolbar-search" aria-label="Поиск Shorts" placeholder="Название или эфир" value={search} onChange={e=>filter(setSearch)(e.target.value)}/>
-    <Button disabled={refreshing} onClick={()=>{setRefreshing(true);void api.post('/api/platforms/youtube/refresh').then(()=>{setVersion(v=>v+1);}).catch(()=>setError('Не удалось запустить обновление')).finally(()=>setRefreshing(false));}}>Обновить данные</Button>
+    <Button disabled={refreshing} onClick={()=>{setRefreshing(true);void api.post('/api/platforms/youtube/refresh').then(()=>{toast.info('Обновление поставлено в очередь');setVersion(v=>v+1);}).catch(()=>setError('Не удалось запустить обновление')).finally(()=>setRefreshing(false));}}>Обновить данные</Button>
   </div><PageScroll>
     {error&&<LoadError message={error} retry={()=>setVersion(v=>v+1)}/>}
     {loading&&<p role="status">Загрузка…</p>}

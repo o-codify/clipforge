@@ -18,7 +18,7 @@ import { upgradeRuntime, runtimeValue, withVodLock } from "@clipforge/db";
 import { PAYLOADS, QUEUES, type QueueName } from "@clipforge/jobs";
 
 import { automationDefaults, startAutomation } from "./automation.js";
-import { createContext, type Context } from "./context.js";
+import { createContext, numberEnv, type Context } from "./context.js";
 import {
   analyzeVod, facecamVod, fetchVod, indexChannel, renderRun, runPipeline,
   transcribeVod, inspectAds, type JobReport,
@@ -87,11 +87,14 @@ async function main(): Promise<void> {
   if(process.env.WORKER_FLEET==='true'&&role!=='control'&&!ctx.storage)throw new Error('Для нескольких воркеров настройте общее хранилище S3');
   const requestedQueues=process.env.WORKER_QUEUES?.split(',').map(name=>name.trim()).filter(Boolean);
   if(requestedQueues?.some(name=>!HANDLERS[name]||!servesQueue(role,name as QueueName)))throw new Error('WORKER_QUEUES содержит недоступную для этой роли очередь');
+  const needsYoutube=(queue:string)=>queue===QUEUES.publishClip||queue===QUEUES.publishBatchClip||queue===QUEUES.refreshYoutube;
+  if(!ctx.youtube&&requestedQueues?.some(needsYoutube))throw new Error('Для выбранных очередей нужны настройки YouTube OAuth');
   const handlers = Object.fromEntries(Object.entries(HANDLERS).filter(([queue]) => servesQueue(role, queue as QueueName)
-    && (!requestedQueues || requestedQueues.includes(queue))));
+    && (!requestedQueues || requestedQueues.includes(queue))&&(!needsYoutube(queue)||ctx.youtube)));
   const selectedQueues=new Set(Object.keys(handlers));
   const runtimeKey = role === "control" ? "control" : "worker";
   const registry=new WorkerRegistry(ctx.db);
+  ctx.worker=registry;
   // The scheduler remains exclusive. New media workers share the legacy media
   // lease: they can coexist, but cannot overlap an older single-worker binary.
   const lockKeys = role === "all" ? [740021, 740023] : [role === "control" ? 740021 : 740023];
@@ -134,6 +137,7 @@ async function main(): Promise<void> {
 
   const boss = new PgBoss({
     connectionString: ctx.config.databaseUrl,
+    max:Math.floor(numberEnv(process.env,'WORKER_QUEUE_POOL_SIZE',3,2,10)),
     // Свою схему: таблицы очереди не должны мешаться с доменными.
     schema: "jobs",
   });
