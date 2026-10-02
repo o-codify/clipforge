@@ -72,7 +72,7 @@ jobs:
 
   media:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -93,8 +93,11 @@ jobs:
       - name: Verify selection inside game chapters
         run: node --test apps/worker/test/game-selection.test.mjs
       - name: Compile and verify cloud media cache against isolated S3 and PostgreSQL
+        env:
+          CLIPFORGE_TEST_S3_IMAGE: clipforge-s3-fixture
         run: |
           pnpm exec tsc -b apps/api
+          docker build -f scripts/test-s3.Dockerfile -t clipforge-s3-fixture scripts
           node apps/api/test/cloud-cache.isolated.mjs
       - name: Verify bounded native downloads
         run: PYTHONPATH=workers/python python3 -m unittest discover -s workers/python/tests -p test_hls_window.py

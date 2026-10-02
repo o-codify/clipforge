@@ -23,7 +23,7 @@ const wait=async fn=>{for(let i=0;;i++){try{return await fn();}catch(e){if(i>50)
 let db,client;
 try{
   docker('run','-d','--name',pg,'--memory=256m','--cpus=.5','-p','127.0.0.1::5432','-e','POSTGRES_PASSWORD=fixture','postgres:17-alpine');
-  docker('run','-d','--name',s3,'--memory=256m','--cpus=.5','-p','127.0.0.1::9000','-e','MINIO_ROOT_USER=fixture','-e','MINIO_ROOT_PASSWORD=fixture-secret','minio/minio:latest','server','/data');
+  docker('run','-d','--name',s3,'--memory=256m','--cpus=.5','-p','127.0.0.1::9000','-e','MINIO_ROOT_USER=fixture','-e','MINIO_ROOT_PASSWORD=fixture-secret',process.env.CLIPFORGE_TEST_S3_IMAGE??'minio/minio:latest','server','/data');
   db=createDatabase({url:`postgres://postgres:fixture@127.0.0.1:${port(pg,5432)}/postgres`,max:2});
   await wait(()=>db.sql`select 1`);
   await db.sql`create table vods(id text primary key)`;await db.sql`create table worker_instances(id text primary key)`;
