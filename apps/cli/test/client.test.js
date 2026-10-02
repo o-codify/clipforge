@@ -24,6 +24,9 @@ test('DTLN is opt-in for one fresh render; other commands cannot enable audio pr
 });
 
 test('prepare only requests a bounded draft pipeline and never changes streamer defaults',async()=>{
+  assert.deepEqual(await commandPlan(parseCommand(['prepare','vod','--game','wardogs','--from','2100','--to','3000'])),
+    {path:'/api/jobs/prepare/vod',method:'POST',body:{count:1,game:'wardogs',sourceRange:{start:2100,end:3000}}});
+  for(const args of [['--game','wardogs','--from','2100'],['--game','wardogs','--from','3000','--to','2100'],['--from','0','--to','100']])await assert.rejects(commandPlan(parseCommand(['prepare','vod',...args])));
   assert.deepEqual(await commandPlan(parseCommand(['prepare','vod','--count','6','--audio','dtln'])),
     {path:'/api/jobs/prepare/vod',method:'POST',body:{count:6,audioMode:'dtln'}});
   assert.deepEqual(await commandPlan(parseCommand(['prepare','vod'])),
