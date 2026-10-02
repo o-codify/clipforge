@@ -11,9 +11,10 @@ const root=resolve('.'),out=resolve(process.env.WORKER_BUNDLE_BUILD??'.worker-bu
 await mkdir(out,{recursive:true});
 for(const name of ['remote-agent','remote-task','remote-light-task'])await build({entryPoints:[`apps/worker/src/${name}.ts`],outfile:join(out,name+'.mjs'),bundle:true,platform:'node',format:'esm',target:'node22',
   banner:{js:"import {createRequire as __cfRequire} from 'node:module'; const require=__cfRequire(import.meta.url);"},logLevel:'warning'});
-for(const name of ['container-resources.py','setup-media-protection.py','install-worker-deps.py']){
+for(const name of ['container-resources.py','setup-media-protection.py','setup-vision-model.py','vision-model.json','install-worker-deps.py']){
   await mkdir(join(out,'scripts'),{recursive:true});await cp(join(root,'scripts',name),join(out,'scripts',name));
 }
+if(await stat('vision-runtime').catch(()=>null))await cp('vision-runtime',join(out,'vision-runtime'),{recursive:true});
 await cp('workers/python',join(out,'workers','python'),{recursive:true,filter:src=>!/__pycache__|\.pyc$/.test(src)});
 await cp('assets',join(out,'assets'),{recursive:true});
 await mkdir(join(out,'models'),{recursive:true});

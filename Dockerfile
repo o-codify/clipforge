@@ -1,4 +1,9 @@
 # syntax=docker/dockerfile:1
+FROM debian:bookworm-slim AS vision
+RUN apt-get update && apt-get install --no-install-recommends -y python3 ca-certificates zstd && rm -rf /var/lib/apt/lists/*
+COPY scripts/package-vision-runtime.py /tmp/package-vision-runtime.py
+RUN python3 /tmp/package-vision-runtime.py
+
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 RUN npm install --global pnpm@11.1.3
@@ -14,6 +19,7 @@ ENV NEXT_TELEMETRY_DISABLED=1 API_URL=http://127.0.0.1:8420
 ARG RELEASE_SHA=local
 ENV RELEASE_SHA=$RELEASE_SHA
 RUN pnpm build
+COPY --from=vision /vision ./vision-runtime
 RUN node scripts/build-worker-bundle.mjs
 # Installation timestamps are irrelevant at runtime and would invalidate the
 # dependency layer on every otherwise identical GitHub build.
