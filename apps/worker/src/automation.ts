@@ -1,5 +1,5 @@
 /** Автономный поиск каналов, индексация, обработка с бюджетом ресурсов и сбор статистики. */
-import { enqueueUnique, runtimeValue } from "@clipforge/db";
+import { enqueueUnique, runtimeValue, youtubeDestination } from "@clipforge/db";
 import { pruneSources } from "./storage.js";
 import { collectMetrics } from "./metrics.js";
 import { schedulePipelines } from "./autopilot.js";
@@ -253,11 +253,6 @@ export function startAutomation(
     const [mode] = await ctx.db.execute<{value:{developmentMode?:boolean}}>(sql`select value from platform_runtime where key='settings'`);
     if (mode?.value.developmentMode) return;
     if (!ctx.youtube || process.env.AUTO_PUBLISH_ENABLED !== "true") return;
-    const [account] = await ctx.db
-      .select()
-      .from(platformAccounts)
-      .where(eq(platformAccounts.platform, "youtube"));
-    if (!account || account.disconnectRequestedAt) return;
 
     // Бюджет считается скользящими сутками по всем попыткам, включая
     // сбойные: квота площадки тратится и на них.
@@ -268,8 +263,8 @@ export function startAutomation(
     const budget = options.publishDailyLimit - (used?.n ?? 0);
     if (budget <= 0) return;
 
-    const fresh = await ctx.db.execute<{ id: string }>(sql`
-      select c.id
+    const fresh = await ctx.db.execute<{ id: string; streamer:string }>(sql`
+      select c.id,c.streamer
       from clips c
         join streamers s on s.login = c.streamer
         join runs r on r.id = c.run_id
@@ -287,6 +282,8 @@ export function startAutomation(
     if (fresh.length === 0) return;
 
     for (const clip of fresh) {
+      const {account}=await youtubeDestination(ctx.db,clip.streamer);
+      if(!account)continue;
       const publicationId = randomUUID();
       const inserted=await ctx.db.transaction(async tx=>{
       const [active]=await tx.select({id:platformAccounts.id}).from(platformAccounts)

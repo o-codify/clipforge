@@ -66,6 +66,13 @@ export class CatalogController {
   }
 
   @AdminOnly()
+  @Post('streamers/:login/youtube-channel')
+  setYoutubeChannel(@Param('login') login:string,@Body() body:unknown) {
+    const {channelId}=z.object({channelId:z.string().min(1).max(100).nullable()}).strict().parse(body);
+    return this.catalog.setYoutubeChannel(login,channelId);
+  }
+
+  @AdminOnly()
   @Post("streamers/:login/audio")
   streamerAudio(@Param("login") login: string, @Body() body: unknown) {
     const {audioMode} = z.object({audioMode: z.enum(["original", "dtln", "dtln-gated"])}).strict().parse(body);

@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import type {Context} from './context.js';
 import {applyFeedback} from './feedback.js';
+import {insideGame,gameSlug} from './game-selection.js';
 
 export type MediaTaskScope={jobId:string;leaseId:string;queue:string;vodId:string;payload:Record<string,unknown>};
 const id=z.string().regex(/^[a-zA-Z0-9_.:-]{1,220}$/);
@@ -96,6 +97,8 @@ export class MediaTaskRepository {
       }
       case 'clip.blocked':{const m=range.parse(input);return this.unblocked(m.start,m.end);}
       case 'clip.save': {const m=z.object({clip:clipSchema,proof:object}).parse(input),c=m.clip,r=await this.run(c.runId);
+        const selectedGame=this.scope.payload.game;
+        if(typeof selectedGame==='string'&&(!insideGame(v.chapters,selectedGame,c.start,c.end)||gameSlug(c.game??'')!==gameSlug(selectedGame)))throw new Error('Клип выходит за главу выбранной игры');
         if(c.vodId!==v.id||c.streamer!==v.streamer||c.end<=c.start||c.end>(v.duration??7*86400)+5||c.end-c.start>180||c.segmentKey!==segmentKey(v.id,c.start,c.end)||c.id!==clipId(v.id,c.segmentKey,c.version))throw new Error('Неверные границы или идентификатор клипа');
         if(await this.unblocked(c.start,c.end))throw new Error('Момент заблокирован');
         const [published]=await db.execute(sql`select 1 from publications where clip_id=${c.id} limit 1`);if(published)return {saved:false};

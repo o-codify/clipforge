@@ -13,6 +13,8 @@ pnpm cf youtube-check [accountId]        проверить авторизаци
 pnpm cf clips [--streamer login]         найти клипы
 pnpm cf clip <clipId>                    клип, проверка рекламы, публикации
 pnpm cf run <runId>                      результат нарезки и параметры обработки
+pnpm cf streamer-channel <login> --channel UC…|inherit
+                                        канал новых публикаций стримера
 pnpm cf streamer <login>                 профиль и настройка звука
 pnpm cf streamer-audio <login> --audio original|dtln|dtln-gated
                                         звук новых клипов всех эфиров стримера
@@ -28,7 +30,7 @@ pnpm cf streamer-ads <login> --ads on|off [--all]
                                         проверка рекламы; --all также сбрасывает настройки всех эфиров
 pnpm cf vod-ads <vodId> --ads on|off|inherit
                                         проверка рекламы отдельного эфира
-pnpm cf prepare <vodId> [--count 1] [--audio dtln]
+pnpm cf prepare <vodId> [--count 1] [--audio dtln] [--game wardogs]
                                         скачать и обработать эфир; только новые черновики, без публикации
 pnpm cf preview <clipId>                 готовые название, описание, каналы
 pnpm cf publish <clipId> --metadata file.json
@@ -64,7 +66,7 @@ export function parseCommand(args:string[]) {
     metadata:{type:'string'},regions:{type:'string'},timeout:{type:'string'},
     count:{type:'string'},fresh:{type:'boolean'},audio:{type:'string'},'test-batch':{type:'boolean'},
     ads:{type:'string'},all:{type:'boolean'},vods:{type:'string'},clips:{type:'string'},
-    channel:{type:'string'},interval:{type:'string'},'daily-limit':{type:'string'},
+    game:{type:'string'},channel:{type:'string'},interval:{type:'string'},'daily-limit':{type:'string'},
   }});
 }
 function integer(value:string|undefined,fallback:number,max:number) {
@@ -83,10 +85,10 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
   const options=parsed.values;
   const noTarget=['accounts','clips','analytics','jobs','active','batch-publications'];
   const optionalTarget=['youtube-check','refresh'];
-  const targets=['clip','run','vod','streamer','streamer-audio','vod-audio','streamer-ads','vod-ads','original-audio','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','resume-batch','wait','cleanup','inspect-ads','approve-clip','draft-clip','pace-batch','pause-batch'];
+  const targets=['clip','run','vod','streamer','streamer-channel','streamer-audio','vod-audio','streamer-ads','vod-ads','original-audio','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','resume-batch','wait','cleanup','inspect-ads','approve-clip','draft-clip','pace-batch','pause-batch'];
   if(!command||![...noTarget,...optionalTarget,...targets].includes(command))throw new Error('Неизвестная команда. Используйте pnpm cf --help');
   if(extra.length||(noTarget.includes(command)&&target)||(targets.includes(command)&&!target))throw new Error('Неверное число аргументов команды');
-  const allowed:Record<string,string[]>={clips:['streamer','limit'],'original-audio':['clips'],render:['count','fresh','audio','test-batch'],prepare:['count','audio'],'prepare-streamer':['count','audio','vods'],'streamer-ads':['ads','all'],'vod-ads':['ads'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
+  const allowed:Record<string,string[]>={clips:['streamer','limit'],'original-audio':['clips'],render:['count','fresh','audio','test-batch'],prepare:['count','audio','game'],'streamer-channel':['channel'],'prepare-streamer':['count','audio','vods'],'streamer-ads':['ads','all'],'vod-ads':['ads'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
   allowed['pace-batch']=['channel','interval','daily-limit'];
   for(const key of Object.keys(options))if(!['url','help',...(allowed[command]??[])].includes(key))throw new Error(`Параметр --${key} не относится к команде ${command}`);
   const id=encodeURIComponent(target??'');
@@ -107,6 +109,10 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
     }
     case 'clip':return {path:`/api/clips/${id}`};
     case 'run':return {path:`/api/runs/${id}`};
+    case 'streamer-channel': {
+      if(!options.channel||!(options.channel==='inherit'||/^UC[\w-]{22}$/.test(options.channel)))throw new Error('--channel: UC… или inherit');
+      return {path:`/api/streamers/${id}/youtube-channel`,method:'POST',body:{channelId:options.channel==='inherit'?null:options.channel}};
+    }
     case 'streamer':return {path:`/api/streamers/${id}`};
     case 'streamer-ads':
     case 'vod-ads': {
@@ -133,7 +139,7 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
     }
     case 'prepare': {
       if(options.audio&&!['original','dtln','dtln-gated'].includes(options.audio))throw new Error('--audio: original или dtln');
-      return {path:`/api/jobs/prepare/${id}`,method:'POST',body:{count:integer(options.count,1,100),...(options.audio?{audioMode:options.audio}:{})}};
+      return {path:`/api/jobs/prepare/${id}`,method:'POST',body:{count:integer(options.count,1,100),...(options.game?{game:options.game}:{}),...(options.audio?{audioMode:options.audio}:{})}};
     }
     case 'prepare-streamer': {
       if(options.audio&&!['original','dtln','dtln-gated'].includes(options.audio))throw new Error('--audio: original, dtln, dtln-gated');

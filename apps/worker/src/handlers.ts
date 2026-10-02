@@ -30,6 +30,7 @@ import {
   type VodChapter,
 } from "@clipforge/db";
 import {disjointMoments,renderCount} from './render-options.js';
+import {insideGame} from './game-selection.js';
 import {ensureAdProfile} from './ad-protection.js';
 import {
   buildAss,
@@ -541,7 +542,7 @@ export interface PreparedRenderSource {
 
 export async function renderRun(
   ctx: Context,
-  payload: { vodId: string; count?: number; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated';testBatch?:boolean },
+  payload: { vodId: string; count?: number; game?:string; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated';testBatch?:boolean },
   report: JobReport,
   prepared?: PreparedRenderSource,
 ): Promise<{ runId: string; rendered: number; skipped: number; replaced: number }> {
@@ -618,7 +619,8 @@ export async function renderRun(
   const covered = remote ? (skipExisting ? remote.covered : []) : skipExisting ? await ctx.db.select({start:clipsTable.start,end:clipsTable.end})
     .from(clipsTable).where(and(eq(clipsTable.vodId,row.id),
       sql`(${clipsTable.archivedAt} is null or exists(select 1 from publications p where p.clip_id=${clipsTable.id}))`)) : [];
-  const eligible = feedback.candidates.filter(candidate=>!covered.some(range=>range.start!==null&&range.end!==null
+  const eligible = feedback.candidates.filter(candidate=>(!payload.game||insideGame(row.chapters,payload.game,
+    (prepared?.offsetSeconds??0)+candidate.start,(prepared?.offsetSeconds??0)+candidate.end))&&!covered.some(range=>range.start!==null&&range.end!==null
     && range.start < (prepared?.offsetSeconds??0)+candidate.end && range.end > (prepared?.offsetSeconds??0)+candidate.start));
   if(!eligible.length)throw new Error('Нет новых моментов, не пересекающихся с существующими клипами');
   const reserve = selectDiverse(eligible, Math.min(300,count*5), audio.duration)
@@ -687,7 +689,7 @@ export async function renderRun(
     id: runId, vodId: row.id, streamer: row.streamer, game: row.game,
     outDir, candidates: candidates.length, version,
     settings: { grid: describeGrid(grid), versionParts, speechModel: transcriptRow.model, feedback: feedback.evidence,
-      sourceWindow: {start:sourceOffset,end:sourceOffset+audio.duration}, selection:"automatic",
+      sourceWindow: {start:sourceOffset,end:sourceOffset+audio.duration}, selection:"automatic",gameFilter:payload.game??null,
       audioMode,audioSettings,adsSettings,skipExisting,testBatch:payload.testBatch??false,requestedCount:count,jobId:report.id },
   };
   if(ctx.remote)await ctx.remote.call('render.begin',runValues);
@@ -986,7 +988,7 @@ async function dropSuperseded(
  */
 export async function runPipeline(
   ctx: Context,
-  payload: { vodId: string; count?: number; reuse: boolean; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated'; testBatch?:boolean },
+  payload: { vodId: string; count?: number; game?:string; reuse: boolean; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated'; testBatch?:boolean },
   report: JobReport,
 ): Promise<{ runId: string; rendered: number; skipped: number }> {
   const force = !payload.reuse;
@@ -1018,7 +1020,7 @@ export async function runPipeline(
   report.log("шаг 5/5: нарезка");
   const result = await renderRun(
     ctx,
-    { vodId: payload.vodId, ...(payload.count ? { count: payload.count } : {}),
+    { vodId: payload.vodId, ...(payload.game?{game:payload.game}:{}), ...(payload.count ? { count: payload.count } : {}),
       ...(payload.audioMode ? {audioMode:payload.audioMode} : {}),
       ...(payload.skipExisting ? {skipExisting:true} : {}),
       ...(payload.testBatch ? {testBatch:true} : {}) },

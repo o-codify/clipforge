@@ -18,7 +18,7 @@ export function BatchPublications({login,batchId}:{login?:string;batchId?:string
   const [now,setNow]=useState(Date.now());
   useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(t);},[]);
   const [rows,setRows]=useState<Row[]>([]),[accounts,setAccounts]=useState<PlatformAccount[]>([]);
-  const [channel,setChannel]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [channel,setChannel]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[defaultChannel,setDefaultChannel]=useState('');
   const load=async()=>{try{
     const result=await api.get<Row[]>('/api/platforms/batches');setRows(result);setError('');
   }catch{setError('Не удалось загрузить очередь публикации');}};
@@ -26,7 +26,8 @@ export function BatchPublications({login,batchId}:{login?:string;batchId?:string
   useEffect(()=>{if(batchId)void api.get<PlatformAccount[]>('/api/platforms').then(setAccounts).catch(()=>{});},[batchId]);
   const visible=rows.filter(r=>!login||r.policy.login===login);
   const act=async(fn:()=>Promise<unknown>)=>{setBusy(true);try{await fn();await load();}catch(e){toast.error(String(e));}finally{setBusy(false);}};
-  const channelId=channel||accounts.find(a=>a.platform==='youtube'&&!a.disconnectRequestedAt)?.externalId||'';
+  useEffect(()=>{if(login)void api.get<{account:PlatformAccount|null}>(`/api/platforms/youtube/destination/${login}`).then(d=>setDefaultChannel(d.account?.externalId??'')).catch(()=>{});},[login]);
+  const channelId=channel||defaultChannel;
   return <>
     {error&&<p role="alert">{error}</p>}
     {batchId&&!visible.some(r=>r.policy.jobId===batchId)&&<div className="audio-setting-control" style={{flexWrap:'wrap',gap:12}}>

@@ -66,6 +66,7 @@
       "breakpoints": true
     },
     {"idx":9,"version":"7","when":1790812801000,"tag":"0009_remote_workers","breakpoints":true},
-    {"idx":10,"version":"7","when":1790812802000,"tag":"0010_worker_profiles","breakpoints":true}
+    {"idx":10,"version":"7","when":1790812802000,"tag":"0010_worker_profiles","breakpoints":true},
+    {"idx":11,"version":"7","when":1790906400000,"tag":"0011_streamer_youtube","breakpoints":true}
   ]
 }

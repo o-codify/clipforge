@@ -200,6 +200,8 @@ export const streamers = pgTable(
      * и включаются они в разные моменты жизни канала.
      */
     autoPublish: boolean("auto_publish").notNull().default(false),
+    /** Null inherits the platform channel. Keep an explicit destination after disconnect. */
+    youtubeChannelId: text("youtube_channel_id"),
     /** Default for existing and future VODs without their own audio override. */
     audioMode: text("audio_mode").$type<"original" | "dtln" | "dtln-gated">().notNull().default("original"),
     adCheckEnabled: boolean("ad_check_enabled").notNull().default(true),

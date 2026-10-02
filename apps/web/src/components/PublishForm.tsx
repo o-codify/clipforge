@@ -6,7 +6,7 @@ import { Button } from "./ui";
 import { Select } from "./Select";
 import { displayTranscript } from "@clipforge/contracts/text";
 
-interface Draft { title:string; description:string; privacy:"private"|"unlisted"|"public"; accounts:PlatformAccount[] }
+interface Draft { title:string; description:string; privacy:"private"|"unlisted"|"public"; accounts:PlatformAccount[]; defaultAccountId:string|null }
 
 /** Mounted only in the administrator's clip view. */
 export function PublishForm({clipId,onDone,onCancel}:{clipId:string;onDone:()=>void;onCancel:()=>void}) {
@@ -17,7 +17,7 @@ export function PublishForm({clipId,onDone,onCancel}:{clipId:string;onDone:()=>v
   useEffect(()=>{
     let active=true;
     void api.get<Draft>(`/api/platforms/publish/${clipId}`).then(value=>{
-      if(active){setDraft(value);setAccountId(value.accounts[0]?.id??"");}
+      if(active){setDraft(value);setAccountId(value.defaultAccountId??"");}
     }).catch(e=>{if(active)setError(String(e));});
     return()=>{active=false;};
   },[clipId]);

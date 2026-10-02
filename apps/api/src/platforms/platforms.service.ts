@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
-import { clips, games, streamers, runs, platformAccounts, publications, runtimeValue, beginYoutubeDisconnect, forgetYoutubeAccount, type Database } from "@clipforge/db";
+import { clips, games, streamers, runs, platformAccounts, publications, runtimeValue, youtubeDestination, beginYoutubeDisconnect, forgetYoutubeAccount, type Database } from "@clipforge/db";
 import { QUEUES, batchPublicationKey, type BatchPublicationPolicy, type PayloadOf } from "@clipforge/jobs";
 import {
   authUrl,
@@ -79,17 +79,22 @@ export class PlatformsService {
       where r.key like 'batch-publication:%' order by r.updated_at desc limit 50`);
   }
 
-  async configureBatch(id:string,options:Pick<BatchPublicationPolicy,'enabled'|'channelId'|'intervalMinutes'|'dailyLimit'|'privacy'>) {
+  async destination(login:string) { return youtubeDestination(this.db,login); }
+
+  async configureBatch(id:string,options:Omit<Pick<BatchPublicationPolicy,'enabled'|'channelId'|'intervalMinutes'|'dailyLimit'|'privacy'>,'channelId'> & {channelId?:string}) {
     return this.db.transaction(async tx=>{
       await tx.execute(sql`select pg_advisory_xact_lock(740025)`);
       const [job]=await tx.execute<{data:{login:string};state:string}>(sql`select j.data||jsonb_build_object('login',coalesce(j.data->>'login',v.streamer)) as data,j.state from jobs.job j
-        left join vods v on v.id=j.data->>'vodId' where j.id=${id}::uuid and j.name in (${QUEUES.prepareStreamer},${QUEUES.restoreAudio})`);
+        left join vods v on v.id=j.data->>'vodId' where j.id=${id}::uuid and j.name in (${QUEUES.prepareStreamer},${QUEUES.restoreAudio},${QUEUES.preparePreview})`);
       if(!job) throw new NotFoundException('Подборка не найдена');
       if(options.enabled&&job.state==='cancelled')throw new BadRequestException('Подборка отменена');
+      const channelId=options.channelId??(await youtubeDestination(tx as unknown as Database,job.data.login)).channelId;
+      const [account]=await tx.select({id:platformAccounts.id}).from(platformAccounts).where(and(eq(platformAccounts.platform,'youtube'),eq(platformAccounts.externalId,channelId),isNull(platformAccounts.disconnectRequestedAt))).for('update');
+      if(options.enabled&&!account)throw new BadRequestException('Подключите выбранный YouTube-канал');
       const key=batchPublicationKey(id);
       const [saved]=await tx.execute<{value:BatchPublicationPolicy}>(sql`select value from platform_runtime where key=${key} for update`);
-      if(saved?.value.pendingPublicationId&&saved.value.channelId!==options.channelId)throw new BadRequestException('Сначала завершите текущую публикацию');
-      const policy:BatchPublicationPolicy={...saved?.value,...options,jobId:id,login:job.data.login,
+      if(saved?.value.pendingPublicationId&&saved.value.channelId!==channelId)throw new BadRequestException('Сначала завершите текущую публикацию');
+      const policy:BatchPublicationPolicy={...saved?.value,...options,channelId,jobId:id,login:job.data.login,
         authorizedAt:new Date().toISOString(),state:options.enabled?'waiting':'paused',error:null};
       await tx.execute(sql`insert into platform_runtime(key,value) values(${key},${JSON.stringify(policy)}::jsonb)
         on conflict(key) do update set value=excluded.value,updated_at=now()`);
@@ -232,6 +237,7 @@ export class PlatformsService {
         sql`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','disabledAt']) is not null`));
     if(!clip) throw new NotFoundException("Клип недоступен для публикации");
     return { ...suggestVideoMetadata({...clip,displayName:clip.displayName ?? clip.login}),
+      defaultAccountId:(await this.destination(clip.login)).account?.id??null,
       accounts:(await this.accounts()).filter(account=>account.platform==="youtube"&&!account.disconnectRequestedAt) };
   }
 

@@ -22,13 +22,17 @@ export class PlatformsController {
   }
 
   @AdminOnly()
+  @Get('youtube/destination/:login')
+  destination(@Param('login') login:string) { return this.platforms.destination(login); }
+
+  @AdminOnly()
   @Get('batches')
   batches() { return this.platforms.batches(); }
 
   @AdminOnly()
   @Post('batches/:id')
   configureBatch(@Param('id') id:string,@Body() body:unknown) {
-    return this.platforms.configureBatch(z.string().uuid().parse(id),batchPublicationOptions.parse(body));
+    return this.platforms.configureBatch(z.string().uuid().parse(id),batchPublicationOptions.extend({channelId:batchPublicationOptions.shape.channelId.optional()}).parse(body));
   }
 
   @AdminOnly()

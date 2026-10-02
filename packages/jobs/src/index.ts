@@ -115,6 +115,8 @@ export const facecamVodPayload = z.object({
  */
 export const renderRunPayload = z.object({
   vodId: z.string().min(1),
+  /** Only moments fully inside a chapter of this game. */
+  game: z.string().min(1).max(100).optional(),
   count: z.number().int().min(1).max(500).optional(),
   skipExisting: z.boolean().optional(),
   /** Optional per-run override; otherwise resolve VOD, then streamer settings. */

@@ -11,7 +11,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 
 import {
-  clips, games, publications, runs, streamerGames, streamers, transcripts, vods,
+  clips, games, publications, runs, streamerGames, streamers, transcripts, vods, platformAccounts, youtubeDestination,
   vodAudioSettings, vodAdSettings, type AudioMode, type Database,
 } from "@clipforge/db";
 
@@ -128,7 +128,7 @@ export class CatalogService {
         left join clips c on c.vod_id = v.id and c.archived_at is null
       where true
         ${scope ? sql`and v.streamer = ${scope}` : sql``}
-        ${filters.game ? sql`and v.game = ${filters.game}` : sql``}
+        ${filters.game ? sql`and (v.game = ${filters.game} or exists(select 1 from jsonb_array_elements(v.chapters) chapter join games g on lower(g.title)=lower(chapter->>'title') where g.slug=${filters.game}))` : sql``}
         ${filters.state ? sql`and v.state = ${filters.state}` : sql``}
       group by v.id
       order by v.published_at desc nulls last
@@ -365,6 +365,17 @@ export class CatalogService {
       .set({ autoPublish: enabled })
       .where(eq(streamers.login, login));
     return { ok: true };
+  }
+
+  async setYoutubeChannel(login:string,channelId:string|null) {
+    if(channelId) {
+      const [account]=await this.db.select({id:platformAccounts.id}).from(platformAccounts).where(and(
+        eq(platformAccounts.platform,'youtube'),eq(platformAccounts.externalId,channelId),isNull(platformAccounts.disconnectRequestedAt)));
+      if(!account)throw new BadRequestException('Сначала подключите этот YouTube-канал');
+    }
+    const rows=await this.db.update(streamers).set({youtubeChannelId:channelId}).where(eq(streamers.login,login)).returning({login:streamers.login});
+    if(!rows.length)throw new NotFoundException('Стример не найден');
+    return youtubeDestination(this.db,login);
   }
 
   async setStreamerState(login: string, state: "candidate" | "active" | "paused") {

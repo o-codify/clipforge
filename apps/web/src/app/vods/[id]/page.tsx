@@ -26,6 +26,7 @@ import { api, hhmm, runTime, TRIGGERS, when } from "@/lib/api";
 import { useJobs, useLiveReload } from "@/lib/jobs";
 import {AdSetting,type VodAdSettings} from '@/components/AdSetting';
 import {AudioSetting,type VodAudioSettings} from '@/components/AudioSetting';
+import {GamePreview} from '@/components/GamePreview';
 
 interface VodDetail {
   id: string;
@@ -166,6 +167,7 @@ export default function VodPage() {
       </div>
 
       {viewer?.isAdmin&&vod.audio&&<Card><AudioSetting scope="vod" id={id} value={vod.audio.override} streamerMode={vod.audio.streamerMode} onSaved={load}/></Card>}
+      {viewer?.isAdmin&&vod.chapters.length>0&&<Card><GamePreview vodId={id} login={vod.streamer} chapters={vod.chapters}/></Card>}
       {viewer?.isAdmin&&vod.ads&&<Card><AdSetting scope="vod" id={id} value={vod.ads.override} streamerEnabled={vod.ads.streamerEnabled} onSaved={load}/></Card>}
 
       <SectionTitle aside={<span className="muted">{readySteps} из {STEPS.length}</span>}>

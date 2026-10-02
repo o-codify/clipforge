@@ -24,6 +24,7 @@ import { useLiveReload } from "@/lib/jobs";
 import { toast } from "@/lib/toast";
 import { DetailPage } from "@/components/DetailPage";
 import {AdSetting} from '@/components/AdSetting';
+import {StreamerPublicationSetting} from '@/components/StreamerPublicationSetting';
 import {DraftBatch} from '@/components/DraftBatch';
 import {AudioSetting,type AudioMode} from '@/components/AudioSetting';
 
@@ -35,6 +36,7 @@ interface StreamerDetail {
   followers: number | null;
   state: "candidate" | "active" | "paused";
   autoPublish: boolean;
+  youtubeChannelId:string|null;
   audioMode: AudioMode;
   adCheckEnabled:boolean;
   live: boolean;
@@ -165,7 +167,7 @@ export default function StreamerPage() {
         </div>
       </Card>
 
-      {isAdmin&&<Card><AudioSetting scope="streamer" id={login} value={streamer.audioMode} onSaved={load}/><AdSetting scope="streamer" id={login} value={streamer.adCheckEnabled} onSaved={load}/></Card>}
+      {isAdmin&&<Card><StreamerPublicationSetting login={login} value={streamer.youtubeChannelId} onSaved={load}/><AudioSetting scope="streamer" id={login} value={streamer.audioMode} onSaved={load}/><AdSetting scope="streamer" id={login} value={streamer.adCheckEnabled} onSaved={load}/></Card>}
       {isAdmin&&<Card><DraftBatch login={login}/></Card>}
 
       {streamer.games.length > 0 && <SectionTitle>Играет</SectionTitle>}

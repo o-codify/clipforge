@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {cachedPreview} from './cached-preview.js';
 import {renderRun,runPipeline,type JobReport} from './handlers.js';
 import type {Context} from './context.js';
+import {gamePreview} from './game-preview.js';
 
 /** Draft-only preparation may reuse a complete prefix of an interrupted VOD. */
 export async function preparePreview(ctx:Context,payload:Parameters<typeof runPipeline>[1],report:JobReport) {
@@ -14,7 +15,7 @@ export async function preparePreview(ctx:Context,payload:Parameters<typeof runPi
   const draft={...payload,testBatch:true,skipExisting:true,reuse:true};
   const workspace=new Workspace({data:ctx.config.data,out:ctx.config.out},
     {game:row.game??'unknown',streamer:row.streamer,vodId:row.id});
-  const source=await cachedPreview(workspace,ctx.config.videoFormat);
+  const source=payload.game?await gamePreview(ctx,row,payload.game,report):await cachedPreview(workspace,ctx.config.videoFormat);
   if(!source)return runPipeline(ctx,draft,report);
   if(ctx.remote){if(row.state==='fetching')await ctx.remote.call('vod.state',{state:'known'});}
   else await ctx.db.update(vods).set({state:'known',error:null})
@@ -36,7 +37,7 @@ export async function preparePreview(ctx:Context,payload:Parameters<typeof runPi
   const signals=await ctx.python.call('audioSignals',{audio:source.audio,out:join(source.directory,'signals.f32')});
   await cancelled();
   return renderRun(ctx,draft,report,{
-    video:source.video,offsetSeconds:0,transcript:{...result,model:ctx.config.speechModel},
+    video:source.video,offsetSeconds:'offsetSeconds' in source?Number(source.offsetSeconds):0,transcript:{...result,model:ctx.config.speechModel},
     signals:await readSignals(signals.file,signals),
   });
 }
