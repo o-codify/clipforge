@@ -304,6 +304,7 @@ export async function fetchVod(
   const ytdlp = { command: ctx.config.pythonBin, args: [join(ctx.config.workerRoot, 'clipforge_worker', 'download.py')] };
   const cached=await loadVod(ctx,payload.vodId);
   const cachedVideo=cached.workspace.video(ctx.config.videoFormat);
+  await ctx.remote?.restoreSources?.(cached.workspace.root,name=>!name.includes('/')&&(name.startsWith('audio')||!payload.audioOnly&&name.startsWith('video_')));
   const present=async(file:string)=>(await stat(file).catch(()=>null))?.size??0;
   if(await present(cached.workspace.audio) && (payload.audioOnly || await present(cachedVideo))) {
     report.log('Использую сохранённые исходники эфира.');

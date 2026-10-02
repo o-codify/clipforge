@@ -17,3 +17,5 @@
 
 /* A single border indicates input focus; never add a second outer ring. */
 .cfa input:focus,.cfa input:focus-visible{border-color:#a1a1aa;outline:none;box-shadow:none}
+
+.cfa-streamer{margin-top:12px;display:flex;align-items:center}.cfa-media figcaption{display:flex;flex-direction:column;gap:8px}

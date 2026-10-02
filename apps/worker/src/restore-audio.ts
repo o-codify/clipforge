@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {mkdir,stat} from 'node:fs/promises';
 import {join} from 'node:path';
-import {probeMedia,runMediaCommand,newRunId} from '@clipforge/pipeline';
+import {probeMedia,runMediaCommand,newRunId,Workspace} from '@clipforge/pipeline';
 import type {PayloadOf,QUEUES} from '@clipforge/jobs';
 import type {Context} from './context.js';
 import {fetchVod,type JobReport} from './handlers.js';
@@ -24,7 +24,8 @@ export async function restoreAudio(ctx:Context,payload:PayloadOf<typeof QUEUES.r
     if(!clip||!run||clip.state==='blocked'||clip.archivedAt||clip.start===null||clip.end===null)throw new Error('Исходный клип недоступен');
     const version=createHash('sha256').update('original-audio-v1:'+sourceId).digest('hex').slice(0,12),id=sourceId+'_original_'+version;
     if((await ctx.remote.call<{clip:ClipData|null}>('clip.get',{id})).clip){results.push(id);continue;}
-    const dir=join(ctx.config.out,'original-audio',version);await mkdir(dir,{recursive:true});
+    const workspace=new Workspace({data:ctx.config.data,out:ctx.config.out},{game:clip.game??'unknown',streamer:clip.streamer,vodId:payload.vodId});
+    const dir=join(workspace.outRoot,'original-audio',version);await mkdir(dir,{recursive:true});
     const source=join(dir,'source.mp4'),file=join(dir,'clip.mp4');await ctx.remote.downloadClip(sourceId,source);
     const duration=(await probeMedia(source))?.duration;
     if(!duration||clip.start+duration>sourceDuration+.05)throw new Error('Исходной звуковой дорожки недостаточно для всего клипа');

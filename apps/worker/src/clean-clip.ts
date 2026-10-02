@@ -36,7 +36,7 @@ export async function cleanClip(ctx:Context, payload:PayloadOf<typeof QUEUES.cle
   const id = `${row.clip.id}_clean_${hash}`;
   const existing = await readClip(ctx,id);
   if (existing) return {clipId:id};
-  const outDir = join(ctx.config.out,'cleaned',hash);
+  const outDir = join(new Workspace({data:ctx.config.data,out:ctx.config.out},{game:row.clip.game??'unknown',streamer:row.clip.streamer,vodId:payload.vodId}).outRoot,'cleaned',hash);
   await mkdir(outDir,{recursive:true});
   let source = join(row.run.outDir,row.clip.file);
   if (!await stat(source).then(s=>s.size>0).catch(()=>false)) {
@@ -93,7 +93,7 @@ async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.
     const map=await ctx.python.call('minimap',{video,game:row.clip.game??'',start:row.clip.start,end:row.clip.end,samples:12,...(camera.rect?{excludeRect:camera.rect}:{})});
     grid=computeGrid(profile.width,profile.height,camera.rect,{minimapRect:map.rect});
   }
-  const outDir=join(ctx.config.out,'protected',hash);
+  const outDir=join(workspace.outRoot,'protected',hash);
   await mkdir(outDir,{recursive:true});
   const file=join(outDir,'clip.mp4');
   const protection=await ctx.python.call('prepareMedia',{video,start:row.clip.start,end:row.clip.end+3.4,

@@ -13,6 +13,7 @@ import {MediaTaskRepository,type MediaTaskScope} from '@clipforge/worker/media-t
 import {z} from 'zod';
 import {CONFIG,DATABASE,REPO_ROOT,type ApiConfig} from './config.js';
 import {JobsService} from './jobs/jobs.service.js';
+import {WorkerObjects} from './worker-objects.js';
 
 const hash=(s:string|Buffer)=>createHash('sha256').update(s).digest('hex');
 const opaque=z.string().regex(/^[a-zA-Z0-9_-]{43,128}$/);
@@ -85,6 +86,14 @@ export class WorkerGatewayService implements OnModuleDestroy {
   }
   async installation(auth:string|undefined,raw:unknown){const w=await this.identity(auth),m=z.object({stage:z.string().max(120)}).parse(raw);
     await this.db.execute(sql`update worker_instances set state='installing',heartbeat_at=now(),resources=${JSON.stringify({stage:m.stage})}::jsonb where id=${w.workerId}`);return {};}
+  async cache(auth:string|undefined,raw:unknown){
+    const w=await this.identity(auth),m=z.object({vodIds:z.array(z.string().regex(/^v\d+$/)).max(500)}).strict().parse(raw);
+    if(!this.storage||w.policy.profile==='catalog')return {};
+    for(const vodId of new Set(m.vodIds)){
+      if(!(await this.db.execute(sql`select 1 from vods where id=${vodId}`)).length)continue;
+      await this.jobs.enqueue(QUEUES.archiveVod,{vodId,workerId:w.workerId});
+    }return {};
+  }
   async heartbeat(auth:string|undefined,raw:unknown){const w=await this.identity(auth);
     const m=z.object({resources:resourcesSchema,leaseId:uid.nullable(),version:z.string().max(100)}).parse(raw);
     const [r]=await this.db.execute<{draining:boolean}>(sql`update worker_instances set resources=${JSON.stringify(m.resources)}::jsonb,queues=${JSON.stringify(WORKER_PROFILES[w.policy.profile??'media'].queues)}::jsonb,version=${m.version},state='online',heartbeat_at=now() where id=${w.workerId} returning draining`);
@@ -128,10 +137,11 @@ export class WorkerGatewayService implements OnModuleDestroy {
       if(!worker||worker.draining||!worker.fresh||!parsed.success||parsed.data.paused||(process.env.RELEASE_SHA&&worker.version!==process.env.RELEASE_SHA))return null;
       const resources=parsed.data;
       const profile=w.policy.profile??'media',catalog=profile==='catalog',queues=WORKER_PROFILES[profile].queues;
-      if(resources.freeGb<(catalog ? .25 : 4)||resources.allocation.memoryMb-resources.allocation.usedMb<Math.max(catalog?32:256,resources.allocation.memoryMb*.1))return null;
+      if(resources.freeGb<(catalog ? .25 : .1)||resources.allocation.memoryMb-resources.allocation.usedMb<Math.max(catalog?32:256,resources.allocation.memoryMb*.1))return null;
       const [active]=await tx.execute(sql`select 1 from remote_worker_leases where worker_id=${w.workerId} and state='active'`);if(active)return null;
       const candidates=await tx.execute<{id:string;name:QueueName;data:Record<string,unknown>}>(sql`select j.id::text,j.name,j.data from jobs.job j
         where j.name in (${sql.join(queues.map(q=>sql`${q}`),sql`,`)}) and j.state in ('created','retry') and j.start_after<now()
+        and (j.name<>${QUEUES.archiveVod} or j.data->>'workerId'=${w.workerId})
         and coalesce(j.policy,'standard')='standard' and (j.data->>'vodId' is not null or j.name=${QUEUES.indexChannel})
         and not exists(select 1 from remote_worker_leases l where l.queue=j.name and l.payload->>'login'=j.data->>'login' and l.state='active')
         and not exists(select 1 from remote_worker_leases l where l.vod_id=j.data->>'vodId' and l.state='active')
@@ -139,10 +149,11 @@ export class WorkerGatewayService implements OnModuleDestroy {
         and (j.data->>'batchId' is null or exists(select 1 from jobs.job p where p.id=(j.data->>'batchId')::uuid and p.state='active'))
         order by j.priority desc,case when j.name=${QUEUES.transcribeVod} then 0 when j.name in (${QUEUES.pipeline},${QUEUES.preparePreview},${QUEUES.prepareBatchVod}) then 1 else 2 end,j.created_on,j.id limit 20 for update skip locked`);
       for(const job of candidates){
+        if(!catalog&&job.name!==QUEUES.archiveVod&&resources.freeGb<4)continue;
         const data=PAYLOADS[job.name].parse(job.data) as Record<string,unknown>,vodId=catalog?null:String(data.vodId);if(!catalog&&!/^v[0-9]+$/.test(vodId!))continue;
         const [lock]=await tx.execute<{ok:boolean}>(sql`select pg_try_advisory_xact_lock(hashtextextended(${catalog?'catalog:'+String(data.login):'vod:'+vodId},0)) as ok`);if(!lock?.ok)continue;
         if(catalog&&(await tx.execute(sql`select 1 from remote_worker_leases where queue=${job.name} and payload->>'login'=${String(data.login)} and state='active'`)).length)continue;
-        if(profile==='media'){
+        if(profile==='media'&&job.name!==QUEUES.archiveVod){
           const [specialist]=await tx.execute(sql`select 1 from worker_instances s join remote_worker_auth a on a.worker_id=s.id
             where s.id<>${w.workerId} and a.revoked_at is null and a.policy->>'profile' in ('speech','render')
             and s.queues ? ${job.name} and s.state='online' and not s.draining and s.heartbeat_at>now()-interval '30 seconds'
@@ -168,6 +179,13 @@ export class WorkerGatewayService implements OnModuleDestroy {
   async operation(auth:string|undefined,leaseId:string,raw:unknown){const m=z.object({operation:z.string().max(50),input:z.unknown()}).strict().parse(raw);
     return this.withLease(auth,leaseId,(repo,db,scope)=>scope.queue===QUEUES.indexChannel
       ?new CatalogTaskRepository(db,scope).call(m.operation,m.input):repo.call(m.operation,m.input));}
+  async object(auth:string|undefined,leaseId:string,action:'start'|'part'|'complete'|'list'|'read',raw?:unknown,id?:string){
+    return this.withLease(auth,leaseId,async(_,db,scope)=>{
+      if(!this.storage||!scope.vodId)throw new ConflictException('Хранилище недоступно');
+      const objects=new WorkerObjects(db,this.storage,scope);
+      switch(action){case 'start':return objects.start(raw);case 'part':return objects.part(id!,raw);case 'complete':return objects.complete(id!);case 'list':return objects.list();case 'read':return objects.read(raw);}
+    });
+  }
   async progress(auth:string|undefined,leaseId:string,raw:unknown){const m=z.object({messages:z.array(z.string().max(500)).max(30)}).parse(raw);
     return this.withLease(auth,leaseId,async(_,db,l)=>{
       const last=m.messages.at(-1);if(last)await db.execute(sql`update worker_jobs set stage=${last},heartbeat_at=now() where job_id=${l.jobId}::uuid and worker_id=${l.workerId}`);
@@ -204,6 +222,9 @@ export class WorkerGatewayService implements OnModuleDestroy {
         join remote_worker_leases l on l.id=u.lease_id where u.state='receiving' and l.state<>'active'
         and l.finished_at<now()-interval '15 minutes' order by u.created_at limit 100`);
       for(const u of abandoned){await rm(this.uploadFile(u.id),{force:true});await this.db.execute(sql`delete from remote_worker_uploads where id=${u.id}::uuid and state='receiving'`);}
+      if(this.storage){const unfinished=await this.db.execute<{id:string;key:string;upload:string}>(sql`select u.id::text,u.storage_key as key,u.multipart_id as upload from worker_object_uploads u
+        join remote_worker_leases l on l.id=u.lease_id where u.state='receiving' and l.state<>'active' and l.finished_at<now()-interval '15 minutes' limit 20`);
+        for(const u of unfinished){await this.storage.abortMultipart(u.key,u.upload);await this.db.execute(sql`delete from worker_object_uploads where id=${u.id}::uuid and state='receiving'`);}}
     }finally{this.sweeping=false;}
   }
   private uploadFile(id:string){return join(this.config.data,'worker-uploads',uid.parse(id)+'.part');}

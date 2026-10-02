@@ -2,6 +2,11 @@ import {test} from "node:test";
 import assert from "node:assert/strict";
 import {jobMessage} from "../dist/jobs/conversation.js";
 const job={id:"job-1",name:"heavy.pipeline",state:"active",data:{vodId:"v1"},createdAt:"2026-09-23T10:00:00Z",output:null};
+test('queued streamer work has one badge target and no duplicate channel action or technical diagnostics',()=>{
+  const result=jobMessage({...job,name:'light.index-channel',state:'created',data:{login:'es4xtank'},objectHref:'/streamers/es4xtank'},[],true);
+  assert.equal(result.streamer,'es4xtank');assert.deepEqual(result.actions,[]);
+  assert.equal(result.text,'Хорошо, добавил в очередь.');assert.equal(result.technical,undefined);
+});
 test("one stable card accumulates progress even when renders finish out of order",()=>{
   const first=jobMessage(job,[{message:"шаг 5/5: нарезка"},{message:"[2/24] ready"}],false);
   const second=jobMessage(job,[{message:"шаг 5/5: нарезка"},{message:"[2/24] ready"},{message:"[1/24] ready"},{message:"[2/24] ready"}],false);

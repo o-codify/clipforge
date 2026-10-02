@@ -74,17 +74,17 @@ try{
   }
   await until(()=>finished.length===8);await Promise.all(stoppers.map(stop=>stop()));stoppers=[];
   assert.equal(new Set(finished).size,8);assert.equal(maxTotal,2);assert.equal(owners.size,2);
-  assert.equal((await workers.list()).length,2);
+  assert.equal((await workers.list()).length,0,'Native controllers are not connected container workers');
   await db.sql`update worker_instances set label=case when id='qa-worker-a' then 'Воркер 10' else 'Воркер 2' end`;
   const workerOrder=async()=>(await workers.list()).map(w=>w.id);
-  assert.deepEqual(await workerOrder(),['qa-worker-b','qa-worker-a']);
+  assert.deepEqual(await workerOrder(),[]);
   await registries[0].beat({});await registries[1].beat({});
-  assert.deepEqual(await workerOrder(),['qa-worker-b','qa-worker-a'],'Heartbeats must not reorder workers');
+  assert.deepEqual(await workerOrder(),[],'Heartbeats must not expose service controllers');
   await db.sql`update worker_instances set label='Одинаковое имя'`;
-  assert.deepEqual(await workerOrder(),['qa-worker-a','qa-worker-b'],'Equal names have a stable ID tie-breaker');
+  assert.deepEqual(await workerOrder(),[],'Renamed controllers stay out of the device list');
   const autoId=randomUUID();await db.sql`insert into automation_runs(id,name,state) values(${autoId},'platform.metrics','active')`;
   await registries[1].claim(autoId);
-  assert((await workers.list()).find(w=>w.id==='qa-worker-b').active.some(j=>j.name==='platform.metrics'));
+  assert(!(await workers.list()).some(w=>w.id==='qa-worker-b'),'Controller history is available in jobs, not device cards');
   assert((await workers.jobs({worker:'qa-worker-b'})).rows.some(j=>j.name==='platform.metrics'),'Include scheduled controller tasks');
   await db.sql`update automation_runs set state='completed',completed_at=now() where id=${autoId}`;await registries[1].finish(autoId);
   assert((await workers.jobs({worker:'qa-worker-a'})).rows.every(j=>j.workerId==='qa-worker-a'));

@@ -4,7 +4,7 @@ interface Job {
   id:string; name:string; state:string; data:Record<string,unknown>; createdAt:string;
   output:unknown; objectTitle?:unknown; objectHref?:unknown; streamerName?:unknown; streamer?:unknown;
 }
-export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
+export function jobMessage(job:Job, events:{message:string}[], _admin:boolean) {
   const logs=events.map(event=>event.message.trim());
   const stage=logs.reduce((value,line)=>Number(line.match(/^шаг (\d)\/5/)?.[1]??value),0);
   const rendered=new Set(logs.flatMap(line=>{
@@ -34,7 +34,7 @@ export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
     : failed ? "Не смог завершить задание. Посмотреть причину можно в разделе заданий."
     : job.state==="cancelled" ? "Остановил обработку. Уже готовые материалы сохранены."
     : job.state==="retry" ? "Повторю обработку после паузы. Уже готовые материалы сохранены."
-    : job.state==="created" ? "Добавил задание в очередь. Начну, когда дойдёт его очередь."
+    : job.state==="created" ? "Хорошо, добавил в очередь."
     : rendered.size ? `Монтирую клипы: готово ${rendered.size} из ${total}.`
     : latest??"Начинаю обработку материала.";
   const facts:{label:string;value:string}[]=[];
@@ -49,8 +49,7 @@ export function jobMessage(job:Job, events:{message:string}[], admin:boolean) {
     streamer: typeof job.streamer==='string'?job.streamer:typeof job.data.login==='string'?job.data.login:undefined,
     context:job.objectHref?.toString().startsWith('/vods/')?String(job.objectTitle??''):undefined,facts,
     steps:["heavy.pipeline","heavy.prepare-preview"].includes(job.name) ? ["Загрузка","Речь","Анализ","Камера","Монтаж"].map((label,index)=>({label,state:complete||index+1<stage?"done":index+1===stage?failed?"error":"active":"waiting"})) : [],
-    actions:job.objectHref?[{id:complete&&job.data.vodId?`clips:${job.data.vodId}`:String(job.objectHref),label:complete&&job.data.vodId?"Клипы в чате":job.data.login?"Открыть канал":"Открыть эфир"}]:[],
+    actions:job.objectHref&&!job.data.login?[{id:complete&&job.data.vodId?`clips:${job.data.vodId}`:String(job.objectHref),label:complete&&job.data.vodId?"Клипы в чате":"Открыть эфир"}]:[],
     tone:failed?"error":complete?"success":"normal",
-    ...(admin?{technical:`job: ${job.id}\nqueue: ${job.name}\n${logs.slice(-12).join("\n")}`}:{})
   };
 }

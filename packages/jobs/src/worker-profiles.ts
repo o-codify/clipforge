@@ -6,9 +6,9 @@ export const WORKER_PROFILES = {
   catalog: {label:'Каталог',cpu:.25,memoryGb:.25,downloadKbps:1000,uploadKbps:500,
     queues:[QUEUES.indexChannel]},
   speech: {label:'Распознавание речи',cpu:2,memoryGb:6,downloadKbps:10000,uploadKbps:5000,
-    queues:[QUEUES.transcribeVod]},
+    queues:[QUEUES.transcribeVod,QUEUES.archiveVod]},
   render: {label:'Монтаж и анализ изображения',cpu:2,memoryGb:2,downloadKbps:10000,uploadKbps:5000,
-    queues:[QUEUES.renderRun,QUEUES.renderVariant,QUEUES.analyzeVod,QUEUES.facecamVod,QUEUES.inspectAds,QUEUES.cleanClip,QUEUES.restoreAudio]},
+    queues:[QUEUES.renderRun,QUEUES.renderVariant,QUEUES.analyzeVod,QUEUES.facecamVod,QUEUES.inspectAds,QUEUES.cleanClip,QUEUES.restoreAudio,QUEUES.archiveVod]},
   media: {label:'Полный конвейер',cpu:2,memoryGb:6,downloadKbps:10000,uploadKbps:5000,
     queues:Object.values(QUEUES).filter(q=>q.startsWith('heavy.')&&q!==QUEUES.prepareStreamer)},
 } as const;

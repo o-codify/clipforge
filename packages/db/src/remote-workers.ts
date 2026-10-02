@@ -23,4 +23,13 @@ export async function upgradeRemoteWorkers(db:Database){
     kind text not null check(kind in ('video','poster')), size bigint not null, sha256 text not null,
     received bigint not null default 0, state text not null default 'receiving', storage_key text,
     created_at timestamptz not null default now(), unique(lease_id,clip_id,kind))`);
+  await db.execute(sql`create table if not exists vod_source_assets (
+    vod_id text not null references vods(id), name text not null, storage_key text not null,
+    size bigint not null, sha256 text not null, mtime_ns text not null, updated_at timestamptz not null default now(),
+    primary key(vod_id,name))`);
+  await db.execute(sql`create table if not exists worker_object_uploads (
+    id uuid primary key, lease_id uuid not null references remote_worker_leases(id), kind text not null,
+    name text not null, clip_id text, size bigint not null, sha256 text not null, mtime_ns text not null,
+    storage_key text not null, multipart_id text, state text not null default 'receiving',
+    created_at timestamptz not null default now(), unique(lease_id,kind,name,sha256))`);
 }

@@ -23,7 +23,7 @@ export async function cachedPreview(workspace:Workspace, format:string, seconds=
     }catch{return false;}
   };
   const saved=await readFile(manifest,'utf8').then(JSON.parse).catch(()=>null);
-  if(saved?.version===1&&saved?.seconds===seconds&&saved?.partial===partial
+  if(saved?.version===1&&saved?.seconds===seconds
     &&await usable(video,seconds+4)&&await usable(audio,seconds))return {directory,video,audio,seconds};
   const checkpoint=await readFile(`${pending}.ytdl`,'utf8').then(JSON.parse).catch(()=>null);
   if(!(checkpoint?.downloader?.current_fragment?.index>0)||!await usable(partial,seconds+5))return null;

@@ -1,5 +1,6 @@
 import type { JobRow } from "./api";
 const actions: Record<string, string> = {
+  "heavy.archive-vod":"Перенос медиа в S3",
   "heavy.prepare-batch-vod":"Клипы эфира в подборке",
   "platform.discovery":"Поиск стримеров", "platform.metrics":"Обновление статистики публикаций", "platform.sweep":"Обход каналов и планирование",
   "heavy.pipeline": "Создание клипов из эфира", "heavy.prepare-preview": "Подготовка черновиков из эфира", "heavy.prepare-streamer": "Подборка клипов стримера", "heavy.fetch-vod": "Загрузка записи эфира",

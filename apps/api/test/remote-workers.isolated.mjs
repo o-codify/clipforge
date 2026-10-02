@@ -44,6 +44,12 @@ try{
     const auth='Bearer '+secret;await gateway.heartbeat(auth,{resources,leaseId:null,version:'fixture'});return {...worker,auth};};
   await assert.rejects(gateway.connect({label:'QA',policy:{cpu:128,memoryGb:256}}));
   const [a,b]=await Promise.all([register(),register()]);
+  await jobs.queue();
+  await db.sql`insert into worker_instances(id,label,role,host,queues,state) values('obsolete-control','Old container','control','old','[]','offline')`;
+  const visible=new WorkersController(db,gateway);
+  assert.deepEqual((await visible.list()).map(w=>w.id),[a.workerId,b.workerId].sort());
+  await db.sql`update worker_instances set label='Another name',heartbeat_at=now() where id=${a.workerId}`;
+  assert.deepEqual((await visible.list()).map(w=>w.id),[a.workerId,b.workerId].sort(),'Names and heartbeats must not reorder workers');
   assert.deepEqual(a.policy,{profile:'media',cpu:2,memoryGb:6,downloadKbps:10000,uploadKbps:5000});
   await assert.rejects(gateway.enroll({key:randomBytes(32).toString('base64url'),secret:randomBytes(32).toString('base64url'),host:'qa'}));
   await assert.rejects(gateway.next('Bearer '+randomBytes(32).toString('base64url')));
@@ -56,6 +62,7 @@ try{
   assert.equal(await gateway.next(a.auth),null);
   const serialized=JSON.stringify(t1);assert(!/database|password|secret|credentials|s3_/i.test(serialized));
   await assert.rejects(gateway.operation(b.auth,t1.leaseId,{operation:'vod.get'}));
+  await assert.rejects(gateway.object(b.auth,t1.leaseId,'list'));
   await assert.rejects(gateway.operation(a.auth,t1.leaseId,{operation:'sql',input:{query:'select * from platform_accounts'}}));
   assert.equal((await gateway.operation(a.auth,t1.leaseId,{operation:'vod.get',input:{vodId:'other'}})).id,t1.payload.vodId);
   const attempt=await gateway.beginUpload(a.auth,t1.leaseId,{clipId:t1.payload.vodId+'_probe',kind:'video',size:8,sha256:createHash('sha256').update('abcdefgh').digest('hex')});
@@ -140,15 +147,38 @@ try{
   console.log('PASS: lease-scoped clip assets, server-owned rendering settings and abandoned upload cleanup');
 
   if(process.env.CLIPFORGE_REMOTE_CONTAINER_TEST==='1'||process.env.CLIPFORGE_REMOTE_CATALOG_TEST==='1'){
-    server=Fastify({bodyLimit:8*1024**2,logger:false});
+    server=Fastify({bodyLimit:9*1024**2,logger:false});
+    // Task-scoped direct-object transport for real container fixtures. Real S3
+    // signing/checksums are covered separately by cloud-cache.isolated.mjs.
+    const pending=new Map(),storedObjects=new Map();
+    Object.assign(gateway.storage,{
+      head:async key=>storedObjects.get(key)?.head??null,
+      beginMultipart:async(key,sha256)=>{const id=randomUUID();pending.set(id,{key,sha256,parts:new Map()});return id;},
+      partUrl:async(key,id,part,size,md5)=>{assert.equal(pending.get(id).key,key);return config.webOrigin+'/fixture-s3/'+id+'/'+part+'?md5='+encodeURIComponent(md5);},
+      multipartParts:async(key,id)=>[...pending.get(id).parts.entries()].sort((a,b)=>a[0]-b[0]).map(([PartNumber,b])=>({PartNumber,ETag:'"'+createHash('md5').update(b).digest('hex')+'"',Size:b.length})),
+      finishMultipart:async(key,id,size,sha256)=>{if(storedObjects.has(key))return;const p=pending.get(id),bytes=Buffer.concat([...p.parts.entries()].sort((a,b)=>a[0]-b[0]).map(x=>x[1]));assert.equal(bytes.length,size);assert.equal(createHash('sha256').update(bytes).digest('hex'),sha256);const file=join(folder,'objects',key);await mkdir(resolve(file,'..'),{recursive:true});await writeFile(file,bytes);storedObjects.set(key,{head:{ContentLength:size,Metadata:{sha256}},id});},
+      abortMultipart:async(key,id)=>{pending.delete(id);},
+      readUrl:async key=>config.webOrigin+'/fixture-s3/'+storedObjects.get(key).id,
+    });
+    server.addContentTypeParser('application/octet-stream',{parseAs:'buffer'},(req,body,done)=>done(null,body));
+    server.put('/fixture-s3/:id/:part',async(req,reply)=>{
+      const p=pending.get(req.params.id);assert(p);assert.equal(createHash('md5').update(req.body).digest('base64'),req.query.md5);
+      p.parts.set(Number(req.params.part),req.body);return reply.code(200).send();
+    });
+    server.get('/fixture-s3/:id',async(req,reply)=>{const p=pending.get(req.params.id),bytes=await readFile(join(folder,'objects',p.key));return reply.type('application/octet-stream').send(bytes);});
     server.get('/api/worker-gateway/bootstrap',()=>gateway.bootstrap());
     server.post('/api/worker-gateway/enroll',r=>gateway.enroll(r.body));
     server.get('/api/worker-gateway/manifest',r=>gateway.manifest(r.headers.authorization));
     server.get('/api/worker-gateway/bundle',async(r,reply)=>{const file=await gateway.bundle(r.headers.authorization);reply.header('content-length',(await stat(file)).size);return reply.send(createReadStream(file));});
-    for(const action of ['installation','heartbeat'])server.post('/api/worker-gateway/'+action,r=>gateway[action](r.headers.authorization,r.body));
+    for(const action of ['installation','heartbeat','cache'])server.post('/api/worker-gateway/'+action,r=>gateway[action](r.headers.authorization,r.body));
     server.post('/api/worker-gateway/next',r=>gateway.next(r.headers.authorization));
     for(const action of ['operation','progress','finish'])server.post('/api/worker-gateway/tasks/:id/'+action,r=>gateway[action](r.headers.authorization,r.params.id,r.body));
     server.post('/api/worker-gateway/tasks/:id/uploads',r=>gateway.beginUpload(r.headers.authorization,r.params.id,r.body));
+    server.post('/api/worker-gateway/tasks/:id/objects',r=>gateway.object(r.headers.authorization,r.params.id,'start',r.body));
+    server.post('/api/worker-gateway/tasks/:id/objects/:upload/part',r=>gateway.object(r.headers.authorization,r.params.id,'part',r.body,r.params.upload));
+    server.post('/api/worker-gateway/tasks/:id/objects/:upload/complete',r=>gateway.object(r.headers.authorization,r.params.id,'complete',{},r.params.upload));
+    server.get('/api/worker-gateway/tasks/:id/sources',r=>gateway.object(r.headers.authorization,r.params.id,'list'));
+    server.post('/api/worker-gateway/tasks/:id/sources/read',r=>gateway.object(r.headers.authorization,r.params.id,'read',r.body));
     server.post('/api/worker-gateway/tasks/:id/uploads/:upload/chunk',r=>gateway.chunk(r.headers.authorization,r.params.id,r.params.upload,r.body));
     server.post('/api/worker-gateway/tasks/:id/uploads/:upload/commit',r=>gateway.commitUpload(r.headers.authorization,r.params.id,r.params.upload));
     server.get('/api/worker-gateway/tasks/:id/source/:clip',async(r,reply)=>{const media=await gateway.source(r.headers.authorization,r.params.id,r.params.clip);return reply.header('content-length',media.size).send(media.body);});

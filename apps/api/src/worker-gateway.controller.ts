@@ -14,6 +14,7 @@ export class WorkerGatewayController {
   @Get('manifest') manifest(@Headers('authorization') auth?:string){return this.gateway.manifest(auth);}
   @Get('bundle') async bundle(@Headers('authorization') auth:string|undefined,@Res() reply:FastifyReply){const file=await this.gateway.bundle(auth);return reply.header('content-length',(await stat(file)).size).header('content-type','application/gzip').header('cache-control','no-store').send(createReadStream(file));}
   @Post('installation') installation(@Headers('authorization') auth:string|undefined,@Body() body:unknown){return this.gateway.installation(auth,body);}
+  @Post('cache') cache(@Headers('authorization') auth:string|undefined,@Body() body:unknown){return this.gateway.cache(auth,body);}
   @Post('heartbeat') heartbeat(@Headers('authorization') auth:string|undefined,@Body() body:unknown){return this.gateway.heartbeat(auth,body);}
   @Post('next') next(@Headers('authorization') auth?:string){return this.gateway.next(auth);}
   @Post('tasks/:id/operation') async operation(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown,@Res() reply:FastifyReply){
@@ -23,6 +24,11 @@ export class WorkerGatewayController {
   @Post('tasks/:id/progress') progress(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.progress(auth,id,body);}
   @Post('tasks/:id/finish') finish(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.finish(auth,id,body);}
   @Post('tasks/:id/uploads') upload(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.beginUpload(auth,id,body);}
+  @Post('tasks/:id/objects') object(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.object(auth,id,'start',body);}
+  @Post('tasks/:id/objects/:upload/part') part(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Param('upload') upload:string,@Body() body:unknown){return this.gateway.object(auth,id,'part',body,upload);}
+  @Post('tasks/:id/objects/:upload/complete') complete(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Param('upload') upload:string){return this.gateway.object(auth,id,'complete',{},upload);}
+  @Get('tasks/:id/sources') sources(@Headers('authorization') auth:string|undefined,@Param('id') id:string){return this.gateway.object(auth,id,'list');}
+  @Post('tasks/:id/sources/read') readSource(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.object(auth,id,'read',body);}
   @Post('tasks/:id/uploads/:upload/chunk') chunk(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Param('upload') upload:string,@Body() body:unknown){return this.gateway.chunk(auth,id,upload,body);}
   @Post('tasks/:id/uploads/:upload/commit') commit(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Param('upload') upload:string){return this.gateway.commitUpload(auth,id,upload);}
   @Get('tasks/:id/source/:clip') async source(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Param('clip') clip:string,@Res() reply:FastifyReply){const source=await this.gateway.source(auth,id,clip);return reply.header('content-type','video/mp4').header('content-length',source.size).send(source.body);}

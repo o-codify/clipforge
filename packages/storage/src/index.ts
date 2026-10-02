@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import { pipeline } from 'node:stream/promises';
 import { createHash } from 'node:crypto';
 import { pacedStream, waitForResources, resourceRequest, ResourcePauseError } from '@clipforge/resources';
-import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export class MediaStorage {
@@ -17,6 +17,52 @@ export class MediaStorage {
 
   private checkKey(key: string) {
     if (!key.startsWith(`${this.prefix}/`) || key.includes("..")) throw new Error("Object is outside the ClipForge namespace");
+  }
+
+  async head(key:string) {
+    this.checkKey(key);
+    return this.client.send(new HeadObjectCommand({Bucket:this.bucket,Key:key})).catch(error=>{
+      if(error.$metadata?.httpStatusCode===404)return null;throw error;
+    });
+  }
+  async beginMultipart(key:string,sha256:string,contentType:string) {
+    this.checkKey(key);
+    const result=await this.client.send(new CreateMultipartUploadCommand({Bucket:this.bucket,Key:key,ContentType:contentType,Metadata:{sha256}}));
+    if(!result.UploadId)throw new Error('S3 did not create an upload');return result.UploadId;
+  }
+  async partUrl(key:string,uploadId:string,part:number,length:number,md5:string) {
+    this.checkKey(key);
+    return getSignedUrl(this.client,new UploadPartCommand({Bucket:this.bucket,Key:key,UploadId:uploadId,PartNumber:part,ContentLength:length,ContentMD5:md5}),{expiresIn:900});
+  }
+  async finishMultipart(key:string,uploadId:string,size:number,sha256:string,partSize:number) {
+    this.checkKey(key);
+    const existing=await this.head(key);
+    if(existing?.ContentLength===size&&existing.Metadata?.sha256===sha256)return;
+    const parts=await this.multipartParts(key,uploadId);
+    const count=Math.ceil(size/partSize);
+    if(parts.length!==count||parts.some((p,i)=>p.PartNumber!==i+1||p.Size!==Math.min(partSize,size-i*partSize)))throw new Error('S3 upload is incomplete');
+    await this.client.send(new CompleteMultipartUploadCommand({Bucket:this.bucket,Key:key,UploadId:uploadId,MultipartUpload:{Parts:parts.map(({PartNumber,ETag})=>({PartNumber,ETag}))}}));
+    const head=await this.head(key);
+    if(head?.ContentLength!==size||head.Metadata?.sha256!==sha256)throw new Error('Stored object verification failed');
+  }
+  async multipartParts(key:string,uploadId:string){
+    this.checkKey(key);
+    const parts:{PartNumber:number;ETag:string;Size:number}[]=[];
+    let marker:string|undefined;
+    do {
+      const response=await this.client.send(new ListPartsCommand({Bucket:this.bucket,Key:key,UploadId:uploadId,PartNumberMarker:marker}));
+      for(const part of response.Parts??[]) {
+        if(!part.PartNumber||!part.ETag||!part.Size)throw new Error('Incomplete S3 part');
+        parts.push({PartNumber:part.PartNumber,ETag:part.ETag,Size:part.Size});
+      }
+      marker=response.IsTruncated?response.NextPartNumberMarker:undefined;
+      if(response.IsTruncated&&!marker)throw new Error('Invalid S3 pagination');
+    }while(marker);
+    return parts;
+  }
+  async abortMultipart(key:string,uploadId:string) {
+    this.checkKey(key);
+    await this.client.send(new AbortMultipartUploadCommand({Bucket:this.bucket,Key:key,UploadId:uploadId})).catch(error=>{if(error.$metadata?.httpStatusCode!==404)throw error;});
   }
 
   async uploadFile(key: string, file: string, contentType: string): Promise<void> {

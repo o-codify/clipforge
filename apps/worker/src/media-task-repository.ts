@@ -44,6 +44,7 @@ export class MediaTaskRepository {
     const db=this.ctx.db,v=await this.vod(),input=raw??{};
     switch(operation){
       case 'vod.get': return v;
+      case 'cache.legacy': return db.execute(sql`select distinct version from runs where vod_id=${v.id} and version ~ '^[a-f0-9]{12}$'`);
       case 'game.ensure': {const {title}=z.object({title:z.string().max(200)}).parse(input);const clean=title.trim();if(!clean)return null;
         const slug=safeName(clean);if(slug==='.'||slug==='..')throw new Error('Неверное название игры');await db.insert(games).values({slug,title:clean}).onConflictDoNothing();return slug;}
       case 'vod.metadata': {const m=z.object({title:z.string().max(2000),duration:second,game:z.string().max(200).nullable(),publishedAt:z.string().nullable().optional(),

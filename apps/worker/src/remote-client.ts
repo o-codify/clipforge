@@ -1,13 +1,14 @@
-import {readFile,open,stat,mkdir,rename} from 'node:fs/promises';
-import {createReadStream,createWriteStream} from 'node:fs';
-import {createHash} from 'node:crypto';
+import {readFile,stat,mkdir,rename} from 'node:fs/promises';
+import {createWriteStream} from 'node:fs';
 import {dirname} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {pipeline} from 'node:stream/promises';
 import {Readable} from 'node:stream';
-import {ByteBudget,pacedStream,waitForResources} from '@clipforge/resources';
+import {pacedStream,waitForResources} from '@clipforge/resources';
 import {runMediaCommand} from '@clipforge/pipeline';
 import type {RemoteMediaAccess} from './remote-access.js';
+import {uploadObject} from './object-transfer.js';
+import {restoreSources,archiveWorkspace} from './source-cache.js';
 
 export type RemoteIdentity={origin:string;secret:string;workerId:string};
 export type Assignment={leaseId:string;jobId:string;queue:string;payload:Record<string,unknown>;
@@ -27,23 +28,14 @@ export class RemoteClient {
   }
 }
 export class RemoteTaskAccess implements RemoteMediaAccess {
-  private readonly budget=new ByteBudget('upload');
   constructor(private readonly client:RemoteClient,private readonly assignment:Assignment){}
   private path(suffix:string){return `tasks/${this.assignment.leaseId}/${suffix}`;}
   call<T=unknown>(operation:string,input?:unknown){return this.client.request<T>(this.path('operation'),{operation,input:input??{}});}
   private async upload(clipId:string,kind:'video'|'poster',file:string){
-    const digest=createHash('sha256');for await(const chunk of createReadStream(file))digest.update(chunk);
-    const size=(await stat(file)).size;
-    let upload=await this.client.request<{id:string;received:number;state:string;storageKey:string}>(this.path('uploads'),{clipId,kind,size,sha256:digest.digest('hex')});
-    if(upload.state==='stored')return upload.storageKey;
-    const source=await open(file,'r');
-    try{while(upload.received<size){await waitForResources();const bytes=Buffer.alloc(Math.min(128*1024,size-upload.received));
-      await source.read(bytes,0,bytes.length,upload.received);
-      const data=bytes.toString('base64');await this.budget.consume(data.length,this.assignment.policy.uploadKbps*125);
-      const result=await this.client.request<{received:number}>(this.path(`uploads/${upload.id}/chunk`),{offset:upload.received,data});upload={...upload,received:result.received};
-    }}finally{await source.close();}
-    const stored=await this.client.request<{storageKey:string}>(this.path(`uploads/${upload.id}/commit`),{},300000);return stored.storageKey;
+    return (await uploadObject((path,body,timeout)=>this.client.request(this.path(path),body,timeout),file,{clipId,kind,name:clipId+'/'+kind},this.assignment.policy.uploadKbps)).storageKey;
   }
+  restoreSources(root:string,select:(name:string)=>boolean){return restoreSources((path,body,timeout)=>this.client.request(this.path(path),body,timeout),root,select,this.assignment.policy.downloadKbps);}
+  archiveWorkspace(data:string,out:string,log:(message:string)=>void){return archiveWorkspace((path,body,timeout)=>this.client.request(this.path(path),body,timeout),data,out,String(this.assignment.payload.vodId),this.assignment.policy.uploadKbps,log);}
   async uploadClip(id:string,file:string){
     const poster=file+'.jpg',result=await runMediaCommand('ffmpeg',['-v','error','-y','-ss','2.5','-i',file,'-frames:v','1','-vf','scale=270:-2',poster],60000);
     if(result.code!==0)throw new Error('Не удалось создать обложку');

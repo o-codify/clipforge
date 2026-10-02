@@ -15,6 +15,7 @@ export async function preparePreview(ctx:Context,payload:Parameters<typeof runPi
   const draft={...payload,testBatch:true,skipExisting:true,reuse:true};
   const workspace=new Workspace({data:ctx.config.data,out:ctx.config.out},
     {game:row.game??'unknown',streamer:row.streamer,vodId:row.id});
+  if(!payload.game)await ctx.remote?.restoreSources?.(workspace.root,name=>name.startsWith('preview-prefix-'));
   const source=payload.game?await gamePreview(ctx,row,payload.game,report,payload.sourceRange):await cachedPreview(workspace,ctx.config.videoFormat);
   if(!source)return runPipeline(ctx,draft,report);
   if(ctx.remote){if(row.state==='fetching')await ctx.remote.call('vod.state',{state:'known'});}
