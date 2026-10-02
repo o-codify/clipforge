@@ -1,4 +1,4 @@
-"""Install pinned vision weights once, before claiming jobs, at the worker's network cap."""
+"""Install pinned vision weights on first visual review, at the worker's network cap."""
 import hashlib
 import json
 import os

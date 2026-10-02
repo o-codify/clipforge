@@ -13,6 +13,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -71,6 +72,13 @@ def request(port, route, payload=None, timeout=600):
 @contextmanager
 def vision_server():
     executable = os.environ.get('MEDIA_OLLAMA_BIN') or shutil.which('ollama')
+    # Portable workers acquire vision weights only when assigned visual review.
+    # Catalog/speech/audio-only work must not download an unused 3 GB model.
+    if os.environ.get('MEDIA_OLLAMA_BIN') and os.environ.get('OLLAMA_MODELS'):
+        setup = Path(__file__).resolve().parents[3] / 'scripts/setup-vision-model.py'
+        subprocess.run([sys.executable, str(setup), os.environ['OLLAMA_MODELS'],
+            os.environ.get('MEDIA_DOWNLOAD_KBPS', '10000')], check=True,
+            stdout=sys.stderr, creationflags=0x08000000 if os.name == 'nt' else 0)
     if not executable:
         candidate = Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Ollama/ollama.exe'
         executable = str(candidate) if candidate.is_file() else None

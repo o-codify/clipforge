@@ -49,11 +49,6 @@ async function main(){
   }
   stage='Подготовка моделей';await fs.mkdir(path.join(storage,'models'),{recursive:true});
   if(!catalog&&policy.profile!=='speech')await run(python,[path.join(bundle,'scripts','setup-media-protection.py'),'--dtln-only','--models',path.join(storage,'models'),'--kibps',String(Math.min(2048,Math.max(16,Math.floor(policy.downloadKbps/8))))]);
-  if(!catalog&&policy.profile!=='speech'){
-    stage='Подготовка проверки рекламы';
-    if(!await fs.stat(path.join(bundle,'vision-runtime','bin','ollama')).catch(()=>null))throw Error('Vision runtime missing from worker package');
-    await run(python,[path.join(bundle,'scripts','setup-vision-model.py'),path.join(storage,'models','ollama'),String(policy.downloadKbps)]);
-  }
   // Runtime is unprivileged. It cannot use the container engine or host paths.
   await run('chown',['-R','1000:1000',storage]);clearInterval(heartbeat);
   const env={...process.env,PATH:path.join(venv,'bin')+':'+process.env.PATH,PYTHON_BIN:python,WORKER_STORAGE:storage,WORKER_IDENTITY_FILE:identityFile,
