@@ -1,4 +1,4 @@
-import {readFile,stat,mkdir,rename} from 'node:fs/promises';
+import {readFile,stat,mkdir,rename,rm} from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {dirname} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -35,7 +35,16 @@ export class RemoteTaskAccess implements RemoteMediaAccess {
     return (await uploadObject((path,body,timeout)=>this.client.request(this.path(path),body,timeout),file,{clipId,kind,name:clipId+'/'+kind},this.assignment.policy.uploadKbps)).storageKey;
   }
   restoreSources(root:string,select:(name:string)=>boolean){return restoreSources((path,body,timeout)=>this.client.request(this.path(path),body,timeout),root,select,this.assignment.policy.downloadKbps);}
-  archiveWorkspace(data:string,out:string,log:(message:string)=>void){return archiveWorkspace((path,body,timeout)=>this.client.request(this.path(path),body,timeout),data,out,String(this.assignment.payload.vodId),this.assignment.policy.uploadKbps,log);}
+  async archiveWorkspace(data:string,out:string,log:(message:string)=>void){
+    const clips=await this.call<{id:string;runId:string;version:string;file:string}[]>('cache.clips'),paths=new Map<string,string>();
+    for(const c of clips){paths.set(`out/${c.runId}/${c.file}`,c.id);for(const kind of ['original-audio','cleaned','protected'])paths.set(`out/${kind}/${c.version}/${c.file}`,c.id);}
+    return archiveWorkspace((path,body,timeout)=>this.client.request(this.path(path),body,timeout),data,out,String(this.assignment.payload.vodId),this.assignment.policy.uploadKbps,log,async(name,file)=>{
+      const id=paths.get(name);if(!id)return;
+      await this.uploadClip(id,file);await this.call('cache.attach',{id,size:(await stat(file)).size});
+      // The sidecar has its own verified S3 object and catalog reference.
+      await rm(file+'.jpg',{force:true});paths.delete(name);
+    });
+  }
   async uploadClip(id:string,file:string){
     const poster=file+'.jpg',result=await runMediaCommand('ffmpeg',['-v','error','-y','-ss','2.5','-i',file,'-frames:v','1','-vf','scale=270:-2',poster],60000);
     if(result.code!==0)throw new Error('Не удалось создать обложку');

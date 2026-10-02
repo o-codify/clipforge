@@ -137,6 +137,16 @@ try{
   const [restored]=await db.sql`select c.state,r.settings from clips c join runs r on r.id=c.run_id where c.id=${newId}`;
   assert.equal(restored.state,'draft');assert.equal(restored.settings.audioMode,'original');assert.equal(restored.settings.jobId,restore.jobId);
   await gateway.finish(a.auth,restore.leaseId,{ok:true});
+  // Legacy local-only clips acquire verified cloud references before cleanup.
+  const legacyId=ids[5]+'_legacy';await db.insert(clips).values({...clip,id:legacyId,version:'local-only',mediaStorage:null});
+  await jobs.enqueue(QUEUES.archiveVod,{vodId:ids[5],workerId:a.workerId});
+  const archiving=await gateway.next(a.auth);assert.equal(archiving.queue,QUEUES.archiveVod);
+  assert((await gateway.operation(a.auth,archiving.leaseId,{operation:'cache.clips'})).some(c=>c.id===legacyId));
+  for(const kind of ['video','poster']){const u=await gateway.beginUpload(a.auth,archiving.leaseId,{clipId:legacyId,kind,size:8,sha256:createHash('sha256').update('abcdefgh').digest('hex')});await gateway.chunk(a.auth,archiving.leaseId,u.id,{offset:0,data:Buffer.from('abcdefgh').toString('base64')});await gateway.commitUpload(a.auth,archiving.leaseId,u.id);}
+  await assert.rejects(gateway.operation(a.auth,archiving.leaseId,{operation:'cache.attach',input:{id:legacyId,size:9}}));
+  await gateway.operation(a.auth,archiving.leaseId,{operation:'cache.attach',input:{id:legacyId,size:8}});
+  assert((await db.sql`select media_storage from clips where id=${legacyId}`)[0].mediaStorage.videoKey);
+  await gateway.finish(a.auth,archiving.leaseId,{ok:true});
   console.log('PASS: tiny catalog isolation, specialty scheduling, immutable original-audio variants');
   // Expired uploads are collected without touching active assignments or assets.
   const abandoned=randomUUID();await mkdir(join(folder,'worker-uploads'),{recursive:true});await writeFile(join(folder,'worker-uploads',abandoned+'.part'),'partial');

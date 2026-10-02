@@ -40,17 +40,18 @@ export async function cachedVods(data:string,out:string){
       for(const vod of await readdir(join(root,game.name,streamer.name),{withFileTypes:true}))if(vod.isDirectory()&&!vod.isSymbolicLink()&&/^v\d+$/.test(vod.name)&& (await files(join(root,game.name,streamer.name,vod.name))).length)found.add(vod.name);
   return [...found];
 }
-export async function archiveWorkspace(request:Request,data:string,out:string,vodId:string,kbps:number,log:(message:string)=>void){
+export async function archiveWorkspace(request:Request,data:string,out:string,vodId:string,kbps:number,log:(message:string)=>void,beforeArchive?:(name:string,file:string)=>Promise<void>){
   if(!/^v\d+$/.test(vodId))throw new Error('Invalid VOD');let bytes=0,count=0;
   const archive=async(root:string,prefix:string)=>{
     if(!await stat(root).catch(()=>null))return;
     if((await lstat(root)).isSymbolicLink())throw new Error('Symlink in media cache');
     const boundary=await realpath(root);
     for(const file of await files(boundary)){
-      const before=await stat(file,{bigint:true});
+      const before=await stat(file,{bigint:true}).catch(error=>{if(error.code==='ENOENT')return null;throw error;});if(!before)continue;
       if(before.size){
         const name=prefix+'/'+relative(boundary,file).split(sep).join('/');
         log(`Сохранение в S3: ${name}`);
+        await beforeArchive?.(name,file);
         await uploadObject(request,file,{kind:'cache',name},kbps);
       }
       const after=await stat(file,{bigint:true}),actual=await realpath(file);
