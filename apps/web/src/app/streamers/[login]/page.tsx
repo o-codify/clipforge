@@ -59,8 +59,8 @@ export default function StreamerPage() {
 
   const load = useCallback(() => {
     void api.get<StreamerDetail>(`/api/streamers/${login}`).then(setStreamer);
-    void api.get<VodRow[]>(`/api/vods?streamer=${login}`).then(setVods);
-  }, [login]);
+    void api.get<VodRow[]>(`/api/vods?streamer=${login}${gameFilter?`&game=${encodeURIComponent(gameFilter)}`:""}`).then(setVods);
+  }, [login,gameFilter]);
 
   useLiveReload(load);
 
@@ -99,9 +99,7 @@ export default function StreamerPage() {
 
   const name = streamer.displayName ?? streamer.login;
   const automationOn = streamer.state === "active";
-  const shownVods = gameFilter
-    ? vods.filter((vod) => vod.game === gameFilter)
-    : vods;
+  const shownVods = vods;
 
   return (
     <DetailPage intro={<>
@@ -204,7 +202,7 @@ export default function StreamerPage() {
         }
         aside={
           <span className="muted">
-            {gameFilter ? `${shownVods.length} из ${vods.length}` : vods.length} записей
+            {shownVods.length} записей
             {streamer.indexedAt ? ` · обновлено ${when(streamer.indexedAt)}` : ""}
           </span>
         }

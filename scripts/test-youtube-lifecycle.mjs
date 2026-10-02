@@ -58,6 +58,10 @@ try{
   await db.sql`update runs set settings=${JSON.stringify({renderedClips:{[clip]:{protection:{autoVerifiedAt:new Date().toISOString(),ads:{automatic:true,profileFrames:12,regions:[]}}}}})}::jsonb where id=${prefix}`;
   await db.sql`insert into platform_accounts(id,platform,external_id,label,credentials) values(${account},'youtube',${channel},'Test channel',${JSON.stringify({refreshToken:'test-refresh'})}::jsonb)`;
   const catalog=new CatalogService(db);
+  await db.sql`insert into games(slug,title) values(${prefix+'-game'},${prefix+' Game'})`;
+  await db.sql`update vods set chapters=${JSON.stringify([{title:prefix+' Game',start:0,end:5170},{title:'Other game',start:5170,end:9000}])}::jsonb where id=${prefix}`;
+  assert.ok((await catalog.vods({isAdmin:true},{streamer:prefix,game:prefix+'-game'})).some(v=>v.id===prefix),'A secondary game chapter must be discoverable');
+  await db.sql`delete from games where slug=${prefix+'-game'}`;
   const defaultAccount='default-'+prefix;
   await db.sql`insert into platform_accounts(id,platform,external_id,label,credentials) values(${defaultAccount},'youtube',${DEFAULT_YOUTUBE_CHANNEL},'Кузня Клипов','{}'::jsonb)`;
   assert.equal((await youtubeDestination(db,prefix)).account.id,defaultAccount);
