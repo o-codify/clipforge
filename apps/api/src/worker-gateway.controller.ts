@@ -16,7 +16,10 @@ export class WorkerGatewayController {
   @Post('installation') installation(@Headers('authorization') auth:string|undefined,@Body() body:unknown){return this.gateway.installation(auth,body);}
   @Post('heartbeat') heartbeat(@Headers('authorization') auth:string|undefined,@Body() body:unknown){return this.gateway.heartbeat(auth,body);}
   @Post('next') next(@Headers('authorization') auth?:string){return this.gateway.next(auth);}
-  @Post('tasks/:id/operation') operation(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.operation(auth,id,body);}
+  @Post('tasks/:id/operation') async operation(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown,@Res() reply:FastifyReply){
+    const result=await this.gateway.operation(auth,id,body);
+    return reply.type('application/json').send(JSON.stringify(result??null));
+  }
   @Post('tasks/:id/progress') progress(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.progress(auth,id,body);}
   @Post('tasks/:id/finish') finish(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.finish(auth,id,body);}
   @Post('tasks/:id/uploads') upload(@Headers('authorization') auth:string|undefined,@Param('id') id:string,@Body() body:unknown){return this.gateway.beginUpload(auth,id,body);}
