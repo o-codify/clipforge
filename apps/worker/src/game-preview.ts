@@ -4,13 +4,12 @@ import {Workspace,runMediaCommand} from '@clipforge/pipeline';
 import type {Context} from './context.js';
 import type {JobReport} from './handlers.js';
 import type {VodData} from './media-task-data.js';
-import {gameWindows,gameSlug} from './game-selection.js';
+import {selectedGameWindow,gameSlug} from './game-selection.js';
 
 /** Separate cache: a selected chapter is never promoted to a complete VOD. */
-export async function gamePreview(ctx:Context,row:VodData,game:string,report:JobReport) {
-  const chapter=gameWindows(row.chapters,game)[0];
-  if(!chapter)throw new Error('В записи нет главы выбранной игры');
-  const start=chapter.start,end=Math.min(chapter.end,start+5400);
+export async function gamePreview(ctx:Context,row:VodData,game:string,report:JobReport,range?:{start:number;end:number}) {
+  const chapter=selectedGameWindow(row.chapters,game,range);
+  const {start,end}=chapter;
   const ws=new Workspace({data:ctx.config.data,out:ctx.config.out},{game:row.game??'unknown',streamer:row.streamer,vodId:row.id});
   const directory=join(ws.root,`game-${gameSlug(game)}-${start}-${end}`);
   await mkdir(directory,{recursive:true});

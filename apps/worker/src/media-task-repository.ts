@@ -98,6 +98,8 @@ export class MediaTaskRepository {
       case 'clip.blocked':{const m=range.parse(input);return this.unblocked(m.start,m.end);}
       case 'clip.save': {const m=z.object({clip:clipSchema,proof:object}).parse(input),c=m.clip,r=await this.run(c.runId);
         const selectedGame=this.scope.payload.game;
+        const selectedRange=this.scope.payload.sourceRange as {start:number;end:number}|undefined;
+        if(selectedRange&&(c.start<selectedRange.start||c.end>selectedRange.end))throw new Error('Клип выходит за выбранный отрезок эфира');
         if(typeof selectedGame==='string'&&(!insideGame(v.chapters,selectedGame,c.start,c.end)||gameSlug(c.game??'')!==gameSlug(selectedGame)))throw new Error('Клип выходит за главу выбранной игры');
         if(c.vodId!==v.id||c.streamer!==v.streamer||c.end<=c.start||c.end>(v.duration??7*86400)+5||c.end-c.start>180||c.segmentKey!==segmentKey(v.id,c.start,c.end)||c.id!==clipId(v.id,c.segmentKey,c.version))throw new Error('Неверные границы или идентификатор клипа');
         if(await this.unblocked(c.start,c.end))throw new Error('Момент заблокирован');

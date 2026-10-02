@@ -30,7 +30,7 @@ pnpm cf streamer-ads <login> --ads on|off [--all]
                                         проверка рекламы; --all также сбрасывает настройки всех эфиров
 pnpm cf vod-ads <vodId> --ads on|off|inherit
                                         проверка рекламы отдельного эфира
-pnpm cf prepare <vodId> [--count 1] [--audio dtln] [--game wardogs]
+pnpm cf prepare <vodId> [--count 1] [--audio dtln] [--game wardogs] [--from 2100 --to 3000]
                                         скачать и обработать эфир; только новые черновики, без публикации
 pnpm cf preview <clipId>                 готовые название, описание, каналы
 pnpm cf publish <clipId> --metadata file.json
@@ -66,7 +66,7 @@ export function parseCommand(args:string[]) {
     metadata:{type:'string'},regions:{type:'string'},timeout:{type:'string'},
     count:{type:'string'},fresh:{type:'boolean'},audio:{type:'string'},'test-batch':{type:'boolean'},
     ads:{type:'string'},all:{type:'boolean'},vods:{type:'string'},clips:{type:'string'},
-    game:{type:'string'},channel:{type:'string'},interval:{type:'string'},'daily-limit':{type:'string'},
+    game:{type:'string'},from:{type:'string'},to:{type:'string'},channel:{type:'string'},interval:{type:'string'},'daily-limit':{type:'string'},
   }});
 }
 function integer(value:string|undefined,fallback:number,max:number) {
@@ -139,7 +139,9 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
     }
     case 'prepare': {
       if(options.audio&&!['original','dtln','dtln-gated'].includes(options.audio))throw new Error('--audio: original или dtln');
-      return {path:`/api/jobs/prepare/${id}`,method:'POST',body:{count:integer(options.count,1,100),...(options.game?{game:options.game}:{}),...(options.audio?{audioMode:options.audio}:{})}};
+      const sourceRange=options.from!==undefined||options.to!==undefined?{start:Number(options.from),end:Number(options.to)}:undefined;
+      if(sourceRange&&(!options.game||!Number.isFinite(sourceRange.start)||!Number.isFinite(sourceRange.end)||sourceRange.start<0||sourceRange.end<=sourceRange.start||sourceRange.end-sourceRange.start>5400))throw new Error('--from и --to: секунды внутри выбранной игры, отрезок до 90 минут');
+      return {path:`/api/jobs/prepare/${id}`,method:'POST',body:{count:integer(options.count,1,100),...(options.game?{game:options.game}:{}),...(sourceRange?{sourceRange}:{}),...(options.audio?{audioMode:options.audio}:{})}};
     }
     case 'prepare-streamer': {
       if(options.audio&&!['original','dtln','dtln-gated'].includes(options.audio))throw new Error('--audio: original, dtln, dtln-gated');
