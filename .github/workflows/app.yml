@@ -96,6 +96,10 @@ jobs:
         run: PYTHONPATH=workers/python python3 -m unittest discover -s workers/python/tests -p test_hls_window.py
       - name: Verify vision model cache and checksums
         run: python3 scripts/test-vision-model.py
+      - name: Verify container headroom and model process cleanup
+        run: |
+          python3 -m pip install psutil==7.2.2
+          PYTHONPATH=workers/python python3 -m unittest discover -s workers/python/tests -p test_container_resources.py
       - name: Verify download cap and partial-file recovery
         run: node --experimental-strip-types --test packages/pipeline/test/download-recovery.test.ts
       - name: Verify transcript typography and subtitle masking
