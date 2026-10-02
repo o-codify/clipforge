@@ -21,10 +21,18 @@ with subprocess.Popen(['zstd', '-dc', str(archive)], stdout=subprocess.PIPE) as 
             selected = name == pathlib.PurePosixPath('bin/ollama') or (
                 name.parent == pathlib.PurePosixPath('lib/ollama') and
                 (name.name.startswith(('libggml', 'libmtmd')) or name.name == 'ollama'))
-            if not selected or not member.isfile():
+            if not selected:
                 continue
             target = root / name
             target.parent.mkdir(parents=True, exist_ok=True)
+            if member.issym():
+                link = pathlib.PurePosixPath(member.linkname)
+                if link.parent != pathlib.PurePosixPath('.') or not link.name.startswith(('libggml', 'libmtmd')):
+                    raise RuntimeError('Unexpected CPU library symlink')
+                target.symlink_to(member.linkname)
+                continue
+            if not member.isfile():
+                continue
             with contents.extractfile(member) as source, target.open('wb') as output:
                 shutil.copyfileobj(source, output)
             target.chmod(0o755)
@@ -33,4 +41,6 @@ with subprocess.Popen(['zstd', '-dc', str(archive)], stdout=subprocess.PIPE) as 
         raise RuntimeError('Ollama archive extraction failed')
 if not (root / 'bin/ollama').is_file() or not list((root / 'lib/ollama').glob('libggml-cpu*')):
     raise RuntimeError('CPU runtime missing from official archive')
+subprocess.run([str(root / 'bin/ollama'), '--version'], check=True)
+urllib.request.urlretrieve(f'https://raw.githubusercontent.com/ollama/ollama/v{VERSION}/LICENSE', root / 'LICENSE')
 archive.unlink()
