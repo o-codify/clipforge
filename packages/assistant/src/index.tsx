@@ -38,7 +38,9 @@ export function Assistant({historyKey,name,status,pending,mood,messages,onSelect
   const chat=useRef<HTMLDivElement>(null);
   const follow=useRef(true);
   const id=useId();
-  const all=[...messages,...conversation].sort((a,b)=>a.time.localeCompare(b.time)||a.id.localeCompare(b.id));
+  const all=[...messages,...conversation].map(message=>message.streamer?{...message,
+    actions:message.actions?.filter(action=>action.id!==`/streamers/${encodeURIComponent(message.streamer!)}`),
+  }:message).sort((a,b)=>a.time.localeCompare(b.time)||a.id.localeCompare(b.id));
   const last=all.at(-1)?.id;
   useEffect(()=>{
     try { const saved=historyKey?sessionStorage.getItem(historyKey):null; if(saved){const parsed=JSON.parse(saved);if(Array.isArray(parsed))setConversation(parsed.filter(m=>typeof m?.id==="string"&&typeof m?.text==="string"&&typeof m?.time==="string").slice(-60));} }catch{}
