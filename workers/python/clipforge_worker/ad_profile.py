@@ -22,7 +22,9 @@ import cv2
 from .ads import detect_frame, merge_regions, rectangle
 
 VERSION = 'vod-vision-v1'
-MODEL = 'qwen3-vl:4b-instruct'
+# The 2B model fits the fixed 6 GiB portable worker, including OCR and reserve.
+# Existing desktop installations keep their 4B model.
+MODEL = 'qwen3-vl:2b-instruct' if os.environ.get('MEDIA_OLLAMA_BIN') else 'qwen3-vl:4b-instruct'
 SAMPLES = 12
 REVIEW_VERSION = 2
 CROP_REVIEW_VERSION = 1
@@ -241,7 +243,7 @@ def persistent_regions(evidence):
 def profile_ads(video, directory, cached=None, progress=lambda _: None):
     cv2.setNumThreads(2)
     info = source_info(video)
-    if cached and cached.get('signature') == info['signature'] and cached.get('version') == VERSION and cached.get('reviewVersion') == REVIEW_VERSION and cached.get('complete') is True:
+    if cached and cached.get('model') == MODEL and cached.get('signature') == info['signature'] and cached.get('version') == VERSION and cached.get('reviewVersion') == REVIEW_VERSION and cached.get('complete') is True:
         return cached
     root = Path(directory) / info['signature']
     root.mkdir(parents=True, exist_ok=True)
@@ -263,12 +265,11 @@ def profile_ads(video, directory, cached=None, progress=lambda _: None):
         for i, at in enumerate(times):
             image, checkpoint = root / f'{i:02}.jpg', root / f'{i:02}.json'
             progress(f'Проверяю рекламу на кадре эфира {i+1}/{SAMPLES}')
-            if checkpoint.is_file():
-                item = json.loads(checkpoint.read_text(encoding='utf-8'))
-            else:
+            item = json.loads(checkpoint.read_text(encoding='utf-8')) if checkpoint.is_file() else None
+            if not item or item.get('model') != MODEL:
                 detected = detect_frame(cv2.imread(str(image)))
                 visual = analyze_frame(port, image)
-                item = {'at': at, 'vision': visual, 'detected': detected}
+                item = {'at': at, 'model': MODEL, 'vision': visual, 'detected': detected}
                 pending = checkpoint.with_suffix('.pending.json')
                 pending.write_text(json.dumps(item, ensure_ascii=False), encoding='utf-8')
                 os.replace(pending, checkpoint)

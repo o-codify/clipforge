@@ -53,6 +53,20 @@ def cpu_allowance(cpus, host_cpus, host_percent, own_cores, target=90):
     return max(0, min(cpus * target / 100, host_cpus * target / 100 - other))
 
 
+def preempt_tree(process):
+    # A killed Python parent cannot run its finally block. Stop its private
+    # vision server/runners first so they never escape the governor as orphans.
+    try:
+        descendants = process.children(recursive=True)
+    except psutil.Error:
+        descendants = []
+    for child in reversed(descendants):
+        try: child.kill()
+        except psutil.Error: pass
+    try: process.kill()
+    except psutil.Error: pass
+
+
 def main():
     storage = Path(os.getenv('WORKER_STORAGE', '/storage'))
     for name in ('data', 'out', 'models'):
@@ -125,7 +139,7 @@ def main():
             snapshot(pressure or cpu_pressure, 'memory-pressure' if pressure else 'cpu-pressure' if cpu_pressure else None, own, free, preempted)
             for p in descendants:
                 try:
-                    heavy = p.name().lower().startswith(('python', 'ffmpeg', 'ffprobe'))
+                    heavy = p.name().lower().startswith(('python', 'ffmpeg', 'ffprobe', 'ollama', 'llama-server'))
                     if not heavy:
                         continue
                     p.nice(10)
@@ -136,7 +150,7 @@ def main():
                     if pressure and pressured_at and time.monotonic()-pressured_at > 5:
                         preempted[str(p.pid)] = time.time()*1000
                         snapshot(True, 'memory-pressure', own, free, preempted)
-                        p.kill(); suspended.pop(p.pid, None)
+                        preempt_tree(p); suspended.pop(p.pid, None)
                 except psutil.Error:
                     pass
             # Only media children yield. Node keeps queue leases and heartbeats alive.

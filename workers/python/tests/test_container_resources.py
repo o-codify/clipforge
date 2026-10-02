@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from io import BytesIO
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -13,6 +13,16 @@ spec.loader.exec_module(resources)
 
 
 class ContainerResources(unittest.TestCase):
+    def test_preemption_stops_private_runner_before_python_parent(self):
+        stopped = []
+        parent, server, runner = Mock(), Mock(), Mock()
+        parent.children.return_value = [server, runner]
+        parent.kill.side_effect = lambda: stopped.append('python')
+        server.kill.side_effect = lambda: stopped.append('ollama')
+        runner.kill.side_effect = lambda: stopped.append('llama-server')
+        resources.preempt_tree(parent)
+        self.assertEqual(stopped, ['llama-server', 'ollama', 'python'])
+
     def test_cgroup_allocation_not_host_capacity(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

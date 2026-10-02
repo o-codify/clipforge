@@ -26,7 +26,7 @@ class ModelInstallationTest(unittest.TestCase):
             with patch.object(Path, 'read_text', return_value=manifest), patch.object(setup.urllib.request, 'urlopen') as request:
                 setup.install(root, 10000)
                 request.assert_not_called()
-            self.assertTrue((root / 'manifests/registry.ollama.ai/library/qwen3-vl/4b-instruct').is_file())
+            self.assertTrue((root / 'manifests/registry.ollama.ai/library/qwen3-vl/2b-instruct').is_file())
 
     def test_corrupt_download_never_publishes_manifest(self):
         digest, manifest = self.fixture(b'valid')

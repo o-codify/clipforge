@@ -37,7 +37,7 @@ def install(root, kbps):
         if count != size or sha.hexdigest() != digest.split(':')[1]:
             raise RuntimeError('Vision model checksum mismatch')
         os.replace(pending, target)
-    target = root / 'manifests/registry.ollama.ai/library/qwen3-vl/4b-instruct'
+    target = root / 'manifests/registry.ollama.ai/library/qwen3-vl/2b-instruct'
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(manifest_text, encoding='utf-8')
     print('Vision model verified', flush=True)
