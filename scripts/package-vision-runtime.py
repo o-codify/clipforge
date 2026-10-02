@@ -18,16 +18,16 @@ with subprocess.Popen(['zstd', '-dc', str(archive)], stdout=subprocess.PIPE) as 
     with tarfile.open(fileobj=process.stdout, mode='r|') as contents:
         for member in contents:
             name = pathlib.PurePosixPath(member.name.removeprefix('./'))
-            selected = name == pathlib.PurePosixPath('bin/ollama') or (
-                name.parent == pathlib.PurePosixPath('lib/ollama') and
-                (name.name.startswith(('libggml', 'libmtmd')) or name.name == 'ollama'))
+            # CPU runner and its ABI libraries live directly here. GPU backends
+            # are separate subdirectories; never infer a partial library list.
+            selected = name == pathlib.PurePosixPath('bin/ollama') or name.parent == pathlib.PurePosixPath('lib/ollama')
             if not selected:
                 continue
             target = root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             if member.issym():
                 link = pathlib.PurePosixPath(member.linkname)
-                if link.parent != pathlib.PurePosixPath('.') or not link.name.startswith(('libggml', 'libmtmd')):
+                if link.parent != pathlib.PurePosixPath('.'):
                     raise RuntimeError('Unexpected CPU library symlink')
                 target.symlink_to(member.linkname)
                 continue
@@ -42,5 +42,6 @@ with subprocess.Popen(['zstd', '-dc', str(archive)], stdout=subprocess.PIPE) as 
 if not (root / 'bin/ollama').is_file() or not list((root / 'lib/ollama').glob('libggml-cpu*')):
     raise RuntimeError('CPU runtime missing from official archive')
 subprocess.run([str(root / 'bin/ollama'), '--version'], check=True)
+subprocess.run([str(root / 'lib/ollama/llama-server'), '--version'], check=True)
 urllib.request.urlretrieve(f'https://raw.githubusercontent.com/ollama/ollama/v{VERSION}/LICENSE', root / 'LICENSE')
 archive.unlink()
