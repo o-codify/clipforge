@@ -542,7 +542,7 @@ export interface PreparedRenderSource {
 
 export async function renderRun(
   ctx: Context,
-  payload: { vodId: string; count?: number; game?:string; sourceRange?:{start:number;end:number}; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated';testBatch?:boolean },
+  payload: { vodId: string; count?: number; game?:string; sourceRange?:{start:number;end:number}; adReview?:Record<string,unknown>; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated';testBatch?:boolean },
   report: JobReport,
   prepared?: PreparedRenderSource,
 ): Promise<{ runId: string; rendered: number; skipped: number; replaced: number }> {
@@ -641,7 +641,7 @@ export async function renderRun(
   const sourceOffset = prepared?.offsetSeconds ?? 0;
   if (sourceOffset < 0 || !Number.isFinite(sourceOffset)) throw new Error("Неверное начало исходного фрагмента");
   const source = await probeSize(video);
-  const adProfile=adsSettings.enabled?await ensureAdProfile(ctx,row.id,video,report,!!prepared):undefined;
+  const adProfile=adsSettings.enabled?await ensureAdProfile(ctx,row.id,video,report,!!prepared,payload.adReview):undefined;
   if(!adsSettings.enabled)report.log("Проверка рекламы выключена в настройках эфира.");
   const grid = computeGrid(source.width, source.height, null);
   report.log(`Исходник ${source.width}×${source.height}. Расположение камеры проверяется отдельно для каждого момента.`);
@@ -674,7 +674,7 @@ export async function renderRun(
     cameraPolicy: "per-clip-roi-v7-ignore-dota-portraits",
     layoutPolicy: "fixed-crop-minimap-v1",
     subtitleTextPolicy: "ru-spacing-and-shared-masking-v1",
-    mediaProtection: { version:4, audio:audioMode, ads:adsSettings.enabled?'vod-vision':'disabled', profileId:adProfile?.signature, reviewVersion:adProfile?.reviewVersion, regions:adProfile?.regions??[] },
+    mediaProtection: { version:4, audio:audioMode, ads:adsSettings.enabled?'vod-vision':'disabled', profileId:adProfile?.signature, reviewVersion:adProfile?.reviewVersion, reviewMethod:adProfile?.model, regions:adProfile?.regions??[] },
     grid, subtitles: style, header, outro,
     render: { crf: 20, preset: "veryfast", fps: 30, audioBitrate: "160k" },
     censor: { enabled: true, audio: "off", maskSubtitles: true },
@@ -988,7 +988,7 @@ async function dropSuperseded(
  */
 export async function runPipeline(
   ctx: Context,
-  payload: { vodId: string; count?: number; game?:string; sourceRange?:{start:number;end:number}; reuse: boolean; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated'; testBatch?:boolean },
+  payload: { vodId: string; count?: number; game?:string; sourceRange?:{start:number;end:number}; adReview?:Record<string,unknown>; reuse: boolean; skipExisting?:boolean; audioMode?:'original'|'dtln'|'dtln-gated'; testBatch?:boolean },
   report: JobReport,
 ): Promise<{ runId: string; rendered: number; skipped: number }> {
   const force = !payload.reuse;
@@ -1021,6 +1021,7 @@ export async function runPipeline(
   const result = await renderRun(
     ctx,
     { vodId: payload.vodId, ...(payload.game?{game:payload.game}:{}), ...(payload.count ? { count: payload.count } : {}),
+      ...(payload.adReview ? {adReview:payload.adReview} : {}),
       ...(payload.audioMode ? {audioMode:payload.audioMode} : {}),
       ...(payload.skipExisting ? {skipExisting:true} : {}),
       ...(payload.testBatch ? {testBatch:true} : {}) },

@@ -133,7 +133,7 @@ export class JobsController {
   @AdminOnly()
   @Post('prepare/:vodId')
   async prepare(@CurrentViewer() viewer:Viewer, @Param('vodId') vodId:string, @Body() body:unknown) {
-    const input=preparePreviewPayload.pick({count:true,audioMode:true,game:true,sourceRange:true}).strict().parse(body??{});
+    const input=preparePreviewPayload.pick({count:true,audioMode:true,game:true,sourceRange:true,adReview:true}).strict().parse(body??{});
     const vod=await this.catalog.vod(viewer,vodId);
     if(input.game&&!vod.chapters.some(c=>c.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'_').replace(/^_|_$/g,'')===input.game))throw new BadRequestException('В эфире нет выбранной игры');
     if(input.sourceRange&&(!input.game||!vod.chapters.some(c=>c.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'_').replace(/^_|_$/g,'')===input.game&&input.sourceRange!.start>=c.start&&input.sourceRange!.end<=c.end)))throw new BadRequestException('Отрезок должен находиться внутри главы выбранной игры');

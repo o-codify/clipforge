@@ -295,7 +295,7 @@ def op_prepare_media(params, ctx):
 
 def op_profile_ads(params, ctx):
     from clipforge_worker.ad_profile import profile_ads
-    return profile_ads(params['video'], params['directory'], params.get('cached'), ctx.progress)
+    return profile_ads(params['video'], params['directory'], params.get('cached'), ctx.progress, params.get('review'))
 
 
 def op_clean_clip(params, ctx):

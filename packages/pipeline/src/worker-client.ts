@@ -180,7 +180,7 @@ export class PythonWorker {
       if(op==='profileAds'&&this.speechModel)await this.stop();
       for (;;) {
       const model=op==='transcribe'?String((parsedParams as {model?:string}).model??'large-v3'):undefined;
-      await waitForResources(hooks.cancelled,model?speechHeadroomMb(model,this.speechModel):op==='profileAds'?4096:0);
+      await waitForResources(hooks.cancelled,model?speechHeadroomMb(model,this.speechModel):op==='profileAds'&&!(parsedParams as {review?:unknown}).review?4096:0);
       const child = this.start();
       const id = randomUUID();
 

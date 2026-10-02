@@ -210,7 +210,7 @@ export const adProfileSchema = z.object({signature:z.string(),version:z.string()
   evidence:z.array(z.unknown()),framesDirectory:z.string()});
 
 export const workerOps = {
-  profileAds: {params:z.object({video:z.string(),directory:z.string(),cached:z.record(z.unknown()).nullable().optional()}),result:adProfileSchema},
+  profileAds: {params:z.object({video:z.string(),directory:z.string(),cached:z.record(z.unknown()).nullable().optional(),review:z.record(z.unknown()).optional()}),result:adProfileSchema},
   ping: { params: z.object({}), result: pingResultSchema },
   transcribe: { params: transcribeParamsSchema, result: transcribeResultSchema },
   cachedTranscript: { params: transcribeParamsSchema, result: transcribeResultSchema.nullable() },

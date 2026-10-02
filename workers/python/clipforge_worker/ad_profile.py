@@ -240,10 +240,31 @@ def persistent_regions(evidence):
     return merge_regions(selected)
 
 
-def profile_ads(video, directory, cached=None, progress=lambda _: None):
+def reviewed_regions(review, info, root, times):
+    if review.get('method') != 'assistant-visual-review' or review.get('signature') != info['signature'] or review.get('width') != info['width'] or review.get('height') != info['height']:
+        raise ValueError('Визуальная проверка относится к другому исходнику')
+    frames = review.get('frames', [])
+    if len(frames) != len(times):
+        raise ValueError('Неполная визуальная проверка кадров')
+    for i, (frame, at) in enumerate(zip(frames, times)):
+        if frame.get('at') != at or frame.get('sha256') != hashlib.sha256((root / f'{i:02}.jpg').read_bytes()).hexdigest():
+            raise ValueError('Проверенные кадры не совпадают с исходником')
+    regions = review.get('regions', [])
+    if len(regions) > 32:
+        raise ValueError('Слишком много рекламных областей')
+    for r in regions:
+        if set(r) != {'x','y','w','h'} or any(type(v) is not int for v in r.values()) or min(r['x'],r['y']) < 0 or min(r['w'],r['h']) <= 0 or r['x']+r['w'] > info['width'] or r['y']+r['h'] > info['height']:
+            raise ValueError('Рекламная область вне кадра')
+    coverage = sum(r['w']*r['h'] for r in regions)/(info['width']*info['height'])
+    if coverage > .3:
+        raise ValueError('Реклама закрывает слишком большую часть кадра')
+    return regions, coverage
+
+
+def profile_ads(video, directory, cached=None, progress=lambda _: None, review=None):
     cv2.setNumThreads(2)
     info = source_info(video)
-    if cached and cached.get('model') == MODEL and cached.get('signature') == info['signature'] and cached.get('version') == VERSION and cached.get('reviewVersion') == REVIEW_VERSION and cached.get('complete') is True:
+    if not review and cached and cached.get('model') == MODEL and cached.get('signature') == info['signature'] and cached.get('version') == VERSION and cached.get('reviewVersion') == REVIEW_VERSION and cached.get('complete') is True:
         return cached
     root = Path(directory) / info['signature']
     root.mkdir(parents=True, exist_ok=True)
@@ -260,6 +281,15 @@ def profile_ads(video, directory, cached=None, progress=lambda _: None):
                 raise ValueError(f'Не удалось получить кадр эфира {at}')
     finally:
         cap.release()
+    if review:
+        regions, coverage = reviewed_regions(review, info, root, times)
+        result = {**info, 'version': VERSION, 'reviewVersion': REVIEW_VERSION,
+            'model': 'assistant-visual-review', 'complete': True, 'regions': regions,
+            'samples': len(times), 'qrHits': 0, 'bannerHits': 0, 'coverage': coverage,
+            'evidence': review['frames'], 'framesDirectory': str(root)}
+        progress(f'Применяю визуальную проверку {len(times)} кадров: {len(regions)} областей')
+        (root / 'profile.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        return result
     evidence, regions, qr_hits, banner_hits = [], [], 0, 0
     with vision_server() as port:
         for i, at in enumerate(times):

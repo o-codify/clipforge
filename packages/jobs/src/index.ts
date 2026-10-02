@@ -115,6 +115,12 @@ export const facecamVodPayload = z.object({
  */
 export const renderRunPayload = z.object({
   vodId: z.string().min(1),
+  /** Explicit review of the exact sampled source; separate from local model evidence. */
+  adReview: z.object({method:z.literal('assistant-visual-review'),signature:z.string().regex(/^[a-f0-9]{64}$/),
+    width:z.number().int().positive(),height:z.number().int().positive(),
+    frames:z.array(z.object({at:z.number().finite().nonnegative(),sha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict()).min(6).max(24),
+    regions:z.array(z.object({x:z.number().int().nonnegative(),y:z.number().int().nonnegative(),w:z.number().int().positive(),h:z.number().int().positive()}).strict()).max(32),
+  }).strict().optional(),
   /** Only moments fully inside a chapter of this game. */
   game: z.string().min(1).max(100).optional(),
   sourceRange: z.object({start:z.number().finite().nonnegative(),end:z.number().finite().positive()})
