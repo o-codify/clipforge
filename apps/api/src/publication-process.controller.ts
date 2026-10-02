@@ -23,8 +23,10 @@ export class PublicationProcessController {
       ?await this.db.execute<{n:number}>(sql`select count(*)::int n from platform_runtime where key like 'upload-attempt:%' and updated_at>=${q.usageThrough??q.start}::timestamptz`):[];
     const channels=await this.db.execute(sql`select a.external_id as id,a.label,
       (select count(*)::int from platform_runtime r where r.key like 'upload-attempt:%' and r.value->>'channel'=a.external_id and r.updated_at>=${window.start}::timestamptz) as "attemptsToday",
-      count(p.id) filter(where p.created_at>=${window.start}::timestamptz and p.media_id is not null)::int as "uploadedToday",
-      count(p.id) filter(where p.created_at>now()-interval '24 hours')::int as "attempts24h",b.value as restriction
+      count(p.id) filter(where p.media_id is not null and exists(select 1 from platform_runtime r
+        where r.key like 'upload-attempt:%' and r.value->>'publicationId'=p.id and r.updated_at>=${window.start}::timestamptz))::int as "uploadedToday",
+      (select count(*)::int from platform_runtime r where r.key like 'upload-attempt:%' and r.value->>'channel'=a.external_id and r.updated_at>now()-interval '24 hours') as "attempts24h",
+      case when (b.value->>'until')::timestamptz>now() then b.value else null end as restriction
       from platform_accounts a left join publications p on p.account=a.external_id and p.platform='youtube'
       left join platform_runtime b on b.key='youtube-upload-block:'||a.external_id
       where a.platform='youtube' and a.disconnect_requested_at is null group by a.external_id,a.label,b.value`);

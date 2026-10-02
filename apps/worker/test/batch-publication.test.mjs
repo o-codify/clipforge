@@ -19,6 +19,13 @@ test('rolling allowance counts all attempts and waits until a slot opens',()=>{
   assert.equal(window.nextAt,new Date(now+1340*minute).toISOString());
   assert.equal(publicationWindow(now+24*60*minute,10,100,dates).due,true);
 });
+test('provider-controlled publishing continues past ten and one hundred attempts, preserving spacing',()=>{
+  for(const count of [10,100,110]) {
+    const dates=Array.from({length:count},(_,i)=>now-(11+i)*minute);
+    assert.equal(publicationWindow(now,10,null,dates).due,true);
+    assert.equal(publicationWindow(now,10,null,[...dates,now-2*minute]).nextAt,new Date(now+8*minute).toISOString());
+  }
+});
 test('restart never collapses future spacing or queues the entire backlog',()=>{
   const future=new Date(now+10*minute).toISOString();
   assert.equal(publicationWindow(now,10,100,[],future).due,false);
@@ -42,14 +49,16 @@ test('paused, cancelled, and stale queued jobs cannot publish',async()=>{
 test('publication scope and rate must be explicit and bounded',()=>{
   const valid={enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog'};
   assert.equal(batchPublicationOptions.parse(valid).intervalMinutes,10);
+  assert.equal(batchPublicationOptions.parse(valid).dailyLimit,null);
+  assert.equal(batchPublicationOptions.parse({...valid,dailyLimit:null}).dailyLimit,null);
   assert.equal(batchPublicationOptions.safeParse({...valid,dailyLimit:101}).success,false);
   assert.equal(batchPublicationOptions.safeParse({...valid,intervalMinutes:0}).success,false);
   assert.equal(batchPublicationOptions.safeParse({enabled:true}).success,false);
 });
 
-function fixture({connected=true,sendFails=false,block=null,quota=null,session=false}={}) {
+function fixture({connected=true,sendFails=false,block=null,quota=null,session=false,recent=[],dailyLimit=100}={}) {
   const jobId='097c3667-a92b-4eba-9393-4fd84bb2b83b';
-  let policy={jobId,login:'sany',enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog',intervalMinutes:10,dailyLimit:100,privacy:'public'};
+  let policy={jobId,login:'sany',enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog',intervalMinutes:10,dailyLimit,privacy:'public'};
   const pubs=[],sent=[],jobs=[];let candidates=2;
   const dialect=new PgDialect();
   const db={transaction:async fn=>fn(db),execute:async statement=>{
@@ -65,7 +74,7 @@ function fixture({connected=true,sendFails=false,block=null,quota=null,session=f
     if(q.startsWith('select publication_id from youtube_upload_sessions'))return session?[{publication_id:p[0]}]:[];
     if(q.startsWith("update publications set status='queued'")){const pub=pubs.find(row=>row.id===p[0]);pub.status='queued';pub.error=null;return [];}
     if(q.startsWith('select id from publications'))return pubs.filter(row=>['queued','uploading','processing'].includes(row.status));
-    if(q.startsWith('select created_at'))return [];
+    if(q.startsWith('select updated_at as at from platform_runtime'))return recent.map(at=>({at:new Date(at)}));
     if(q.startsWith('select c.id,c.streamer')){
       assert.ok(p.includes(jobId)&&p.includes('sany'),'scope is the approved batch, never all streamer drafts');
       assert.match(q,/c\.state in \('draft','ready'\)/);assert.match(q,/autoVerifiedAt/);assert.match(q,/disabledAt/);
@@ -117,6 +126,26 @@ test('known provider limit stops new uploads but records a completed pending upl
   active.pubs[0].status='published';active.pubs[0].mediaId='video';
   await dispatchBatchPublications(active.ctx,active.boss,now+minute);
   assert.equal(active.policy().pendingPublicationId,null);assert.equal(active.policy().state,'interval');
+});
+
+test('provider mode sends the eleventh clip, and stops all sends on a real channel refusal',async()=>{
+  const f=fixture({dailyLimit:null,recent:Array.from({length:10},(_,i)=>now-(11+i)*minute)});
+  await dispatchBatchPublications(f.ctx,f.boss,now);
+  assert.equal(f.pubs.length,1);assert.equal(f.sent.length,1);
+  f.finishJob();f.pubs[0].status='failed';
+  f.pubs[0].error='youtube upload init 400: {"reason":"uploadLimitExceeded"}';
+  f.block({until:new Date(now+86400000).toISOString(),reason:'channel-limit'});
+  for(const elapsed of [minute,10*minute,360*minute])await dispatchBatchPublications(f.ctx,f.boss,now+elapsed);
+  assert.equal(f.pubs.length,1);assert.equal(f.sent.length,1);assert.equal(f.policy().state,'youtube-limit');
+});
+
+test('successful uploads in provider mode keep feeding the next clip',async()=>{
+  const f=fixture({dailyLimit:null,recent:Array.from({length:100},(_,i)=>now-(11+i)*minute)});
+  await dispatchBatchPublications(f.ctx,f.boss,now);
+  f.pubs[0].status='published';f.pubs[0].mediaId='video';
+  await dispatchBatchPublications(f.ctx,f.boss,now+minute);
+  await dispatchBatchPublications(f.ctx,f.boss,now+11*minute);
+  assert.equal(f.pubs.length,2);assert.equal(f.sent.length,2);
 });
 
 test('multiline YouTube init rejection waits for the channel limit and retries the same publication',async()=>{

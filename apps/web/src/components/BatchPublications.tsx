@@ -8,7 +8,7 @@ import {toast} from '@/lib/toast';
 import Link from 'next/link';
 import {StreamerBadge} from './StreamerBadge';
 
-type Policy={jobId:string;login:string;enabled:boolean;channelId:string;intervalMinutes:number;dailyLimit:number;privacy:'public'|'private'|'unlisted';state:string;nextAt?:string;error?:string};
+type Policy={jobId:string;login:string;enabled:boolean;channelId:string;intervalMinutes:number;dailyLimit:number|null;privacy:'public'|'private'|'unlisted';state:string;nextAt?:string;error?:string};
 type Row={policy:Policy;ready:number;uploaded:number;jobState:string;target:number;attempts24h:number};
 const labels:Record<string,string>={waiting:'Ожидание',paused:'Приостановлено','waiting-channel':'Подключите YouTube',
   'waiting-clips':'Ожидание готового клипа','waiting-upload':'Ожидание загрузки',uploading:'Загрузка',interval:'Ожидание интервала',
@@ -31,14 +31,14 @@ export function BatchPublications({login,batchId}:{login?:string;batchId?:string
     {error&&<p role="alert">{error}</p>}
     {batchId&&!visible.some(r=>r.policy.jobId===batchId)&&<div className="audio-setting-control" style={{flexWrap:'wrap',gap:12}}>
       <Select label="Канал подборки" value={channelId} onValueChange={setChannel} options={accounts.filter(a=>a.platform==='youtube'&&!a.disconnectRequestedAt).map(a=>({value:a.externalId,label:a.label}))}/>
-      <Button disabled={busy||!channelId} onClick={()=>void act(()=>api.post(`/api/platforms/batches/${batchId}`,{enabled:true,channelId,intervalMinutes:10,dailyLimit:100,privacy:'public'}))}>Публиковать по мере готовности</Button>
-      <span>По одному каждые 10 минут · до 100 за сутки · публично</span>
+      <Button disabled={busy||!channelId} onClick={()=>void act(()=>api.post(`/api/platforms/batches/${batchId}`,{enabled:true,channelId,intervalMinutes:10,dailyLimit:null,privacy:'public'}))}>Публиковать по мере готовности</Button>
+      <span>По одному каждые 10 минут · до лимита YouTube · публично</span>
     </div>}
     {visible.map(({policy:p,ready,uploaded,target,attempts24h})=><SettingsCard key={p.jobId} title="Публикация подборки" status={labels[p.state]??p.state} tone={p.state==='error'?'bad':p.state==='waiting-channel'?'warn':''}
       actions={<Button disabled={busy} onClick={()=>void act(()=>p.enabled?api.del(`/api/platforms/batches/${p.jobId}`):api.post(`/api/platforms/batches/${p.jobId}`,{enabled:true,channelId:p.channelId,intervalMinutes:p.intervalMinutes,dailyLimit:p.dailyLimit,privacy:p.privacy}))}>{p.enabled?'Приостановить':'Продолжить'}</Button>}>
       {!login&&<StreamerBadge login={p.login}/>}
       <progress value={uploaded} max={target||Math.max(ready,1)} aria-label="Подборка опубликована"/>
-      <dl className="settings-facts" style={{gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))'}}><div><dt>Готово / цель</dt><dd>{ready} / {target||'—'}</dd></div><div><dt>Загружено</dt><dd>{uploaded}</dd></div><div><dt>Интервал</dt><dd>{p.intervalMinutes} мин</dd></div><div><dt>Предел ClipForge / 24 ч</dt><dd>{p.dailyLimit}</dd></div><div><dt>Осталось по пределу</dt><dd>{Math.max(0,p.dailyLimit-(attempts24h??0))}</dd></div>
+      <dl className="settings-facts" style={{gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))'}}><div><dt>Готово / цель</dt><dd>{ready} / {target||'—'}</dd></div><div><dt>Загружено</dt><dd>{uploaded}</dd></div><div><dt>Интервал</dt><dd>{p.intervalMinutes} мин</dd></div><div><dt>Режим</dt><dd>{p.dailyLimit==null?'До лимита YouTube':`До ${p.dailyLimit} за 24 ч`}</dd></div>{p.dailyLimit!=null&&<div><dt>Осталось по своему пределу</dt><dd>{Math.max(0,p.dailyLimit-(attempts24h??0))}</dd></div>}
         {p.enabled&&p.nextAt&&<div><dt>До следующей загрузки</dt><dd>{countdown(Date.parse(p.nextAt)-now)}</dd></div>}
         {p.nextAt&&<div><dt>Следующая загрузка не раньше</dt><dd>{when(p.nextAt)}</dd></div>}</dl>
       {p.state==='waiting-channel'&&<Link href="/settings/publication">Подключить канал YouTube</Link>}

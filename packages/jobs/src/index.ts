@@ -183,7 +183,9 @@ export type PayloadInput<Q extends QueueName> = z.input<(typeof PAYLOADS)[Q]>;
 export const batchPublicationOptions = z.object({
   enabled:z.boolean(), channelId:z.string().regex(/^UC[\w-]{22}$/),
   intervalMinutes:z.number().int().min(1).max(1440).default(10),
-  dailyLimit:z.number().int().min(1).max(100).default(100),
+  // null: keep publishing at the chosen pace until YouTube refuses an upload.
+  // A numeric value is an optional owner-imposed cap, never the channel quota.
+  dailyLimit:z.number().int().min(1).max(100).nullable().default(null),
   privacy:z.enum(['private','unlisted','public']).default('public'),
 }).strict();
 export type BatchPublicationPolicy = z.infer<typeof batchPublicationOptions> & {

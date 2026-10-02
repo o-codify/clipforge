@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {createContext} from '../apps/worker/dist/context.js';
 import {PlatformsService} from '../apps/api/dist/platforms/platforms.service.js';
+import {PublicationProcessController} from '../apps/api/dist/publication-process.controller.js';
 import {collectMetrics} from '../apps/worker/dist/metrics.js';
 import {publishClip} from '../apps/worker/dist/publish.js';
 import {pruneYoutubeData,forgetYoutubeAccount,youtubeDerivedMetricsAllowed,sanitizeRestoredYoutubeData} from '../packages/db/dist/index.js';
@@ -68,6 +69,19 @@ try{
   const [published]=await db.sql`select privacy,status,title,caption from publications where id=${a.publicationId}`;
   assert.equal(published.title,captured.snippet.title);assert.equal(published.caption,captured.snippet.description);
   assert.equal(published.privacy,'private');assert.equal(published.status,'uploaded','Requested public is not proof of actual public visibility');
+  // A resumed upload belongs to the day of its real attempt, even when its
+  // publication row was first created on an earlier day.
+  await db.sql`update publications set created_at=now()-interval '3 days' where id=${a.publicationId}`;
+  await db.sql`insert into platform_runtime(key,value) values(${'youtube-upload-block:'+channel},${JSON.stringify({until:new Date(Date.now()-86400000).toISOString(),reason:'channel-limit'})}::jsonb)`;
+  const processStatus=new PublicationProcessController(db);
+  let counts=(await processStatus.status()).channels.find(c=>c.id===channel);
+  assert.equal(counts.attemptsToday,1);assert.equal(counts.attempts24h,1);assert.equal(counts.uploadedToday,1);
+  assert.equal(counts.restriction,null,'Expired refusal is not a current channel restriction');
+  const future=new Date(Date.now()+3600000).toISOString();
+  await db.sql`update platform_runtime set value=${JSON.stringify({until:future,reason:'channel-limit'})}::jsonb where key=${'youtube-upload-block:'+channel}`;
+  counts=(await processStatus.status()).channels.find(c=>c.id===channel);
+  assert.equal(counts.restriction.until,future);
+  await db.sql`delete from platform_runtime where key=${'youtube-upload-block:'+channel}`;
   assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,1,'Upload records the initial analytics snapshot');
   await collectMetrics(testCtx);
   assert.equal((await db.sql`select * from publication_metrics where publication_id=${a.publicationId}`).length,2,'Scheduled collection adds a subsequent snapshot');

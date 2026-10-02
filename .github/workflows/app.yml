@@ -88,6 +88,8 @@ jobs:
         run: pnpm exec turbo run build --filter=@clipforge/worker...
       - name: Verify streamed publication transport without uploading to YouTube
         run: node --test packages/youtube/test/source.test.mjs
+      - name: Verify paced publication and YouTube limit recovery
+        run: node --test apps/worker/test/batch-publication.test.mjs
       - name: Verify download cap and partial-file recovery
         run: node --experimental-strip-types --test packages/pipeline/test/download-recovery.test.ts
       - name: Verify transcript typography and subtitle masking

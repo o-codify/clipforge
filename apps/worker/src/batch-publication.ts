@@ -9,10 +9,10 @@ import type {JobReport} from './handlers.js';
 import {publishClip} from './publish.js';
 import {uploadWait} from './upload-quota.js';
 
-export function publicationWindow(now:number,intervalMinutes:number,dailyLimit:number,recentDates:number[],nextAt?:string|null) {
+export function publicationWindow(now:number,intervalMinutes:number,dailyLimit:number|null,recentDates:number[],nextAt?:string|null) {
   const recent=recentDates.filter(at=>at>now-24*3600_000).sort((a,b)=>a-b);
   const spacing=recent.length?recent.at(-1)!+intervalMinutes*60_000:0;
-  const cap=recent.length>=dailyLimit?recent[recent.length-dailyLimit]!+24*3600_000:0;
+  const cap=dailyLimit!==null&&recent.length>=dailyLimit?recent[recent.length-dailyLimit]!+24*3600_000:0;
   const at=Math.max(spacing,cap,nextAt?Date.parse(nextAt):0);
   return {due:at<=now,nextAt:new Date(Math.max(now,at)).toISOString(),reason:cap>now?'daily-limit':'interval'};
 }
@@ -75,9 +75,10 @@ export async function dispatchBatchPublications(ctx:Context,boss:Pick<PgBoss,'se
       const active=await tx.execute(sql`select id from publications where platform='youtube' and account=${p.channelId}
         and status in ('queued','uploading','processing') limit 1`);
       if(active.length){await save('waiting-upload');continue;}
-      // Include manual uploads and other batches; errors also consume allowance.
-      const recent=await tx.execute<{at:Date}>(sql`select created_at as at from publications where platform='youtube'
-        and account=${p.channelId} and created_at>now()-interval '24 hours'`);
+      // Count actual init attempts, including retries of an older publication.
+      // The same channel shares spacing across every batch and manual upload.
+      const recent=await tx.execute<{at:Date}>(sql`select updated_at as at from platform_runtime
+        where key like 'upload-attempt:%' and value->>'channel'=${p.channelId} and updated_at>now()-interval '24 hours'`);
       const window=publicationWindow(now,p.intervalMinutes,p.dailyLimit,recent.map(r=>new Date(r.at).getTime()),p.nextAt);
       if(!window.due){p.nextAt=window.nextAt;await save(window.reason);continue;}
       const [clip]=await tx.execute<{id:string;login:string;displayName:string|null;gameTitle:string|null}>(sql`

@@ -48,7 +48,8 @@ test('paced publication explicitly scopes one batch and has a separate pause act
     {path:'/api/jobs/resume-batch/batch',method:'POST',body:{}});
   await assert.rejects(commandPlan(parseCommand(['resume-batch','batch','--audio','dtln'])));
   assert.deepEqual(await commandPlan(parseCommand(['pace-batch','batch','--channel','UC-P-55QVYfT8SBtGnCNAtog'])),
-    {path:'/api/platforms/batches/batch',method:'POST',body:{enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog',intervalMinutes:10,dailyLimit:100,privacy:'public'}});
+    {path:'/api/platforms/batches/batch',method:'POST',body:{enabled:true,channelId:'UC-P-55QVYfT8SBtGnCNAtog',intervalMinutes:10,dailyLimit:null,privacy:'public'}});
+  assert.equal((await commandPlan(parseCommand(['pace-batch','batch','--channel','UC-P-55QVYfT8SBtGnCNAtog','--daily-limit','30']))).body.dailyLimit,30);
   assert.deepEqual(await commandPlan(parseCommand(['pause-batch','batch'])),{path:'/api/platforms/batches/batch',method:'DELETE'});
   await assert.rejects(commandPlan(parseCommand(['pace-batch','batch','--channel','anything'])));
   await assert.rejects(commandPlan(parseCommand(['pace-batch','batch','--channel','UC-P-55QVYfT8SBtGnCNAtog','--daily-limit','101'])));

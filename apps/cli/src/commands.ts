@@ -7,7 +7,7 @@ export const HELP=`ClipForge — управление через API платф�
 pnpm cf accounts                         подключённые каналы
 pnpm cf batch-publications               очередь публикации подборок
 pnpm cf pace-batch <jobId> --channel UC… [--interval 10] [--daily-limit 100]
-                                        публично, по одному готовому клипу с интервалом
+                                        публично, с интервалом до лимита YouTube; --daily-limit задаёт свой предел
 pnpm cf pause-batch <jobId>               приостановить публикацию подборки
 pnpm cf youtube-check [accountId]        проверить авторизацию канала
 pnpm cf clips [--streamer login]         найти клипы
@@ -97,7 +97,7 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
     case 'pace-batch': {
       if(!options.channel||!/^UC[\w-]{22}$/.test(options.channel))throw new Error('--channel: идентификатор канала UC…');
       return {path:`/api/platforms/batches/${id}`,method:'POST',body:{enabled:true,channelId:options.channel,
-        intervalMinutes:integer(options.interval,10,1440),dailyLimit:integer(options['daily-limit'],100,100),privacy:'public'}};
+        intervalMinutes:integer(options.interval,10,1440),dailyLimit:options['daily-limit']===undefined?null:integer(options['daily-limit'],100,100),privacy:'public'}};
     }
     case 'youtube-check':return {path:'/api/platforms/youtube/check',method:'POST',body:target?{accountId:target}:{}};
     case 'clips': {
