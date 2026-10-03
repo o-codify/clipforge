@@ -97,6 +97,7 @@ jobs:
           CLIPFORGE_TEST_S3_IMAGE: clipforge-s3-fixture
         run: |
           pnpm exec tsc -b apps/api
+          node apps/api/test/publication-feeds.isolated.mjs
           docker build -f scripts/test-s3.Dockerfile -t clipforge-s3-fixture scripts
           node apps/api/test/cloud-cache.isolated.mjs
       - name: Verify bounded native downloads

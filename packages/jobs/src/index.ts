@@ -203,8 +203,20 @@ export const batchPublicationOptions = z.object({
 export type BatchPublicationPolicy = z.infer<typeof batchPublicationOptions> & {
   jobId:string; login:string; authorizedAt:string; state:string;
   pendingPublicationId?:string|null; nextAt?:string|null; error?:string|null;
+  feedId?:string; game?:string;
 };
 export const batchPublicationKey = (id:string) => `batch-publication:${id}`;
+
+export const publicationFeedOptions = z.object({
+  login:z.string().regex(/^[a-z0-9_]{1,64}$/),game:z.string().regex(/^[a-z0-9_]{1,100}$/),
+  startVodId:z.string().regex(/^v\d+$/),channelId:batchPublicationOptions.shape.channelId,
+  enabled:z.boolean().default(true),intervalMinutes:batchPublicationOptions.shape.intervalMinutes,
+  audioMode:z.enum(['original','dtln','dtln-gated']).default('original'),
+}).strict();
+export type PublicationFeed = z.infer<typeof publicationFeedOptions> & {
+  id:string;since:string;state:string;error?:string|null;authorizedAt:string;
+};
+export const publicationFeedKey=(login:string,game:string)=>`publication-feed:${login}:${game}`;
 
 /**
  * Ключ, по которому задание считается уже стоящим в очереди.

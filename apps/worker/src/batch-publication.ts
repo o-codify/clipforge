@@ -8,6 +8,7 @@ import type {Context} from './context.js';
 import type {JobReport} from './handlers.js';
 import {publishClip} from './publish.js';
 import {uploadWait} from './upload-quota.js';
+import {replenishPublicationFeeds} from './publication-feeds.js';
 
 export function publicationWindow(now:number,intervalMinutes:number,dailyLimit:number|null,recentDates:number[],nextAt?:string|null) {
   const recent=recentDates.filter(at=>at>now-24*3600_000).sort((a,b)=>a-b);
@@ -85,6 +86,7 @@ export async function dispatchBatchPublications(ctx:Context,boss:Pick<PgBoss,'se
         select c.id,c.streamer as login,s.display_name as "displayName",g.title as "gameTitle"
         from clips c join runs r on r.id=c.run_id join streamers s on s.login=c.streamer left join games g on g.slug=c.game
         where r.settings->>'jobId'=${p.jobId} and c.streamer=${p.login} and c.archived_at is null and c.state in ('draft','ready')
+          ${p.game?sql`and c.game=${p.game}`:sql``}
           and coalesce(r.settings #>> array['renderedClips',c.id,'protection','autoVerifiedAt'],
             r.settings #>> array['renderedClips',c.id,'protection','reviewedAt'],
             r.settings #>> array['renderedClips',c.id,'protection','disabledAt']) is not null
@@ -124,9 +126,12 @@ export async function publishBatchClip(ctx:Context,payload:PayloadOf<typeof QUEU
   }
 }
 
-export function startBatchPublications(ctx:Context,boss:Pick<PgBoss,'send'>) {
+export function startBatchPublications(ctx:Context,boss:Pick<PgBoss,'send'|'createQueue'>) {
   let busy=false,stopped=false;
-  const tick=async()=>{if(busy||stopped)return;busy=true;try{await dispatchBatchPublications(ctx,boss);}catch(e){ctx.log(`Публикация подборки: ${String(e)}`);}finally{busy=false;}};
+  const tick=async()=>{if(busy||stopped)return;busy=true;try{
+    try{await replenishPublicationFeeds(ctx,boss);}catch(e){ctx.log(`Пополнение публикаций: ${String(e)}`);}
+    await dispatchBatchPublications(ctx,boss);
+  }catch(e){ctx.log(`Публикация подборки: ${String(e)}`);}finally{busy=false;}};
   const timer=setInterval(()=>void tick(),30_000);void tick();
   return ()=>{stopped=true;clearInterval(timer);};
 }

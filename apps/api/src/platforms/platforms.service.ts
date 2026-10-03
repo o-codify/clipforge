@@ -12,7 +12,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from "@nes
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { clips, games, streamers, runs, platformAccounts, publications, runtimeValue, youtubeDestination, beginYoutubeDisconnect, forgetYoutubeAccount, type Database } from "@clipforge/db";
-import { QUEUES, batchPublicationKey, type BatchPublicationPolicy, type PayloadOf } from "@clipforge/jobs";
+import { QUEUES, batchPublicationKey,publicationFeedKey,type PublicationFeed, type BatchPublicationPolicy, type PayloadOf } from "@clipforge/jobs";
 import {
   authUrl,
   exchangeCode,
@@ -76,10 +76,54 @@ export class PlatformsService {
       (select count(*)::int from publications p join clips c on c.id=p.clip_id join runs n on n.id=c.run_id
         where n.settings->>'jobId'=r.value->>'jobId' and p.account=r.value->>'channelId' and p.media_id is not null) as uploaded
       from platform_runtime r left join jobs.job j on j.id::text=r.value->>'jobId'
-      where r.key like 'batch-publication:%' order by r.updated_at desc limit 50`);
+      where r.key like 'batch-publication:%' and r.value->>'feedId' is null order by r.updated_at desc limit 50`);
   }
 
   async destination(login:string) { return youtubeDestination(this.db,login); }
+
+  async feeds(){
+    return this.db.execute(sql`select f.value as policy,s.display_name as name,s.avatar,g.title as game,a.label as channel,
+      (select count(*)::int from clips c join runs r on r.id=c.run_id join platform_runtime p on p.key='batch-publication:'||(r.settings->>'jobId')
+        where p.value->>'feedId'=f.value->>'id' and c.archived_at is null and c.state in ('draft','ready')) as ready,
+      (select count(*)::int from publications u join clips c on c.id=u.clip_id join runs r on r.id=c.run_id join platform_runtime p on p.key='batch-publication:'||(r.settings->>'jobId')
+        where p.value->>'feedId'=f.value->>'id' and u.account=f.value->>'channelId' and u.media_id is not null) as uploaded
+      from platform_runtime f join streamers s on s.login=f.value->>'login' join games g on g.slug=f.value->>'game'
+      left join platform_accounts a on a.external_id=f.value->>'channelId' and a.platform='youtube'
+      where f.key like 'publication-feed:%' order by f.key`);
+  }
+
+  async configureFeed(options:Pick<PublicationFeed,'login'|'game'|'startVodId'|'channelId'|'enabled'|'intervalMinutes'|'audioMode'>){
+    return this.db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(740025)`);
+      const [source]=await tx.execute<{publishedAt:string}>(sql`select published_at as "publishedAt" from vods where id=${options.startVodId} and streamer=${options.login}`);
+      if(!source?.publishedAt)throw new BadRequestException('Начальный эфир должен принадлежать выбранному стримеру');
+      if(!(await tx.execute(sql`select 1 from games where slug=${options.game}`)).length)throw new BadRequestException('Игра не найдена');
+      const [account]=await tx.execute(sql`select 1 from platform_accounts where platform='youtube' and external_id=${options.channelId}
+        and disconnect_requested_at is null and credentials->>'refreshToken' is not null`);
+      if(options.enabled&&!account)throw new BadRequestException('Подключите выбранный YouTube-канал');
+      const key=publicationFeedKey(options.login,options.game);
+      const [old]=await tx.execute<{value:PublicationFeed}>(sql`select value from platform_runtime where key=${key} for update`);
+      if(old&&(old.value.channelId!==options.channelId||old.value.startVodId!==options.startVodId))throw new BadRequestException('Канал и начальный эфир действующей очереди менять нельзя');
+      const value:PublicationFeed={...old?.value,...options,id:old?.value.id??randomUUID(),since:new Date(source.publishedAt).toISOString(),
+        state:options.enabled?'waiting':'paused',error:null,authorizedAt:new Date().toISOString()};
+      await tx.execute(sql`insert into platform_runtime(key,value) values(${key},${JSON.stringify(value)}::jsonb)
+        on conflict(key) do update set value=excluded.value,updated_at=now()`);
+      await tx.execute(sql`update platform_runtime set value=value||${JSON.stringify({enabled:value.enabled,intervalMinutes:value.intervalMinutes})}::jsonb,updated_at=now()
+        where key like 'batch-publication:%' and value->>'feedId'=${value.id}`);
+      if(value.enabled){
+        const failed=await tx.execute<{key:string;value:Record<string,unknown>}>(sql`select key,value from platform_runtime
+          where key like ${'feed-window:'+value.id+':%'} and value->>'state'='failed' for update`);
+        for(const item of failed){
+          const jobId=randomUUID(),window={...item.value,jobId,state:'reserved',error:null,createdAt:new Date().toISOString()};
+          const policy:BatchPublicationPolicy={jobId,login:value.login,channelId:value.channelId,enabled:true,intervalMinutes:value.intervalMinutes,
+            dailyLimit:null,privacy:'public',authorizedAt:value.authorizedAt,state:'waiting-clips',feedId:value.id,game:value.game};
+          await tx.execute(sql`update platform_runtime set value=${JSON.stringify(window)}::jsonb,updated_at=now() where key=${item.key}`);
+          await tx.execute(sql`insert into platform_runtime(key,value) values(${batchPublicationKey(jobId)},${JSON.stringify(policy)}::jsonb)`);
+        }
+      }
+      return value;
+    });
+  }
 
   async configureBatch(id:string,options:Omit<Pick<BatchPublicationPolicy,'enabled'|'channelId'|'intervalMinutes'|'dailyLimit'|'privacy'>,'channelId'> & {channelId?:string}) {
     return this.db.transaction(async tx=>{
