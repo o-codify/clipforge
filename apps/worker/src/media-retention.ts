@@ -43,7 +43,11 @@ export async function pruneCloudMedia(db:Database,storage:MediaStorage,apply=tru
     const protectedUploads=await tx.execute<{key:string}>(sql`select distinct u.storage_key as key from worker_object_uploads u join remote_worker_leases l on l.id=u.lease_id
       where l.state='active' and l.expires_at>now()`);
     for(const u of protectedUploads)keep.add(u.key);
-    let files=0,bytes=0;
+    let files=0,bytes=0,aborted=0;
+    const abandoned=await tx.execute<{id:string;key:string;multipart:string}>(sql`select u.id::text,u.storage_key as key,u.multipart_id as multipart from worker_object_uploads u
+      join remote_worker_leases l on l.id=u.lease_id where u.state='receiving' and u.multipart_id is not null
+      and u.created_at<${new Date(now-3600000).toISOString()}::timestamptz and (l.state<>'active' or l.expires_at<now())`);
+    for(const u of abandoned){if(apply){await storage.abortMultipart(u.key,u.multipart);await tx.execute(sql`delete from worker_object_uploads where id=${u.id}::uuid`);}aborted++;}
     for await(const object of storage.mediaObjects()){
       if(keep.has(object.key)||now-object.modified.getTime()<3600000)continue;
       const vodId=object.key.match(/\/(v\d+)(?:\/|_)/)?.[1];
@@ -61,6 +65,6 @@ export async function pruneCloudMedia(db:Database,storage:MediaStorage,apply=tru
       await tx.execute(sql`insert into platform_runtime(key,value) values('media-retention',${JSON.stringify({files,bytes,at:new Date().toISOString()})}::jsonb)
         on conflict(key) do update set value=excluded.value,updated_at=now()`);
     }
-    return {files,bytes,apply};
+    return {files,bytes,aborted,apply};
   });
 }

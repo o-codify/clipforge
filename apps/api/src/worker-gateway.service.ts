@@ -92,6 +92,10 @@ export class WorkerGatewayService implements OnModuleDestroy {
     if(!this.storage||w.policy.profile==='catalog')return {};
     for(const vodId of new Set(m.vodIds)){
       if(!(await this.db.execute(sql`select 1 from vods where id=${vodId}`)).length)continue;
+      // A queued continuation owns its checkpoints. Clean inactive broadcasts
+      // first instead of uploading/downloading the working input between retries.
+      if((await this.db.execute(sql`select 1 from jobs.job where data->>'vodId'=${vodId} and name like 'heavy.%'
+        and name<>${QUEUES.archiveVod} and state in ('created','retry','active') limit 1`)).length)continue;
       const job=await this.jobs.enqueue(QUEUES.archiveVod,{vodId,workerId:w.workerId});
       if(job.id)await this.db.execute(sql`update jobs.job set priority=10 where id=${job.id}::uuid and state in ('created','retry')`);
     }return {};

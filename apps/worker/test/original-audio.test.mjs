@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,copyFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,copyFile,rm,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -13,16 +13,17 @@ test('original audio restoration preserves the video and keeps sound between spe
     const audio=join(cache,'audio.m4a'),source=join(dir,'source.mp4');
     ff(['-v','error','-y','-f','lavfi','-i','sine=frequency=500:sample_rate=48000','-t','12','-c:a','aac',audio]);
     ff(['-v','error','-y','-f','lavfi','-i','color=purple:size=270x480:rate=10','-f','lavfi','-i','anullsrc=r=48000:cl=mono','-t','4','-c:v','libx264','-threads','1','-c:a','aac',source]);
-    let output,saved;
+    let output,saved,workingFile;
     const remote={call:async(op,input)=>{
       if(op==='vod.get')return {id:'v900000001',game:null,streamer:'fixture'};
       if(op==='clip.get')return input.id==='source'?{clip:{id:'source',start:2,end:6,state:'draft'},run:{}}:{clip:null};
       if(op==='original-audio.save'){saved=input;return {};}
       throw Error(op);
-    },downloadClip:async(_,file)=>copyFile(source,file),uploadClip:async(_,file)=>{output=file;return {};}};
+    },downloadClip:async(_,file)=>copyFile(source,file),uploadClip:async(_,file)=>{workingFile=file;output=join(dir,'stored.mp4');await copyFile(file,output);return {};}};
     const ctx={remote,config:{data:join(dir,'data'),out:join(dir,'out'),workerRoot:dir,videoFormat:'720p60'}};
     const result=await restoreAudio(ctx,{vodId:'v900000001',clipIds:['source']},{log:()=>{},cancelled:async()=>false});
     assert.equal(result.clips,1);assert.equal(result.audioMode,'original');assert(saved&&output);
+    await assert.rejects(stat(workingFile),{code:'ENOENT'},'Committed media must not remain in the worker cache');
     const videoHash=file=>ff(['-v','error','-i',file,'-map','0:v:0','-c','copy','-f','hash','-hash','sha256','-']).trim();
     assert.equal(videoHash(output),videoHash(source));
     const pcm=execFileSync('ffmpeg',['-v','error','-ss','1','-i',output,'-t','2','-map','0:a:0','-f','f32le','-'],{windowsHide:true});
