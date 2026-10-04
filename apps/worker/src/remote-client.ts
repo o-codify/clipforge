@@ -31,7 +31,7 @@ export class RemoteClient {
 export class RemoteTaskAccess implements RemoteMediaAccess {
   constructor(private readonly client:RemoteClient,private readonly assignment:Assignment){}
   private path(suffix:string){return `tasks/${this.assignment.leaseId}/${suffix}`;}
-  call<T=unknown>(operation:string,input?:unknown){return this.client.request<T>(this.path('operation'),{operation,input:input??{}});}
+    call<T=unknown>(operation:string,input?:unknown){return this.client.request<T>(this.path('operation'),{operation,input:input??{}},operation==='cache.plan'?300000:30000);}
   private async upload(clipId:string,kind:'video'|'poster',file:string){
     return (await uploadObject((path,body,timeout)=>this.client.request(this.path(path),body,timeout),file,{clipId,kind,name:clipId+'/'+kind},this.assignment.policy.uploadKbps)).storageKey;
   }
