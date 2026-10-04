@@ -1,6 +1,13 @@
 import { access } from "node:fs/promises";
 import type { Context } from "./context.js";
 import { runMediaCommand } from '@clipforge/pipeline';
+import {removeCachedFile} from './storage.js';
+
+/** Call only after verified object upload AND catalog commit. */
+export async function releaseClip(ctx:Context,file:string){
+  if(!ctx.remote&&!ctx.storage)return;
+  for(const path of [file,file+'.jpg',file+'.dtln.wav',file+'.ass'])await removeCachedFile(ctx.config.out,path);
+}
 
 export async function storeClip(ctx: Context, id: string, file: string) {
   if(ctx.remote)return ctx.remote.uploadClip(id,file);

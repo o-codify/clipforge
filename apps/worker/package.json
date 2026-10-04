@@ -3,7 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports":{"./media-task-repository":{"types":"./dist/media-task-repository.d.ts","default":"./dist/media-task-repository.js"},"./catalog-task-repository":{"types":"./dist/catalog-task-repository.d.ts","default":"./dist/catalog-task-repository.js"},"./context":{"types":"./dist/context.d.ts","default":"./dist/context.js"}},
+  "exports": {
+    "./media-task-repository": {
+      "types": "./dist/media-task-repository.d.ts",
+      "default": "./dist/media-task-repository.js"
+    },
+    "./catalog-task-repository": {
+      "types": "./dist/catalog-task-repository.d.ts",
+      "default": "./dist/catalog-task-repository.js"
+    },
+    "./context": {
+      "types": "./dist/context.d.ts",
+      "default": "./dist/context.js"
+    },
+    "./media-retention": {
+      "types": "./dist/media-retention.d.ts",
+      "default": "./dist/media-retention.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",

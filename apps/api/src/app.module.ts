@@ -9,6 +9,7 @@ import { OperationsController } from "./operations.controller.js";
 import { ShortsController } from './shorts.controller.js';
 import { PublicationProcessController } from './publication-process.controller.js';
 import {WorkersController} from './workers.controller.js';
+import {StorageController} from './storage.controller.js';
 import {WorkerGatewayService} from './worker-gateway.service.js';
 import {WorkerGatewayController} from './worker-gateway.controller.js';
 import { HealthController } from "./health.controller.js";
@@ -30,7 +31,7 @@ import { WebAssetsController } from "./web-assets.controller.js";
 
 @Module({
   controllers: [
-    WorkerGatewayController,HealthController, TwitchController, OperationsController, ShortsController, PublicationProcessController, WorkersController, AuthController, CatalogController, JobsController,
+    StorageController,WorkerGatewayController,HealthController, TwitchController, OperationsController, ShortsController, PublicationProcessController, WorkersController, AuthController, CatalogController, JobsController,
     MediaController, DiscoveryController, PlatformsController, WebAssetsController,
   ],
   providers: [

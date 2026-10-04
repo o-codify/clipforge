@@ -6,6 +6,7 @@ import type {PayloadOf,QUEUES} from '@clipforge/jobs';
 import type {Context} from './context.js';
 import {fetchVod,type JobReport} from './handlers.js';
 import type {ClipData,RunData} from './media-task-data.js';
+import {releaseClip} from './media-storage.js';
 async function audioDuration(file:string){
   const probe=await runMediaCommand('ffprobe',['-v','error','-select_streams','a:0','-show_entries','stream=duration','-of','json',file],30000);
   return Number(JSON.parse(probe.stdout).streams?.[0]?.duration)||0;
@@ -36,6 +37,7 @@ export async function restoreAudio(ctx:Context,payload:PayloadOf<typeof QUEUES.r
     if(result.code!==0||!output||Math.abs(output.duration-duration)>.1||Math.abs(await audioDuration(file)-duration)>.1)throw new Error('Не удалось восстановить полную звуковую дорожку');
     await ctx.remote.uploadClip(id,file);
     await ctx.remote.call('original-audio.save',{sourceClipId:sourceId,id,version,runId:newRunId(new Date()),file:'clip.mp4',sizeBytes:(await stat(file)).size});
+    await releaseClip(ctx,file);await releaseClip(ctx,source);
     results.push(id);
   }
   return {clips:results.length,clipIds:results,audioMode:'original'};

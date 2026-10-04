@@ -27,15 +27,20 @@ async function main(){
     [QUEUES.pipeline]:runPipeline as Handler,[QUEUES.preparePreview]:preparePreview as Handler,[QUEUES.prepareBatchVod]:preparePreview as Handler,
     [QUEUES.fetchVod]:fetchVod as Handler,[QUEUES.transcribeVod]:transcribeVod as Handler,[QUEUES.analyzeVod]:analyzeVod as Handler,[QUEUES.facecamVod]:facecamVod as Handler,
     [QUEUES.inspectAds]:inspectAds as Handler,[QUEUES.renderRun]:renderRun as Handler,[QUEUES.renderVariant]:renderRun as Handler,[QUEUES.cleanClip]:cleanClip as Handler,[QUEUES.restoreAudio]:restoreAudio as Handler};
+  let output:unknown={},failure:unknown;
   try{const handler=handlers[task.queue];if(!handler&&task.queue!==QUEUES.archiveVod)throw new Error('Неизвестное задание');
     const data=PAYLOADS[task.queue as QueueName].parse(task.payload);
-    const output=handler?await handler(ctx,data as never,{id:String(task.payload.batchId??task.jobId),log,cancelled:async()=>false}):{};
-    await ctx.close();
+    output=handler?await handler(ctx,data as never,{id:String(task.payload.batchId??task.jobId),log,cancelled:async()=>false}):{};
+  }catch(error){failure=error;}
+  finally{await ctx.close();}
+  try{
+    // Failed/partially rejected jobs also flush checkpoints and discard outputs.
     const archived=await remote.archiveWorkspace(ctx.config.data,ctx.config.out,log);
     if(process.env.WORKER_LEGACY_DATA&&process.env.WORKER_LEGACY_OUT){const old=await remote.archiveWorkspace(process.env.WORKER_LEGACY_DATA,process.env.WORKER_LEGACY_OUT,log);archived.files+=old.files;archived.freedBytes+=old.freedBytes;}
     log(`Сохранено в S3: ${archived.files}; освобождено ${Math.round(archived.freedBytes/1048576)} МБ`);
-    process.send?.({type:'result',ok:true,output:task.queue===QUEUES.archiveVod?archived:output??{}});
-  }catch(error){process.send?.({type:'result',ok:false,error:String(error).slice(0,2000)});}
-  finally{await ctx.close();process.disconnect?.();}
+    if(task.queue===QUEUES.archiveVod)output=archived;
+  }catch(error){failure??=error;log(`Очистка кэша будет повторена: ${String(error).slice(0,300)}`);}
+  process.send?.(failure?{type:'result',ok:false,error:String(failure).slice(0,2000)}:{type:'result',ok:true,output:output??{}});
+  process.disconnect?.();
 }
 main().catch(()=>process.exit(1));

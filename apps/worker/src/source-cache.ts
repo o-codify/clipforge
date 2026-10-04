@@ -40,7 +40,7 @@ export async function cachedVods(data:string,out:string){
       for(const vod of await readdir(join(root,game.name,streamer.name),{withFileTypes:true}))if(vod.isDirectory()&&!vod.isSymbolicLink()&&/^v\d+$/.test(vod.name)&& (await files(join(root,game.name,streamer.name,vod.name))).length)found.add(vod.name);
   return [...found];
 }
-export async function archiveWorkspace(request:Request,data:string,out:string,vodId:string,kbps:number,log:(message:string)=>void,beforeArchive?:(name:string,file:string)=>Promise<void>){
+export async function archiveWorkspace(request:Request,data:string,out:string,vodId:string,kbps:number,log:(message:string)=>void,beforeArchive?:(name:string,file:string)=>Promise<boolean|void>){
   if(!/^v\d+$/.test(vodId))throw new Error('Invalid VOD');let bytes=0,count=0;
   const archive=async(root:string,prefix:string)=>{
     if(!await stat(root).catch(()=>null))return;
@@ -50,9 +50,8 @@ export async function archiveWorkspace(request:Request,data:string,out:string,vo
       const before=await stat(file,{bigint:true}).catch(error=>{if(error.code==='ENOENT')return null;throw error;});if(!before)continue;
       if(before.size){
         const name=prefix+'/'+relative(boundary,file).split(sep).join('/');
-        log(`Сохранение в S3: ${name}`);
-        await beforeArchive?.(name,file);
-        await uploadObject(request,file,{kind:'cache',name},kbps);
+        const keep=await beforeArchive?.(name,file);
+        if(keep!==false){log(`Сохранение в S3: ${name}`);await uploadObject(request,file,{kind:'cache',name},kbps);}
       }
       const after=await stat(file,{bigint:true}),actual=await realpath(file);
       if(!within(boundary,actual)||after.size!==before.size||after.mtimeNs!==before.mtimeNs)throw new Error('Файл изменился; локальная копия сохранена');

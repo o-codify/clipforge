@@ -48,9 +48,9 @@ export class MediaTaskRepository {
       case 'cache.clips': return db.select({id:clips.id,runId:clips.runId,version:clips.version,file:clips.file}).from(clips).where(and(eq(clips.vodId,v.id),isNull(clips.mediaStorage)));
       case 'cache.attach': {
         const m=z.object({id,size:number.int().positive()}).strict().parse(input),{clip}=await this.clip(m.id);
-        if(!clip||(clip.sizeBytes&&clip.sizeBytes!==m.size))throw new Error('Размер исходного клипа изменился');
+        if(!clip||clip.archivedAt||clip.state==='blocked'||(clip.sizeBytes&&clip.sizeBytes!==m.size))throw new Error('Исходный клип отклонён или изменился');
         const mediaStorage=await this.assets(m.id);
-        await db.update(clips).set({mediaStorage,sizeBytes:m.size}).where(and(eq(clips.id,m.id),isNull(clips.mediaStorage)));return {};
+        await db.update(clips).set({mediaStorage,sizeBytes:m.size}).where(eq(clips.id,m.id));return {};
       }
       case 'game.ensure': {const {title}=z.object({title:z.string().max(200)}).parse(input);const clean=title.trim();if(!clean)return null;
         const slug=safeName(clean);if(slug==='.'||slug==='..')throw new Error('Неверное название игры');await db.insert(games).values({slug,title:clean}).onConflictDoNothing();return slug;}

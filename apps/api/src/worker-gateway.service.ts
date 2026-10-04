@@ -14,6 +14,7 @@ import {z} from 'zod';
 import {CONFIG,DATABASE,REPO_ROOT,type ApiConfig} from './config.js';
 import {JobsService} from './jobs/jobs.service.js';
 import {WorkerObjects} from './worker-objects.js';
+import {cacheManifest} from '@clipforge/worker/media-retention';
 
 const hash=(s:string|Buffer)=>createHash('sha256').update(s).digest('hex');
 const opaque=z.string().regex(/^[a-zA-Z0-9_-]{43,128}$/);
@@ -91,7 +92,8 @@ export class WorkerGatewayService implements OnModuleDestroy {
     if(!this.storage||w.policy.profile==='catalog')return {};
     for(const vodId of new Set(m.vodIds)){
       if(!(await this.db.execute(sql`select 1 from vods where id=${vodId}`)).length)continue;
-      await this.jobs.enqueue(QUEUES.archiveVod,{vodId,workerId:w.workerId});
+      const job=await this.jobs.enqueue(QUEUES.archiveVod,{vodId,workerId:w.workerId});
+      if(job.id)await this.db.execute(sql`update jobs.job set priority=10 where id=${job.id}::uuid and state in ('created','retry')`);
     }return {};
   }
   async heartbeat(auth:string|undefined,raw:unknown){const w=await this.identity(auth);
@@ -177,8 +179,10 @@ export class WorkerGatewayService implements OnModuleDestroy {
     });
   }
   async operation(auth:string|undefined,leaseId:string,raw:unknown){const m=z.object({operation:z.string().max(50),input:z.unknown()}).strict().parse(raw);
-    return this.withLease(auth,leaseId,(repo,db,scope)=>scope.queue===QUEUES.indexChannel
-      ?new CatalogTaskRepository(db,scope).call(m.operation,m.input):repo.call(m.operation,m.input));}
+    return this.withLease(auth,leaseId,(repo,db,scope)=>{
+      if(m.operation==='cache.plan'){if(!this.storage||!scope.vodId)throw new ConflictException('Хранилище недоступно');return cacheManifest(db,this.storage,scope.vodId);}
+      return scope.queue===QUEUES.indexChannel?new CatalogTaskRepository(db,scope).call(m.operation,m.input):repo.call(m.operation,m.input);
+    });}
   async object(auth:string|undefined,leaseId:string,action:'start'|'part'|'complete'|'list'|'read',raw?:unknown,id?:string){
     return this.withLease(auth,leaseId,async(_,db,scope)=>{
       if(!this.storage||!scope.vodId)throw new ConflictException('Хранилище недоступно');

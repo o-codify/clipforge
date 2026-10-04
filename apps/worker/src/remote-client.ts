@@ -7,8 +7,9 @@ import {Readable} from 'node:stream';
 import {pacedStream,waitForResources} from '@clipforge/resources';
 import {runMediaCommand} from '@clipforge/pipeline';
 import type {RemoteMediaAccess} from './remote-access.js';
-import {uploadObject} from './object-transfer.js';
+import {uploadObject,fileDigest} from './object-transfer.js';
 import {restoreSources,archiveWorkspace} from './source-cache.js';
+import {cacheClip,type CacheManifest} from '@clipforge/storage';
 
 export type RemoteIdentity={origin:string;secret:string;workerId:string};
 export type Assignment={leaseId:string;jobId:string;queue:string;payload:Record<string,unknown>;
@@ -36,13 +37,17 @@ export class RemoteTaskAccess implements RemoteMediaAccess {
   }
   restoreSources(root:string,select:(name:string)=>boolean){return restoreSources((path,body,timeout)=>this.client.request(this.path(path),body,timeout),root,select,this.assignment.policy.downloadKbps);}
   async archiveWorkspace(data:string,out:string,log:(message:string)=>void){
-    const clips=await this.call<{id:string;runId:string;version:string;file:string}[]>('cache.clips'),paths=new Map<string,string>();
-    for(const c of clips){paths.set(`out/${c.runId}/${c.file}`,c.id);for(const kind of ['original-audio','cleaned','protected'])paths.set(`out/${kind}/${c.version}/${c.file}`,c.id);}
+    const manifest=await this.call<CacheManifest>('cache.plan');
     return archiveWorkspace((path,body,timeout)=>this.client.request(this.path(path),body,timeout),data,out,String(this.assignment.payload.vodId),this.assignment.policy.uploadKbps,log,async(name,file)=>{
-      const id=paths.get(name);if(!id)return;
-      await this.uploadClip(id,file);await this.call('cache.attach',{id,size:(await stat(file)).size});
-      // The sidecar has its own verified S3 object and catalog reference.
-      await rm(file+'.jpg',{force:true});paths.delete(name);
+      if(name.startsWith('data/'))return manifest.neededVods.includes(String(this.assignment.payload.vodId))&&!/\.(?:part|temp|pending)(?:\.|$)|\/source\.ts$/.test(name);
+      const c=cacheClip('/'+String(this.assignment.payload.vodId)+'/'+name.slice(4),manifest.clips);
+      if(!c?.keep)return false;
+      if(name.endsWith('.jpg'))return !!c.cloud?false:undefined;
+      // Reattach missing legacy objects, but never store a second cache copy of
+      // an accepted output, or upload an archived/rejected render.
+      if(!c.cloud){await this.uploadClip(c.id,file);await this.call('cache.attach',{id:c.id,size:(await stat(file)).size});}
+      else if((await stat(file)).size!==c.cloud.size||await fileDigest(file)!==c.cloud.sha256)throw new Error('Локальный клип отличается от S3');
+      await rm(file+'.jpg',{force:true});return false;
     });
   }
   async uploadClip(id:string,file:string){

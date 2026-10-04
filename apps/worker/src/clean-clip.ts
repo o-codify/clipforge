@@ -7,7 +7,7 @@ import { newRunId, probeMedia, Workspace, computeGrid, renderClip, defaultStyle,
 import type { PayloadOf, QUEUES } from '@clipforge/jobs';
 import type { Context } from './context.js';
 import type { JobReport } from './handlers.js';
-import { storeClip } from './media-storage.js';
+import { storeClip,releaseClip } from './media-storage.js';
 import {ensureAdProfile} from './ad-protection.js';
 import {fetchVod} from './handlers.js';
 import type {ClipData,RunData,VodData,TranscriptData} from './media-task-data.js';
@@ -62,6 +62,7 @@ export async function cleanClip(ctx:Context, payload:PayloadOf<typeof QUEUES.cle
     await db.insert(clips).values({...copy,id,runId,version:hash,file:'clip.mp4',mediaStorage,
       sizeBytes:(await stat(file)).size,state:'draft',blockedReason:null});
   });
+  await releaseClip(ctx,file);
   report.log('Новая версия готова. Проверьте скрытие рекламы перед публикацией');
   return {clipId:id,sourceClipId:row.clip.id};
 }
@@ -125,6 +126,7 @@ async function rebuildProtectedClip(ctx:Context,payload:PayloadOf<typeof QUEUES.
     await db.insert(clips).values({...copy,id,runId,version:hash,file:'clip.mp4',mediaStorage:storage,
       sizeBytes:(await stat(file)).size,state:row.run.settings.testBatch?'draft':'ready',blockedReason:null});
   });
+  await releaseClip(ctx,file);
   report.log('Клип обработан по карте эфира. Ручная проверка рекламы не требуется');
   return {clipId:id,sourceClipId:row.clip.id};
 }

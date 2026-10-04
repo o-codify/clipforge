@@ -71,7 +71,7 @@ import {
 import { SIGNAL_SERIES } from "@clipforge/contracts";
 
 import { applyFeedback } from "./feedback.js";
-import { storeClip } from "./media-storage.js";
+import { storeClip,releaseClip } from "./media-storage.js";
 import type { Context } from "./context.js";
 import type {VodData,RunData,ClipData,TranscriptData,RenderSnapshot} from './media-task-data.js';
 
@@ -889,6 +889,7 @@ export async function renderRun(
     if(ctx.remote)await ctx.remote.call('clip.save',{clip:clipValues,proof:verifications[id]});
     else await ctx.db.insert(clipsTable).values(clipValues).onConflictDoUpdate({ target: clipsTable.id, set: { runId, file: name, mediaStorage, sizeBytes: size,
       state:payload.testBatch || (adsSettings.enabled&&!protection.ads.automatic)?'draft':'ready', archivedAt:null, archiveReason:null } });
+    await releaseClip(ctx,file);
     rendered += 1;
     accepted += 1;
     replaced += await dropSuperseded(ctx, row.id, segment, version, report);

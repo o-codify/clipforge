@@ -1,10 +1,15 @@
 import { readFile,stat } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { PlatformClient } from './client.js';
+import {cleanLocalCache,type CacheManifest} from '@clipforge/storage';
+import {join,resolve} from 'node:path';
 
 export const HELP=`ClipForge — управление через API платформы
 
 pnpm cf accounts                         подключённые каналы
+pnpm cf storage-cleanup --root <project> [--apply]
+                                        проверить/очистить локальные медиа по каталогу и S3
+pnpm cf storage-gc [--apply]             проверить/удалить неактуальные объекты S3
 pnpm cf batch-publications               очередь публикации подборок
 pnpm cf pace-batch <jobId> --channel UC… [--interval 10] [--daily-limit 100]
                                         публично, с интервалом до лимита YouTube; --daily-limit задаёт свой предел
@@ -59,10 +64,11 @@ pnpm cf draft-clip <clipId>              вернуть клип в чернов
 Повтор publish возвращает существующую публикацию, а не загружает её заново.
 `;
 
-type Plan={path:string;method?:string;body?:unknown;waitSeconds?:number};
+type Plan={path:string;method?:string;body?:unknown;waitSeconds?:number;localRoot?:string;apply?:boolean};
 export function parseCommand(args:string[]) {
   return parseArgs({args,allowPositionals:true,strict:true,options:{
     help:{type:'boolean'},url:{type:'string'},streamer:{type:'string'},page:{type:'string'},limit:{type:'string'},
+    root:{type:'string'},apply:{type:'boolean'},
     metadata:{type:'string'},regions:{type:'string'},timeout:{type:'string'},
     count:{type:'string'},fresh:{type:'boolean'},audio:{type:'string'},'test-batch':{type:'boolean'},
     ads:{type:'string'},all:{type:'boolean'},vods:{type:'string'},clips:{type:'string'},
@@ -83,17 +89,20 @@ async function jsonFile(path:string|undefined) {
 export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promise<Plan> {
   const [command,target,...extra]=parsed.positionals;
   const options=parsed.values;
-  const noTarget=['accounts','clips','analytics','jobs','active','batch-publications'];
+  const noTarget=['accounts','clips','analytics','jobs','active','batch-publications','storage-cleanup','storage-gc'];
   const optionalTarget=['youtube-check','refresh'];
   const targets=['clip','run','vod','streamer','streamer-channel','streamer-audio','vod-audio','streamer-ads','vod-ads','original-audio','render','prepare','prepare-streamer','preview','publish','publication','job','cancel','resume-batch','wait','cleanup','inspect-ads','approve-clip','draft-clip','pace-batch','pause-batch'];
   if(!command||![...noTarget,...optionalTarget,...targets].includes(command))throw new Error('Неизвестная команда. Используйте pnpm cf --help');
   if(extra.length||(noTarget.includes(command)&&target)||(targets.includes(command)&&!target))throw new Error('Неверное число аргументов команды');
   const allowed:Record<string,string[]>={clips:['streamer','limit'],'original-audio':['clips'],render:['count','fresh','audio','test-batch'],prepare:['count','audio','game','from','to'],'streamer-channel':['channel'],'prepare-streamer':['count','audio','vods'],'streamer-ads':['ads','all'],'vod-ads':['ads'],'streamer-audio':['audio'],'vod-audio':['audio'],analytics:['page'],publish:['metadata'],cleanup:['regions'],wait:['timeout']};
   allowed['pace-batch']=['channel','interval','daily-limit'];
+  allowed['storage-cleanup']=['root','apply'];allowed['storage-gc']=['apply'];
   for(const key of Object.keys(options))if(!['url','help',...(allowed[command]??[])].includes(key))throw new Error(`Параметр --${key} не относится к команде ${command}`);
   const id=encodeURIComponent(target??'');
   switch(command) {
     case 'accounts':return {path:'/api/platforms'};
+    case 'storage-cleanup':if(!options.root)throw new Error('Укажите --root проекта');return {path:'/api/storage/manifest',localRoot:resolve(options.root),apply:options.apply??false};
+    case 'storage-gc':return {path:'/api/storage/cleanup',method:'POST',body:{apply:options.apply??false}};
     case 'batch-publications':return {path:'/api/platforms/batches'};
     case 'pause-batch':return {path:`/api/platforms/batches/${id}`,method:'DELETE'};
     case 'pace-batch': {
@@ -170,6 +179,7 @@ export async function commandPlan(parsed:ReturnType<typeof parseCommand>):Promis
 }
 
 export async function execute(client:PlatformClient,plan:Plan) {
+  if(plan.localRoot){const manifest=await client.request<CacheManifest>(plan.path);return {result:await cleanLocalCache(join(plan.localRoot,'data'),join(plan.localRoot,'out'),manifest,plan.apply),exitCode:0};}
   if(!plan.waitSeconds)return {result:await client.request(plan.path,plan.method,plan.body),exitCode:0};
   const deadline=Date.now()+plan.waitSeconds*1000;
   let delay=5000;

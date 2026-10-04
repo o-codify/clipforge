@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 import { pipeline } from 'node:stream/promises';
 import { createHash } from 'node:crypto';
 import { pacedStream, waitForResources, resourceRequest, ResourcePauseError } from '@clipforge/resources';
-import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export class MediaStorage {
@@ -150,7 +150,25 @@ export class MediaStorage {
     if (!key.startsWith(`${this.prefix}/checks/`)) throw new Error("Only a temporary check object can be removed here");
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
+
+  async *mediaObjects() {
+    for(const kind of ['clips','sources']) {
+      let token:string|undefined;
+      do {
+        const page=await this.client.send(new ListObjectsV2Command({Bucket:this.bucket,Prefix:`${this.prefix}/${kind}/`,ContinuationToken:token}));
+        for(const object of page.Contents??[])if(object.Key)yield {key:object.Key,size:object.Size??0,modified:object.LastModified??new Date()};
+        token=page.IsTruncated?page.NextContinuationToken:undefined;
+      }while(token);
+    }
+  }
+  async removeMedia(key:string) {
+    this.checkKey(key);
+    if(!['clips','sources'].some(kind=>key.startsWith(`${this.prefix}/${kind}/`)))throw new Error('Only generated media can be removed');
+    await this.client.send(new DeleteObjectCommand({Bucket:this.bucket,Key:key}));
+  }
 }
+
+export * from './local-cache.js';
 
 export function storageFromEnv(env: NodeJS.ProcessEnv = process.env): MediaStorage | null {
   if (!env.S3_ENDPOINT && !env.S3_BUCKET) return null;
