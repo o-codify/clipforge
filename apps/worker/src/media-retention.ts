@@ -24,8 +24,10 @@ export async function cacheManifest(db:Database,storage:MediaStorage,vodId?:stri
   })));
   const sourceRows=await db.execute<CacheManifest['sources'][number]&{key:string}>(sql`select vod_id as "vodId",name,size::float as size,sha256,storage_key as key from vod_source_assets ${vodId?sql`where vod_id=${vodId}`:sql``}`);
   const sources:CacheManifest['sources']=[];
-  for(const row of sourceRows){if(!activity.neededVods.includes(row.vodId)||!row.name.startsWith('data/'))continue;
-    const head=await storage.head(row.key);if(head?.ContentLength===row.size&&head.Metadata?.sha256===row.sha256){const {key,...asset}=row;sources.push(asset);}}
+  const neededSources=sourceRows.filter(row=>activity.neededVods.includes(row.vodId)&&row.name.startsWith('data/'));
+  for(let i=0;i<neededSources.length;i+=4)await Promise.all(neededSources.slice(i,i+4).map(async row=>{
+    const head=await storage.head(row.key);if(head?.ContentLength===row.size&&head.Metadata?.sha256===row.sha256){const {key,...asset}=row;sources.push(asset);}
+  }));
   return {...activity,clips:result,sources,generatedAt:new Date().toISOString()};
 }
 

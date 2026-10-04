@@ -12,6 +12,8 @@ const API = process.env.API_URL ?? "http://127.0.0.1:8420";
 
 const config: NextConfig = {
   devIndicators: false,
+  // S3 verification and bulk retention operations may outlast the 30s proxy default.
+  experimental: {proxyTimeout: 300_000},
   deploymentId: process.env.RELEASE_SHA,
   transpilePackages: ["@clipforge/assistant"],
   distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
