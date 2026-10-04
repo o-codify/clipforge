@@ -99,6 +99,9 @@ try{
     ('v100_missing','v100','run','c','missing.mp4','ready',null,null)`;
   const activeRoot=join(data,'games','game','streamer','v200');await mkdir(activeRoot,{recursive:true});await writeFile(join(activeRoot,'video.mp4'),'active');
   await storage.uploadFile('fixture/sources/v200/active',accepted,'video/mp4');
+  const unavailable=await cacheManifest(db,{head:async()=>{throw Error('S3 unavailable');}});
+  assert.equal(unavailable.verificationComplete,false);
+  assert(unavailable.clips.every(c=>c.cloud===null),'S3 failures must never authorize deleting an accepted local copy');
   const manifest=await cacheManifest(db,storage);
   const preview=await cleanLocalCache(data,out,manifest,false);assert.ok(preview.files>=3);assert.equal(await readFile(accepted,'utf8'),'accepted');
   // A stale/different file is not mistaken for its accepted cloud object.

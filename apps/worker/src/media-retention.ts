@@ -11,6 +11,9 @@ export async function neededMediaVods(db:Database) {
 }
 export async function cacheManifest(db:Database,storage:MediaStorage,vodId?:string):Promise<CacheManifest> {
   const activity=await neededMediaVods(db);
+  // An unavailable object is never proof that its local copy can be deleted.
+  let verificationComplete=true;
+  const head=async(key:string)=>verificationComplete?storage.head(key,8000).catch(()=>{verificationComplete=false;return null;}):null;
   const clips=await db.execute<CacheClip&{media:{videoKey:string;posterKey:string}|null}>(sql`select c.id,c.vod_id as "vodId",c.run_id as "runId",c.version,c.file,r.out_dir as "outDir",c.media_storage as media,
     ((c.archived_at is null and c.state<>'blocked') or exists(select 1 from publications p where p.clip_id=c.id and p.media_id is not null)) as keep
     from clips c join runs r on r.id=c.run_id ${vodId?sql`where c.vod_id=${vodId}`:sql``}`);
@@ -18,7 +21,7 @@ export async function cacheManifest(db:Database,storage:MediaStorage,vodId?:stri
   // Bounded concurrency and only HEAD: no media download or bucket credentials.
   for(let i=0;i<clips.length;i+=4)result.push(...await Promise.all(clips.slice(i,i+4).map(async c=>{
     let cloud:CacheClip['cloud']=null;
-    if(c.keep&&c.media){const [video,poster]=await Promise.all([storage.head(c.media.videoKey),storage.head(c.media.posterKey)]);
+    if(c.keep&&c.media){const [video,poster]=await Promise.all([head(c.media.videoKey),head(c.media.posterKey)]);
       if(video?.ContentLength&&video.Metadata?.sha256&&poster?.ContentLength)cloud={size:video.ContentLength,sha256:video.Metadata.sha256};}
     const {media,...row}=c;return {...row,cloud};
   })));
@@ -26,9 +29,9 @@ export async function cacheManifest(db:Database,storage:MediaStorage,vodId?:stri
   const sources:CacheManifest['sources']=[];
   const neededSources=sourceRows.filter(row=>activity.neededVods.includes(row.vodId)&&row.name.startsWith('data/'));
   for(let i=0;i<neededSources.length;i+=4)await Promise.all(neededSources.slice(i,i+4).map(async row=>{
-    const head=await storage.head(row.key);if(head?.ContentLength===row.size&&head.Metadata?.sha256===row.sha256){const {key,...asset}=row;sources.push(asset);}
+    const proof=await head(row.key);if(proof?.ContentLength===row.size&&proof.Metadata?.sha256===row.sha256){const {key,...asset}=row;sources.push(asset);}
   }));
-  return {...activity,clips:result,sources,generatedAt:new Date().toISOString()};
+  return {...activity,clips:result,sources,generatedAt:new Date().toISOString(),verificationComplete};
 }
 
 /** Catalog references, not upload history, determine retention. Rejected and

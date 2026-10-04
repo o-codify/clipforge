@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {resolve,join,relative,isAbsolute,sep} from 'node:path';
 
 export type CacheClip={id:string;vodId:string;runId:string;version:string;file:string;outDir:string;keep:boolean;cloud:{size:number;sha256:string}|null};
-export type CacheManifest={activeVods:string[];neededVods:string[];clips:CacheClip[];sources:{vodId:string;name:string;size:number;sha256:string}[];generatedAt:string};
+export type CacheManifest={activeVods:string[];neededVods:string[];clips:CacheClip[];sources:{vodId:string;name:string;size:number;sha256:string}[];generatedAt:string;verificationComplete?:boolean};
 const inside=(root:string,file:string)=>{const p=relative(root,file);return !!p&&p!=='..'&&!p.startsWith('..'+sep)&&!isAbsolute(p);};
 export function cacheClip(name:string,clips:CacheClip[]) {
   const path='/'+name.replaceAll('\\','/');
@@ -19,7 +19,7 @@ export function cacheClip(name:string,clips:CacheClip[]) {
  * VOD or unverified sole copy of an accepted clip may be removed. */
 export async function cleanLocalCache(data:string,out:string,manifest:CacheManifest,apply=false) {
   if(Date.now()-Date.parse(manifest.generatedAt)>120000)throw new Error('Refresh the storage manifest before cleanup');
-  const result={files:0,bytes:0,kept:0,reasons:{} as Record<string,number>};
+  const result={files:0,bytes:0,kept:0,verificationComplete:manifest.verificationComplete??true,reasons:{} as Record<string,number>};
   const digest=async(file:string)=>{const h=createHash('sha256');for await(const b of createReadStream(file))h.update(b);return h.digest('hex');};
   for(const [configured,kind] of [[join(data,'games'),'data'],[out,'out']] as const){
     const info=await lstat(configured).catch(()=>null);if(!info)continue;if(info.isSymbolicLink())throw new Error('Symlink cache root');

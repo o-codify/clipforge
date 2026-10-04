@@ -19,9 +19,9 @@ export class MediaStorage {
     if (!key.startsWith(`${this.prefix}/`) || key.includes("..")) throw new Error("Object is outside the ClipForge namespace");
   }
 
-  async head(key:string) {
+  async head(key:string,timeoutMs?:number) {
     this.checkKey(key);
-    return this.client.send(new HeadObjectCommand({Bucket:this.bucket,Key:key})).catch(error=>{
+    return this.client.send(new HeadObjectCommand({Bucket:this.bucket,Key:key}),timeoutMs?{abortSignal:AbortSignal.timeout(timeoutMs)}:undefined).catch(error=>{
       if(error.$metadata?.httpStatusCode===404)return null;throw error;
     });
   }
