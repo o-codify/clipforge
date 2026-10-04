@@ -49,6 +49,20 @@ class ContainerResources(unittest.TestCase):
             free=resources.memory_available(8*1024**3, 4*1024**3, directory, 32*1024**3)
             self.assertAlmostEqual(free, 1.6*1024**3, delta=1)
 
+    def test_active_model_file_cache_does_not_restart_a_fitting_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); mib=1048576
+            (root/'memory.current').write_text(str(5900*mib))
+            (root/'memory.stat').write_text('\n'.join(f'{k} {v*mib}' for k,v in {
+                'anon':3700,'file':2200,'inactive_file':250,'active_file':1950,
+                'file_mapped':128,'file_dirty':2,'file_writeback':1,'shmem':0}.items()))
+            free=resources.memory_available(6144*mib,24000*mib,directory,28000*mib)
+            self.assertEqual(free,2313*mib)
+            self.assertGreater(free,614.4*mib)
+            # Actual resident/dirty/shared memory must still trigger yielding.
+            (root/'memory.stat').write_text('file 209715200\nfile_mapped 104857600\nfile_dirty 52428800\nshmem 52428800')
+            self.assertLess(resources.memory_available(6144*mib,24000*mib,directory,28000*mib),614.4*mib)
+
     def test_model_resume_uses_persisted_revision_and_checks_length(self):
         from clipforge_worker.model_cache import provision_model
         with tempfile.TemporaryDirectory() as directory:

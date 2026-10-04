@@ -42,7 +42,18 @@ def memory_available(limit, host_available, root='/sys/fs/cgroup', host_memory=N
     used = read(root, 'memory.current') or read(root, 'memory/memory.usage_in_bytes')
     stats = read(root, 'memory.stat') or read(root, 'memory/memory.stat')
     values = dict(line.split() for line in stats.splitlines() if len(line.split()) == 2)
-    reclaimable = int(values.get('inactive_file', values.get('total_inactive_file', '0')))
+    # Reading model weights leaves clean, active page-cache pages even when the
+    # engine copied weights into anonymous memory. Linux can reclaim that cache;
+    # treating it as resident model memory caused an endless load/kill loop.
+    cache = values.get('file', values.get('total_cache'))
+    if cache is not None:
+        reclaimable = max(0, int(cache)
+            - int(values.get('shmem', values.get('total_shmem', '0')))
+            - int(values.get('file_mapped', values.get('total_mapped_file', '0')))
+            - int(values.get('file_dirty', values.get('total_dirty', '0')))
+            - int(values.get('file_writeback', values.get('total_writeback', '0'))))
+    else:
+        reclaimable = int(values.get('inactive_file', values.get('total_inactive_file', '0')))
     host_reserve = (host_memory or psutil.virtual_memory().total) * .1
     available = max(0, host_available - max(0, host_reserve - limit * .1))
     return min(available, max(0, limit - int(used) + reclaimable)) if used.isdigit() else available

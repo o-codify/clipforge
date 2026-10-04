@@ -30,7 +30,15 @@ REVIEW_VERSION = 2
 CROP_REVIEW_VERSION = 1
 # The desktop governor lowers priority and adapts the process tree to available
 # resources. A small inference pool can use spare CPU without monopolizing it.
-CPU_THREADS = min(8, max(2, (os.cpu_count() or 2) // 2))
+def inference_threads():
+    # The supervisor sets this from the container quota, not the host core count.
+    value = os.environ.get('SPEECH_CPU_THREADS') or os.environ.get('OMP_NUM_THREADS')
+    if value and value.isdigit():
+        return min(8, max(1, int(value)))
+    return min(8, max(2, (os.cpu_count() or 2) // 2))
+
+
+CPU_THREADS = inference_threads()
 SCHEMA = {'type': 'object', 'required': ['uncertain', 'regions'], 'additionalProperties': False,
     'properties': {'uncertain': {'type': 'boolean'}, 'regions': {'type': 'array', 'items': {
         'type': 'object', 'required': ['label', 'box'], 'additionalProperties': False,

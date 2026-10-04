@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 import cv2
 import numpy as np
-from clipforge_worker.ad_profile import profile_ads, source_info, validate_vision, covered_by, persistent_regions, request, SAMPLES
+from clipforge_worker.ad_profile import profile_ads, source_info, validate_vision, covered_by, persistent_regions, request, inference_threads, SAMPLES
 from clipforge_worker.__main__ import op_prepare_media
 
 
@@ -17,6 +17,10 @@ class Reporter:
 
 
 class AdProfileTest(unittest.TestCase):
+    def test_vision_uses_supervisor_cpu_budget_instead_of_host_cores(self):
+        with patch.dict('os.environ',{'SPEECH_CPU_THREADS':'1','OMP_NUM_THREADS':'8'}),patch('os.cpu_count',return_value=32):
+            self.assertEqual(inference_threads(),1)
+
     def test_local_engine_error_preserves_reason_and_never_returns_a_clean_result(self):
         for body, expected in [(b'{"error":"model requires more memory"}', 'model requires more memory'),
                                (b'runner stopped', 'runner stopped'),
