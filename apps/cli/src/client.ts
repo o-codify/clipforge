@@ -21,7 +21,7 @@ export class PlatformClient {
     let response:Response;
     try {
       response=await fetch(new URL(path,this.origin),{
-        method,redirect:'error',signal:AbortSignal.timeout(30_000),
+        method,redirect:'error',signal:AbortSignal.timeout(path.startsWith('/api/storage/')?300_000:30_000),
         headers:{Accept:'application/json',...(body===undefined?{}:{'Content-Type':'application/json'}),...(this.cookie?{Cookie:this.cookie}:{})},
         ...(body===undefined?{}:{body:JSON.stringify(body)}),
       });
