@@ -10,10 +10,11 @@ type Window={jobId:string;vodId:string;start:number;end:number;state:'reserved'|
 type Source={id:string;chapters:{title:string;start:number;end:number}[]};
 // Fifteen-minute work units bound memory and downloads, not the number of clips
 // or broadcasts in a feed. Finished windows persist beyond pg-boss retention.
-export function feedWindows(sources:Source[],game:string){
+export function feedWindows(sources:Source[],game:string,initial?:{startVodId:string;startOffsetSeconds?:number}){
   return sources.flatMap(v=>gameWindows(v.chapters,game).flatMap(c=>{
     const ranges:{vodId:string;start:number;end:number}[]=[];
-    for(let start=c.start;start<c.end;start+=900)if(c.end-start>=15)ranges.push({vodId:v.id,start,end:Math.min(c.end,start+900)});
+    const first=v.id===initial?.startVodId?Math.max(c.start,initial.startOffsetSeconds??0):c.start;
+    for(let start=first;start<c.end;start+=900)if(c.end-start>=15)ranges.push({vodId:v.id,start,end:Math.min(c.end,start+900)});
     return ranges;
   }));
 }
@@ -61,7 +62,7 @@ export async function replenishPublicationFeeds(ctx:Context,boss:Pick<PgBoss,'se
       if(wait&&(queued?.n??0)>0){await state('youtube-limit',wait.message);return null;}
       const sources=await tx.execute<Source>(sql`select id,chapters from vods where streamer=${p.login}
         and published_at>=${p.since}::timestamptz and duration>15 and jsonb_array_length(chapters)>0 order by published_at desc,id`);
-      const available=feedWindows(sources,p.game).find(w=>!saved.some(s=>s.key===windowKey(p.id,w)));
+      const available=feedWindows(sources,p.game,p).find(w=>!saved.some(s=>s.key===windowKey(p.id,w)));
       if(!available){await state('waiting-streams');return null;}
       const w:Window={...available,jobId:randomUUID(),state:'reserved',createdAt:new Date().toISOString()},key=windowKey(p.id,w);
       const policy:BatchPublicationPolicy={jobId:w.jobId,login:p.login,channelId:p.channelId,enabled:true,intervalMinutes:p.intervalMinutes,

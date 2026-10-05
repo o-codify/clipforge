@@ -20,8 +20,8 @@ try{
     create table streamers(login text,display_name text,avatar text);create table games(slug text,title text);
     create table vods(id text,streamer text,published_at timestamptz,duration int,chapters jsonb);
     create table runs(id text,settings jsonb,finished_at timestamptz);
-    create table clips(id text,run_id text,archived_at timestamptz,state text);
-    create table publications(id text,clip_id text,platform text,account text,media_id text);
+    create table clips(id text,run_id text,archived_at timestamptz,state text,archive_reason text);
+    create table publications(id text,clip_id text,platform text,account text,media_id text,status text);
     create table remote_worker_leases(job_id uuid,state text);`);
   boss=new PgBoss({connectionString:url,schema:'jobs'});boss.on('error',()=>{});await boss.start();
   const channel='UCYW75tl-WiiRuG0YZQIdOnA';
@@ -51,9 +51,9 @@ try{
   const second=(await windows()).find(x=>x.value.state!=='done');
   await db.sql`update jobs.job set state='completed',completed_on=now() where id=${second.value.jobId}`;
   await db.sql`insert into runs values('r',${JSON.stringify({jobId:second.value.jobId})}::jsonb,now())`;
-  for(let i=0;i<20;i++)await db.sql`insert into clips values(${'c'+i},'r',null,'ready')`;
+  for(let i=0;i<20;i++)await db.sql`insert into clips(id,run_id,archived_at,state) values(${'c'+i},'r',null,'ready')`;
   await tick();assert.equal((await windows()).length,2,'buffer stops redundant preparation');
-  await db.sql`insert into publications values('p','c0','youtube',${channel},'video')`;
+  await db.sql`insert into publications(id,clip_id,platform,account,media_id) values('p','c0','youtube',${channel},'video')`;
   await tick();assert.equal((await windows()).length,3,'publishing refills the buffer');
   await api.configureFeed({...options,enabled:false});
   assert.equal((await db.sql`select count(*)::int n from platform_runtime where key like 'batch-publication:%' and value->>'enabled'='true'`)[0].n,0);
@@ -76,5 +76,27 @@ try{
   const retried=(await windows()).find(w=>w.value.vodId==='v200');
   assert.notEqual(retried.value.jobId,newest.value.jobId);assert.equal(retried.value.state,'submitted');
   assert.equal(feedWindows([{id:'v1',chapters:[{title:'Dota 2',start:0,end:1800}]}],'wardogs').length,0);
+  assert.deepEqual(feedWindows([{id:'v100',chapters},{id:'v200',chapters}], 'wardogs', {startVodId:'v100',startOffsetSeconds:2100}).filter(w=>w.vodId==='v100'),[
+    {vodId:'v100',start:2100,end:3000},{vodId:'v100',start:3000,end:3900},
+    {vodId:'v100',start:3900,end:4800},{vodId:'v100',start:4800,end:5170},
+  ]);
+  assert.equal(feedWindows([{id:'v200',chapters}], 'wardogs', {startVodId:'v100',startOffsetSeconds:2100})[0].start,0,'offset only applies to the initial recording');
+  await assert.rejects(api.configureFeed({...options,startOffsetSeconds:5200}),/внутри выбранной игры/);
+  const intro=(await windows()).find(w=>w.value.vodId==='v100'&&w.value.start===0);
+  await db.sql`update jobs.job set state='failed' where id=${intro.value.jobId}`;
+  await db.sql`update platform_runtime set value=jsonb_set(value,'{state}','"failed"') where key=${intro.key}`;
+  await db.sql`update jobs.job set state='active' where id=${second.value.jobId}`;
+  await db.sql`insert into clips(id,run_id,state) values('intro-draft','r','ready'),('intro-published','r','ready')`;
+  await db.sql`insert into publications(id,clip_id,platform,account,media_id,status) values('keep','intro-published','youtube',${channel},'existing-video','published')`;
+  await api.configureFeed({...options,startOffsetSeconds:2100});
+  assert.equal((await db.sql`select state from jobs.job where id=${second.value.jobId}`)[0].state,'cancelled','stops an in-flight intro task');
+  assert.equal((await db.sql`select archive_reason as reason from clips where id='intro-draft'`)[0].reason,'excluded-intro');
+  assert.equal((await db.sql`select archived_at as archived from clips where id='intro-published'`)[0].archived,null,'preserves published history');
+  await api.configureFeed({...options,enabled:false});await api.configureFeed(options);
+  assert.equal((await api.feeds())[0].policy.startOffsetSeconds,2100,'pause/resume retains the verified start');
+  const retired=(await windows()).filter(w=>w.value.vodId==='v100'&&w.value.start<2100);
+  assert(retired.every(w=>w.value.state==='done'&&w.value.excluded),'intro attempts are never retried');
+  for(const item of retired){const [p]=await db.sql`select value from platform_runtime where key=${'batch-publication:'+item.value.jobId}`;assert.equal(p.value.enabled,false,'resuming must not publish excluded intro clips');}
+  await assert.rejects(api.configureFeed({...options,startOffsetSeconds:0}),/только вперёд/);
   console.log('PASS: real queue, restart/send recovery, duplicate prevention, exact streamer/game scope, pause, buffer refill, all source windows, future broadcasts');
 }finally{await boss?.stop();await db?.close();try{docker('rm','-f','-v',name);}catch{}}

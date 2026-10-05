@@ -210,6 +210,7 @@ export const batchPublicationKey = (id:string) => `batch-publication:${id}`;
 export const publicationFeedOptions = z.object({
   login:z.string().regex(/^[a-z0-9_]{1,64}$/),game:z.string().regex(/^[a-z0-9_]{1,100}$/),
   startVodId:z.string().regex(/^v\d+$/),channelId:batchPublicationOptions.shape.channelId,
+  startOffsetSeconds:z.number().int().min(0).max(172800).optional(),
   enabled:z.boolean().default(true),intervalMinutes:batchPublicationOptions.shape.intervalMinutes,
   audioMode:z.enum(['original','dtln','dtln-gated']).default('original'),
 }).strict();

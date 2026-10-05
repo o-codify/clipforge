@@ -92,10 +92,10 @@ export class PlatformsService {
       where f.key like 'publication-feed:%' order by f.key`);
   }
 
-  async configureFeed(options:Pick<PublicationFeed,'login'|'game'|'startVodId'|'channelId'|'enabled'|'intervalMinutes'|'audioMode'>){
+  async configureFeed(options:Pick<PublicationFeed,'login'|'game'|'startVodId'|'startOffsetSeconds'|'channelId'|'enabled'|'intervalMinutes'|'audioMode'>){
     return this.db.transaction(async tx=>{
       await tx.execute(sql`select pg_advisory_xact_lock(740025)`);
-      const [source]=await tx.execute<{publishedAt:string}>(sql`select published_at as "publishedAt" from vods where id=${options.startVodId} and streamer=${options.login}`);
+      const [source]=await tx.execute<{publishedAt:string;chapters:{title:string;start:number;end:number}[]}>(sql`select published_at as "publishedAt",chapters from vods where id=${options.startVodId} and streamer=${options.login}`);
       if(!source?.publishedAt)throw new BadRequestException('Начальный эфир должен принадлежать выбранному стримеру');
       if(!(await tx.execute(sql`select 1 from games where slug=${options.game}`)).length)throw new BadRequestException('Игра не найдена');
       const [account]=await tx.execute(sql`select 1 from platform_accounts where platform='youtube' and external_id=${options.channelId}
@@ -104,12 +104,28 @@ export class PlatformsService {
       const key=publicationFeedKey(options.login,options.game);
       const [old]=await tx.execute<{value:PublicationFeed}>(sql`select value from platform_runtime where key=${key} for update`);
       if(old&&(old.value.channelId!==options.channelId||old.value.startVodId!==options.startVodId))throw new BadRequestException('Канал и начальный эфир действующей очереди менять нельзя');
-      const value:PublicationFeed={...old?.value,...options,id:old?.value.id??randomUUID(),since:new Date(source.publishedAt).toISOString(),
+      const startOffsetSeconds=options.startOffsetSeconds??old?.value.startOffsetSeconds??0;
+      if(startOffsetSeconds<(old?.value.startOffsetSeconds??0))throw new BadRequestException('Начало действующей очереди можно переносить только вперёд');
+      if(startOffsetSeconds>0&&!source.chapters.some(c=>c.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'_').replace(/^_|_$/g,'')===options.game&&startOffsetSeconds>=c.start&&startOffsetSeconds<c.end))throw new BadRequestException('Начало очереди должно находиться внутри выбранной игры');
+      const value:PublicationFeed={...old?.value,...options,startOffsetSeconds,id:old?.value.id??randomUUID(),since:new Date(source.publishedAt).toISOString(),
         state:options.enabled?'waiting':'paused',error:null,authorizedAt:new Date().toISOString()};
       await tx.execute(sql`insert into platform_runtime(key,value) values(${key},${JSON.stringify(value)}::jsonb)
         on conflict(key) do update set value=excluded.value,updated_at=now()`);
       await tx.execute(sql`update platform_runtime set value=value||${JSON.stringify({enabled:value.enabled,intervalMinutes:value.intervalMinutes})}::jsonb,updated_at=now()
         where key like 'batch-publication:%' and value->>'feedId'=${value.id}`);
+      // Advancing past an intro retires its old attempts and publication policies.
+      // Keep the record so retry/restart cannot silently re-enable those clips.
+      const excluded=await tx.execute<{key:string;value:{jobId:string}}>(sql`select key,value from platform_runtime
+        where key like ${'feed-window:'+value.id+':%'} and value->>'vodId'=${value.startVodId}
+        and (value->>'start')::numeric<${startOffsetSeconds} for update`);
+      for(const item of excluded){
+        await tx.execute(sql`update platform_runtime set value=value||'{"state":"done","excluded":true}'::jsonb,updated_at=now() where key=${item.key}`);
+        await tx.execute(sql`update platform_runtime set value=value||'{"enabled":false,"state":"excluded"}'::jsonb,updated_at=now() where key=${batchPublicationKey(item.value.jobId)}`);
+        await tx.execute(sql`update jobs.job set state='cancelled',completed_on=now() where id=${item.value.jobId}::uuid and state in ('created','retry','active')`);
+        await tx.execute(sql`update clips c set archived_at=now(),archive_reason='excluded-intro' from runs r
+          where r.id=c.run_id and r.settings->>'jobId'=${item.value.jobId} and c.archived_at is null
+          and not exists(select 1 from publications p where p.clip_id=c.id and (p.media_id is not null or p.status in ('queued','uploading','processing')))`);
+      }
       if(value.enabled){
         const failed=await tx.execute<{key:string;value:Record<string,unknown>}>(sql`select key,value from platform_runtime
           where key like ${'feed-window:'+value.id+':%'} and value->>'state'='failed' for update`);
