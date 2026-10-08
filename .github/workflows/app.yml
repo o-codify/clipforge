@@ -1,5 +1,8 @@
 name: ClipForge
 
+# CI builds software and checks server startup only. Never download streams,
+# process/render/inspect clips, or start media workers here (including fixtures).
+# Media processing and media tests run on platform workers or locally.
 on:
   push:
     branches: [main, master]
@@ -49,7 +52,7 @@ jobs:
           docker push "$image:latest"
 
   deploy:
-    needs: [build, media]
+    needs: [build, package-worker]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -70,7 +73,8 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
         run: node scripts/deploy.mjs
 
-  media:
+  package-worker:
+    name: Package worker code (no media processing)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -84,22 +88,10 @@ jobs:
         with:
           version: 11.1.3
       - run: pnpm install --frozen-lockfile
-      - name: Compile media worker on GitHub
+      - name: Compile worker code without running it
         run: pnpm exec turbo run build --filter=@clipforge/worker...
-      - name: Verify streamed publication transport without uploading to YouTube
-        run: node --test packages/youtube/test/source.test.mjs
-      - name: Verify download cap and partial-file recovery
-        run: node --experimental-strip-types --test packages/pipeline/test/download-recovery.test.ts
-      - name: Verify transcript typography and subtitle masking
-        run: node --experimental-strip-types --test packages/pipeline/test/text.test.ts packages/pipeline/test/subtitles.test.ts packages/pipeline/test/port.test.ts
-      - name: Verify protection gates and pre-crop masking
-        run: node --experimental-strip-types --test packages/pipeline/test/protection.test.ts apps/worker/test/media-review.test.mjs apps/worker/test/render-options.test.mjs
-      - name: Verify bounded speech windows and interrupted recognition
-        run: PYTHONPATH=workers/python python3 -m unittest discover -s workers/python/tests -p test_resource_windows.py
       - name: Package portable media runtime
         run: node scripts/package-media.mjs
-      - name: Verify portable bundle and queue isolation
-        run: node dist/media/apps/worker/dist/main.mjs --check-runtime
       - name: Archive prepared runtime
         run: cd dist/media && zip -qr ../clipforge-media.zip .
       - uses: actions/upload-artifact@v4
@@ -109,7 +101,7 @@ jobs:
           retention-days: 14
 
   publish-media:
-    needs: [media, deploy]
+    needs: [package-worker, deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
