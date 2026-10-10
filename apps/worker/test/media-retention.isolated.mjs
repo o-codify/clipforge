@@ -59,6 +59,7 @@ try{
   await db.sql`insert into publications values('second','pending','youtube',null,'queued')`;
   const draft=await clip('draft',null);
   const blocked=await clip('blocked',null,{blocked:true});
+  const blockedFailure=await clip('blocked-failure','failed',{blocked:true,mediaId:false});
   const shared=await clip('shared','published');
   await db.sql`update clips set media_storage=${JSON.stringify({videoKey:shared.video,posterKey:shared.poster})}::jsonb where id='draft'`;
   const source='clipforge/sources/v900/source',neededSource='clipforge/sources/v901/source',orphan='clipforge/worker-results/unused/old.mp4',youngOrphan='clipforge/worker-results/unused/new.mp4';
@@ -78,7 +79,7 @@ try{
   assert(preview.files>0);assert.equal(objects.size,before);assert.equal(removed.length,0);assert.equal(aborted.length,0);
   assert.equal((await db.sql`select * from clips where media_released_at is not null`).length,0);
   const result=await pruneCloudMedia(db,storage);
-  for(const key of [published.video,published.poster,privateUpload.video,blocked.video,source,orphan])assert(!objects.has(key),key+' must be removed');
+  for(const key of [published.video,published.poster,privateUpload.video,blocked.video,blockedFailure.video,source,orphan])assert(!objects.has(key),key+' must be removed');
   for(const key of [processing.video,failed.video,rejectedUpload.video,active.video,pending.video,shared.video,neededSource,live,youngOrphan,'clipforge/checks/untouched'])assert(objects.has(key),key+' must survive');
   assert.equal(result.aborted,1);assert.deepEqual(aborted,[multipart]);
   assert.equal((await db.sql`select * from vod_source_assets where vod_id='v900'`).length,0);

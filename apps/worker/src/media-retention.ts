@@ -5,11 +5,11 @@ import type {MediaStorage,CacheManifest,CacheClip} from '@clipforge/storage';
 // A YouTube ID alone is not proof of successful processing. Keep bytes for
 // another pending destination, an uncertain upload, or an unfinished edit.
 const retainClip=sql`c.media_released_at is null and (
-  exists(select 1 from publications p where p.clip_id=c.id and
-    (p.status in ('queued','uploading','processing') or (p.status='failed' and p.media_id is null)))
-  or ((c.archived_at is null and c.state<>'blocked') and not exists(
+  exists(select 1 from publications p where p.clip_id=c.id and p.status in ('queued','uploading','processing'))
+  or ((c.archived_at is null and c.state<>'blocked') and (exists(
+    select 1 from publications p where p.clip_id=c.id and p.status='failed' and p.media_id is null) or not exists(
     select 1 from publications p where p.clip_id=c.id and p.platform='youtube'
-      and p.media_id is not null and p.status in ('published','uploaded'))))`;
+      and p.media_id is not null and p.status in ('published','uploaded')))))`;
 
 export async function neededMediaVods(db:Database,finishedJobId?:string) {
   const rows=await db.execute<{id:string;active:boolean}>(sql`select id,bool_or(active) as active from (

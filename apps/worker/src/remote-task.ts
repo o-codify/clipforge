@@ -37,7 +37,7 @@ async function main(){
     // Failed/partially rejected jobs also flush checkpoints and discard outputs.
     const archived=await remote.archiveWorkspace(ctx.config.data,ctx.config.out,log);
     if(process.env.WORKER_LEGACY_DATA&&process.env.WORKER_LEGACY_OUT){const old=await remote.archiveWorkspace(process.env.WORKER_LEGACY_DATA,process.env.WORKER_LEGACY_OUT,log);archived.files+=old.files;archived.freedBytes+=old.freedBytes;}
-    log(`Сохранено в S3: ${archived.files}; освобождено ${Math.round(archived.freedBytes/1048576)} МБ`);
+    log(`Рабочий кэш очищен: ${archived.files} файлов; освобождено ${Math.round(archived.freedBytes/1048576)} МБ`);
     if(task.queue===QUEUES.archiveVod)output=archived;
   }catch(error){failure??=error;log(`Очистка кэша будет повторена: ${String(error).slice(0,300)}`);}
   process.send?.(failure?{type:'result',ok:false,error:String(failure).slice(0,2000)}:{type:'result',ok:true,output:output??{}});
