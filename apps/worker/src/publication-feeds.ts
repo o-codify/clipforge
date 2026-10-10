@@ -32,6 +32,10 @@ export async function replenishPublicationFeeds(ctx:Context,boss:Pick<PgBoss,'se
       const [row]=await tx.execute<{value:PublicationFeed}>(sql`select value from platform_runtime where key=${entry.key} for update`);
       if(!row?.value.enabled)return null;
       const p=row.value;
+      // Active publication sources take precedence over discovery of unrelated
+      // channels; otherwise a large catalog backlog can starve a live feed.
+      await tx.execute(sql`update jobs.job set priority=5 where name=${QUEUES.indexChannel}
+        and data->>'login'=${p.login} and state in ('created','retry') and priority<5`);
       let saved:{key:string;value:Window}[]=[];
       const state=async(value:string,error:string|null=null)=>{
         const failed=saved.filter(s=>s.value.state==='failed');

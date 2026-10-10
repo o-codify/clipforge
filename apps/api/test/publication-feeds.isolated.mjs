@@ -33,6 +33,8 @@ try{
   const api=new PlatformsService(db,{},{}),ctx={db};
   const options=publicationFeedOptions.parse({login:'recrent',game:'wardogs',startVodId:'v100',channelId:channel});
   const feed=await api.configureFeed(options);
+  await boss.createQueue(QUEUES.indexChannel);
+  const catalogJob=await boss.send(QUEUES.indexChannel,{login:'recrent'});
   assert.equal((await api.configureFeed(options)).id,feed.id,'repeated setup keeps identity');
   await assert.rejects(api.configureFeed({...options,startVodId:'v99'}));
   const windows=()=>db.sql`select key,value from platform_runtime where key like 'feed-window:%' order by key`;
@@ -40,7 +42,8 @@ try{
   // Crash after the queue commits but before the caller receives its response.
   await assert.rejects(replenishPublicationFeeds(ctx,{createQueue:boss.createQueue.bind(boss),send:async(...a)=>{await boss.send(...a);throw Error('lost send response');}}));
   await Promise.all([tick(),tick()]);
-  assert.equal((await db.sql`select count(*)::int n from jobs.job`)[0].n,1);
+  assert.equal((await db.sql`select count(*)::int n from jobs.job where name=${QUEUES.preparePreview}`)[0].n,1);
+  assert.equal((await db.sql`select priority from jobs.job where id=${catalogJob}`)[0].priority,5,'active feed source outranks the general catalog backlog');
   let [w]=await windows();assert.equal(w.value.vodId,'v100');
   const [j]=await db.sql`select data from jobs.job where id=${w.value.jobId}`;
   assert.equal(j.data.game,'wardogs');assert.equal(j.data.count,100);assert.deepEqual(j.data.sourceRange,{start:0,end:900});

@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -94,11 +94,21 @@ jobs:
         run: node scripts/package-media.mjs
       - name: Archive prepared runtime
         run: cd dist/media && zip -qr ../clipforge-media.zip .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: clipforge-media-${{ github.sha }}
-          path: dist/clipforge-media.zip
-          retention-days: 14
+      # Store the release payload directly; the Actions artifact quota must not
+      # prevent a server fix from reaching production. Keep it unpublished until
+      # the matching server passes its readiness checks.
+      - name: Stage prepared runtime in a draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          cd dist
+          sha256sum clipforge-media.zip > clipforge-media.zip.sha256
+          if ! gh release view "media-$RELEASE_SHA" >/dev/null 2>&1; then
+            gh release create "media-$RELEASE_SHA" --draft --target "$RELEASE_SHA" --title "Media worker $RELEASE_SHA" --notes "Prepared runtime; media processing runs on enrolled platform workers."
+          fi
+          gh release upload "media-$RELEASE_SHA" clipforge-media.zip clipforge-media.zip.sha256 --clobber
 
   publish-media:
     needs: [package-worker, deploy]
@@ -107,14 +117,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: clipforge-media-${{ github.sha }}
       - name: Publish prepared worker for the PC to download
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          sha256sum clipforge-media.zip > clipforge-media.zip.sha256
-          gh release create "media-$RELEASE_SHA" --target "$RELEASE_SHA" --title "Media worker $RELEASE_SHA" --notes "Prepared on GitHub; the PC only downloads and runs this media worker." clipforge-media.zip clipforge-media.zip.sha256
+          gh release edit "media-$RELEASE_SHA" --draft=false
