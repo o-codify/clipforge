@@ -293,7 +293,7 @@ export class PlatformsService {
     const [clip] = await this.db.select({ login:clips.streamer,
       displayName:streamers.displayName, gameTitle:games.title })
       .from(clips).innerJoin(runs,eq(clips.runId,runs.id)).innerJoin(streamers,eq(clips.streamer,streamers.login)).leftJoin(games,eq(clips.game,games.slug))
-      .where(and(eq(clips.id,clipId),eq(clips.state,"ready"),sql`${clips.archivedAt} is null`,
+      .where(and(eq(clips.id,clipId),eq(clips.state,"ready"),sql`${clips.archivedAt} is null and ${clips.mediaReleasedAt} is null`,
         sql`coalesce(${runs.settings} #>> array['renderedClips',${clips.id},'protection','autoVerifiedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','reviewedAt'], ${runs.settings} #>> array['renderedClips',${clips.id},'protection','disabledAt']) is not null`));
     if(!clip) throw new NotFoundException("Клип недоступен для публикации");
     return { ...suggestVideoMetadata({...clip,displayName:clip.displayName ?? clip.login}),
@@ -318,6 +318,8 @@ export class PlatformsService {
     if (access.state !== "ok") throw new BadRequestException("Подключите YouTube повторно в настройках");
 
     const queued=await this.db.transaction(async tx=>{
+    const [media]=await tx.select({releasedAt:clips.mediaReleasedAt}).from(clips).where(eq(clips.id,clipId)).for('update');
+    if(!media||media.releasedAt)throw new BadRequestException('Файл клипа уже удалён после публикации');
     const [account] = await tx
       .select()
       .from(platformAccounts)

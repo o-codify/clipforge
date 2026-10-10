@@ -15,6 +15,7 @@ export async function upgradeRuntime(db: Database): Promise<void> {
   await db.execute(sql`ALTER TABLE clips ADD COLUMN IF NOT EXISTS archived_at timestamptz`);
   await db.execute(sql`ALTER TABLE clips ADD COLUMN IF NOT EXISTS archive_reason text`);
   await db.execute(sql`ALTER TABLE clips ADD COLUMN IF NOT EXISTS media_storage jsonb`);
+  await db.execute(sql`ALTER TABLE clips ADD COLUMN IF NOT EXISTS media_released_at timestamptz`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS youtube_upload_sessions (
     publication_id text PRIMARY KEY REFERENCES publications(id) ON DELETE CASCADE,
     url text NOT NULL, size bigint NOT NULL, created_at timestamptz NOT NULL DEFAULT now()

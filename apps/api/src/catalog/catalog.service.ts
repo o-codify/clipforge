@@ -319,7 +319,9 @@ export class CatalogService {
 
   async clipMedia(viewer: Viewer | null, id: string) {
     const [row] = await this.db
-      .select({ file: clips.file, outDir: runs.outDir, storage: clips.mediaStorage })
+      .select({ file: clips.file, outDir: runs.outDir, storage: clips.mediaStorage, releasedAt:clips.mediaReleasedAt,
+        youtubeId:sql<string|null>`(select p.media_id from publications p where p.clip_id=${clips.id} and p.platform='youtube'
+          and p.status in ('published','uploaded') and p.media_id is not null order by p.published_at desc nulls last limit 1)` })
       .from(clips)
       .innerJoin(runs, eq(runs.id, clips.runId))
       .where(and(eq(clips.id, id), isNull(clips.archivedAt), only(viewer, clips.streamer)));

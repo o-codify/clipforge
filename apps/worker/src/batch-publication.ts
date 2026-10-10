@@ -85,7 +85,7 @@ export async function dispatchBatchPublications(ctx:Context,boss:Pick<PgBoss,'se
       const [clip]=await tx.execute<{id:string;login:string;displayName:string|null;gameTitle:string|null}>(sql`
         select c.id,c.streamer as login,s.display_name as "displayName",g.title as "gameTitle"
         from clips c join runs r on r.id=c.run_id join streamers s on s.login=c.streamer left join games g on g.slug=c.game
-        where r.settings->>'jobId'=${p.jobId} and c.streamer=${p.login} and c.archived_at is null and c.state in ('draft','ready')
+        where r.settings->>'jobId'=${p.jobId} and c.streamer=${p.login} and c.archived_at is null and c.media_released_at is null and c.state in ('draft','ready')
           ${p.game?sql`and c.game=${p.game}`:sql``}
           and coalesce(r.settings #>> array['renderedClips',c.id,'protection','autoVerifiedAt'],
             r.settings #>> array['renderedClips',c.id,'protection','reviewedAt'],

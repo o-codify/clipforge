@@ -9,6 +9,19 @@ import { jobNarration } from "@/lib/job-description";
 import { workspaceLinks } from "@/lib/navigation";
 interface Operations { online:boolean; runtime?: Record<string, any>; autoPublishEnabled?:boolean }
 interface Summary { clips:number; streamers:number; games:number; published:number; vods:number }
+function AssistantClip({media}:{media:NonNullable<AssistantMessage['media']>[number]}){
+  const [released,setReleased]=useState(false),[youtube,setYoutube]=useState<string|null>(null);
+  const id=media.url.match(/^\/media\/clip\/([^/?]+)$/)?.[1];
+  useEffect(()=>{
+    if(!id)return;let active=true;
+    void api.get<ClipRow&{publications:{platform:string;status:string;url:string|null}[]}>(`/api/clips/${id}`).then(clip=>{
+      if(active){setReleased(!!clip.mediaReleasedAt);setYoutube(clip.publications.find(p=>p.platform==='youtube'&&['published','uploaded'].includes(p.status))?.url??null);}
+    }).catch(()=>{});return()=>{active=false;};
+  },[id]);
+  return released?<a href={youtube??`/clips?clip=${id}`} target="_blank" rel="noopener">
+    <img src={media.poster} alt={media.title} style={{width:'100%'}}/>Смотреть на YouTube
+  </a>:<video controls preload="none" src={media.url} poster={media.poster}/>;
+}
 function selectionMessage(ops:Operations){
   if(ops.runtime?.settings?.paused)return "Пока не выбираю новые эфиры: обработка на паузе.";
   if(ops.runtime?.settings?.developmentMode)return "Автоматическая нарезка выключена. Обработаю эфир, когда вы запустите задание.";
@@ -85,7 +98,7 @@ export function PlatformAssistant({ viewer }: { viewer: Viewer }) {
     return {text:"Могу рассказать, что делаю сейчас, показать результаты, объяснить выбор эфира или состояние публикаций. Сообщения ниже приходят от реальных этапов обработки; новые результаты появятся здесь автоматически."};
   };
   return <Assistant key={`${viewer.accountId}:${viewer.actingAs??"all"}`} historyKey={`clipforge-chat:${viewer.accountId}:${viewer.actingAs??"all"}`} name="ClipForge" renderStreamer={login=><StreamerBadge login={login}/>}
-    status={status} pending={pending.length} mood={error||operations&&!operations.online?"error":working?"working":operations?.runtime?.settings?.paused?"paused":recentSuccess?"success":"idle"} messages={messages} onMessage={reply}
+    renderMedia={media=><AssistantClip media={media}/>} status={status} pending={pending.length} mood={error||operations&&!operations.online?"error":working?"working":operations?.runtime?.settings?.paused?"paused":recentSuccess?"success":"idle"} messages={messages} onMessage={reply}
     onSelect={async id=>{
       if(id==="show-clips"||id.startsWith("clips:")){
         if(id!=="show-clips"&&!messages.some(message=>message.actions?.some(action=>action.id===id)))throw new Error("Неизвестное действие");

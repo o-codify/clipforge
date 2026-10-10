@@ -8,7 +8,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { randomUUID } from "node:crypto";
 
-import { discovery, platformAccounts, publications, streamers } from "@clipforge/db";
+import { clips, discovery, platformAccounts, publications, streamers } from "@clipforge/db";
 import { PAYLOADS, QUEUES, singletonKey, type QueueName } from "@clipforge/jobs";
 import { scoreCandidate } from "@clipforge/twitch";
 
@@ -270,6 +270,7 @@ export function startAutomation(
         join runs r on r.id = c.run_id
       where s.auto_publish
         and c.state = 'ready'
+        and c.media_released_at is null
         and coalesce(r.settings #>> array['renderedClips',c.id,'protection','autoVerifiedAt'], r.settings #>> array['renderedClips',c.id,'protection','reviewedAt'],r.settings #>> array['renderedClips',c.id,'protection','disabledAt']) is not null
         and c.archived_at is null
         and not exists (
@@ -286,6 +287,8 @@ export function startAutomation(
       if(!account)continue;
       const publicationId = randomUUID();
       const inserted=await ctx.db.transaction(async tx=>{
+      const [media]=await tx.select({releasedAt:clips.mediaReleasedAt}).from(clips).where(eq(clips.id,clip.id)).for('update');
+      if(!media||media.releasedAt)return false;
       const [active]=await tx.select({id:platformAccounts.id}).from(platformAccounts)
         .where(and(eq(platformAccounts.id,account.id),isNull(platformAccounts.disconnectRequestedAt))).for("update");
       if(!active)return false;

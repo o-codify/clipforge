@@ -72,7 +72,7 @@ export async function replenishPublicationFeeds(ctx:Context,boss:Pick<PgBoss,'se
       const nextRetryAt=failed.map(w=>w.value.retryAt).filter((at):at is string=>typeof at==='string').sort()[0]??null;
       const [queued]=await tx.execute<{n:number}>(sql`select count(*)::int n from clips c join runs r on r.id=c.run_id
         join platform_runtime b on b.key='batch-publication:'||(r.settings->>'jobId')
-        where b.value->>'feedId'=${p.id} and c.archived_at is null and c.state in ('draft','ready')
+        where b.value->>'feedId'=${p.id} and c.archived_at is null and c.media_released_at is null and c.state in ('draft','ready')
         and not exists(select 1 from publications u where u.clip_id=c.id and u.platform='youtube' and u.account=${p.channelId} and u.media_id is not null)`);
       // Keep a useful buffer and refill it as each video is published.
       if((queued?.n??0)>=20){await state('buffer-ready');return null;}

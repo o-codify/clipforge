@@ -412,6 +412,7 @@ export const clips = pgTable(
 
     file: text("file").notNull(),
     mediaStorage: jsonb("media_storage").$type<{ videoKey: string; posterKey: string } | null>(),
+    mediaReleasedAt: timestamp("media_released_at", { withTimezone: true }),
     trigger: text("trigger"),
     peak: doublePrecision("peak"),
     start: doublePrecision("start"),

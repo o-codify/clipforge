@@ -37,6 +37,7 @@ export class JobsController {
   @Post('clean-clip/:clipId')
   async cleanClip(@CurrentViewer() viewer:Viewer, @Param('clipId') id:string, @Body() body:unknown) {
     const clip = await this.catalog.clip(viewer,id);
+    if(clip.mediaReleasedAt)throw new BadRequestException('Файл клипа уже удалён после публикации');
     const input = cleanClipPayload.omit({clipId:true,vodId:true}).parse(body ?? {});
     return this.jobs.enqueue(QUEUES.cleanClip, {...input, clipId:id, vodId:clip.vodId});
   }

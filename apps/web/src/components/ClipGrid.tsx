@@ -23,7 +23,7 @@ interface ClipDetail extends ClipRow {
   safety?:MediaSafety|null;
   publications: {
     id: string; platform: string; privacy?: string | null; error?: string | null; account: string;
-    url: string | null; status: string;
+    url: string | null; status: string; mediaId?:string|null;
   }[];
   versions: {
     id: string; version: string; file: string;
@@ -42,6 +42,8 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
   const [publishing,setPublishing] = useState(false);
 
   const pendingPublication = open?.publications.some(p => ['queued', 'uploading', 'processing'].includes(p.status));
+  const youtube=open?.publications.find(p=>p.platform==='youtube'&&['published','uploaded'].includes(p.status)&&p.url);
+  const youtubeId=youtube?.mediaId??youtube?.url?.match(/(?:shorts\/|v=)([a-zA-Z0-9_-]{11})/)?.[1];
   useEffect(() => {
     if (!open?.id || !pendingPublication) return;
     const id = open.id;
@@ -50,7 +52,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
     const refresh = async () => {
       try {
         const latest = await api.get<ClipDetail>(`/api/clips/${id}`);
-        if (active) setOpen(current => current?.id === id ? {...current, publications: latest.publications} : current);
+        if (active) setOpen(current => current?.id === id ? latest : current);
       } catch {
         // Preserve the last confirmed state during a short network outage.
       } finally {
@@ -135,15 +137,20 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
             </button>
             <div className="clip-detail-heading"><StreamerBadge login={open.streamer}/><h2>{TRIGGERS[open.trigger ?? ""] ?? "Момент эфира"}</h2></div>
             <div className="player">
-              <video src={`/media/clip/${open.id}`} controls autoPlay
-                     poster={`/media/poster/${open.id}`} />
+              {open.mediaReleasedAt ? <div className="published-player">
+                {youtubeId&&/^[a-zA-Z0-9_-]{11}$/.test(youtubeId)&&<iframe title="Клип на YouTube"
+                  src={`https://www.youtube-nocookie.com/embed/${youtubeId}`} allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen
+                  style={{width:'100%',aspectRatio:'9 / 16',border:0}}/>}
+                {youtube?.url?<a className="btn" href={youtube.url} target="_blank" rel="noopener">Смотреть на YouTube</a>:<p>Файл клипа удалён.</p>}
+              </div> : <video src={`/media/clip/${open.id}`} controls autoPlay
+                     poster={`/media/poster/${open.id}`} />}
               <div className="side">
                 <p className="sub">
                   {TRIGGERS[open.trigger ?? ""] ?? open.trigger} ·{" "}
                   {hhmm(open.start)}–{hhmm(open.end)} ({open.duration.toFixed(1)} с)
                 </p>
                 <p style={{ marginTop: 12 }}>{open.text ? displayTranscript(open.text) : ""}</p>
-                {viewer?.isAdmin && <ClipCleanup key={open.id} id={open.id} state={open.state} safety={open.safety}
+                {viewer?.isAdmin && !open.mediaReleasedAt && <ClipCleanup key={open.id} id={open.id} state={open.state} safety={open.safety}
                   onReady={id=>{void show(id);onChange?.();}} onReview={()=>{void show(open.id);onChange?.();}}/>}
 
                 <h2>Публикации</h2>
@@ -173,7 +180,7 @@ export function ClipGrid({ clips, onChange }: { clips: ClipRow[]; onChange?: () 
                     </table>
                   </div>
                 )}
-                {viewer?.isAdmin && open.state === "ready" && (open.safety?.autoVerifiedAt || open.safety?.reviewedAt || open.safety?.disabledAt) &&
+                {viewer?.isAdmin && !open.mediaReleasedAt && open.state === "ready" && (open.safety?.autoVerifiedAt || open.safety?.reviewedAt || open.safety?.disabledAt) &&
                   !open.publications.some(
                     (p) => p.platform === "youtube" && p.status !== "failed",
                   ) && (

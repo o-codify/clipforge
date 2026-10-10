@@ -184,7 +184,7 @@ export class WorkerGatewayService implements OnModuleDestroy {
   }
   async operation(auth:string|undefined,leaseId:string,raw:unknown){const m=z.object({operation:z.string().max(50),input:z.unknown()}).strict().parse(raw);
     return this.withLease(auth,leaseId,(repo,db,scope)=>{
-      if(m.operation==='cache.plan'){if(!this.storage||!scope.vodId)throw new ConflictException('Хранилище недоступно');return cacheManifest(db,this.storage,scope.vodId);}
+      if(m.operation==='cache.plan'){if(!this.storage||!scope.vodId)throw new ConflictException('Хранилище недоступно');return cacheManifest(db,this.storage,scope.vodId,scope.jobId);}
       return scope.queue===QUEUES.indexChannel?new CatalogTaskRepository(db,scope).call(m.operation,m.input):repo.call(m.operation,m.input);
     });}
   async object(auth:string|undefined,leaseId:string,action:'start'|'part'|'complete'|'list'|'read',raw?:unknown,id?:string){

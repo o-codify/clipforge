@@ -265,12 +265,14 @@ async function main(): Promise<void> {
   const stopAutomation = role === "media" || requestedQueues ? () => {} : startAutomation(boss, ctx, automationDefaults(process.env));
   const stopBatchPublications = selectedQueues.has(QUEUES.publishBatchClip) ? startBatchPublications(ctx,boss) : () => {};
   let pruning = false;
-  const pruneTimer = role==='control'||!requestedQueues ? setInterval(async () => {
+  const prune = async () => {
     if (pruning) return;
     pruning = true;
     try { await pruneSources(ctx); } catch (error) { ctx.log(String(error)); }
     finally { pruning = false; }
-  }, 10 * 60_000) : undefined;
+  };
+  const pruneTimer = role==='control'||!requestedQueues ? setInterval(prune, 5 * 60_000) : undefined;
+  if(pruneTimer)void prune();
 
   let stopping = false;
   const stop = async () => {

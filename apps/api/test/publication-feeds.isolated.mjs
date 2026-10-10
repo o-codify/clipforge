@@ -20,7 +20,7 @@ try{
     create table streamers(login text,display_name text,avatar text);create table games(slug text,title text);
     create table vods(id text,streamer text,published_at timestamptz,duration int,chapters jsonb);
     create table runs(id text,settings jsonb,finished_at timestamptz);
-    create table clips(id text,run_id text,archived_at timestamptz,state text,archive_reason text);
+    create table clips(id text,run_id text,archived_at timestamptz,state text,archive_reason text,media_released_at timestamptz);
     create table publications(id text,clip_id text,platform text,account text,media_id text,status text);
     create table remote_worker_leases(job_id uuid,state text);`);
   boss=new PgBoss({connectionString:url,schema:'jobs'});boss.on('error',()=>{});await boss.start();

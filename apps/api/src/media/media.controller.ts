@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 
-import { Controller, Get, Inject, NotFoundException, Param, Req, Res } from "@nestjs/common";
+import { Controller, Get, GoneException, Inject, NotFoundException, Param, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { storageFromEnv } from "@clipforge/storage";
 
@@ -43,6 +43,7 @@ export class MediaController {
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const media = await this.catalog.clipMedia(viewer, id);
+    if(media?.releasedAt)throw new GoneException('Файл удалён после публикации. Видео доступно на YouTube.');
     if (media?.storage && this.storage) {
       reply.header("cache-control", "private, no-store");
       return reply.redirect(await this.storage.readUrl(media.storage.videoKey), 302);
@@ -103,6 +104,13 @@ export class MediaController {
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const media = await this.catalog.clipMedia(viewer, id);
+    if(media?.releasedAt){
+      if(media.youtubeId&&/^[a-zA-Z0-9_-]{11}$/.test(media.youtubeId)){
+        reply.header('cache-control','private, no-store');
+        return reply.redirect(`https://i.ytimg.com/vi/${media.youtubeId}/hqdefault.jpg`,302);
+      }
+      throw new GoneException('Файл клипа удалён');
+    }
     if (media?.storage && this.storage) {
       reply.header("cache-control", "private, no-store");
       return reply.redirect(await this.storage.readUrl(media.storage.posterKey), 302);

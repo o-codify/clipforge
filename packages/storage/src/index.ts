@@ -152,7 +152,7 @@ export class MediaStorage {
   }
 
   async *mediaObjects() {
-    for(const kind of ['clips','sources']) {
+    for(const kind of ['clips','sources','worker-results']) {
       let token:string|undefined;
       do {
         const page=await this.client.send(new ListObjectsV2Command({Bucket:this.bucket,Prefix:`${this.prefix}/${kind}/`,ContinuationToken:token}));
@@ -163,7 +163,7 @@ export class MediaStorage {
   }
   async removeMedia(key:string) {
     this.checkKey(key);
-    if(!['clips','sources'].some(kind=>key.startsWith(`${this.prefix}/${kind}/`)))throw new Error('Only generated media can be removed');
+    if(!['clips','sources','worker-results'].some(kind=>key.startsWith(`${this.prefix}/${kind}/`)))throw new Error('Only generated media can be removed');
     await this.client.send(new DeleteObjectCommand({Bucket:this.bucket,Key:key}));
   }
 }

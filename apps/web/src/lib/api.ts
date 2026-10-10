@@ -108,6 +108,7 @@ export interface VodRow {
 }
 
 export interface ClipRow {
+  mediaReleasedAt?: string | null;
   id: string;
   runId: string;
   vodId: string;

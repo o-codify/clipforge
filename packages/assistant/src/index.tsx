@@ -16,6 +16,7 @@ export interface AssistantReply { streamer?:string; media?: AssistantMessage["me
 export interface AssistantProps {
   historyKey?: string;
   renderStreamer?: (login:string)=>ReactNode;
+  renderMedia?: (media:NonNullable<AssistantMessage['media']>[number])=>ReactNode;
   name: string; identity?: string; status: string; pending: number;
   mood: "idle" | "working" | "success" | "error" | "paused";
   messages: AssistantMessage[];
@@ -24,7 +25,7 @@ export interface AssistantProps {
   onMessage: (text:string) => Promise<AssistantReply>;
 }
 
-export function Assistant({historyKey,name,status,pending,mood,messages,onSelect,onMessage,renderStreamer}:AssistantProps) {
+export function Assistant({historyKey,name,status,pending,mood,messages,onSelect,onMessage,renderStreamer,renderMedia}:AssistantProps) {
   const [open,setOpen]=useState(false);
   const [query,setQuery]=useState("");
   const [conversation,setConversation]=useState<AssistantMessage[]>([]);
@@ -77,7 +78,7 @@ export function Assistant({historyKey,name,status,pending,mood,messages,onSelect
         <div className="cfa-current" role="status">{status}</div>
         <div ref={chat} className="cfa-chat" role="log" aria-label="Чат с платформой" aria-live="polite" onScroll={()=>{const el=chat.current;if(el)follow.current=el.scrollHeight-el.scrollTop-el.clientHeight<70;}}>
           <div className="cfa-welcome"><strong>Я здесь, чтобы держать вас в курсе.</strong><p>Рассказываю, что ищу, что анализирую и какие клипы получаются. Спросите о результатах или о том, почему я выбрал эфир.</p></div>
-          {all.map(message=><article key={message.id} className={`cfa-message ${message.role==="user"?"cfa-user":""} ${message.tone??"normal"}`}><div className="cfa-message-by">{message.role==="user"?"Вы":name}<time>{new Date(message.time).toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"})}</time></div><p>{message.text}</p>{message.streamer&&<div className="cfa-streamer">{renderStreamer?.(message.streamer)}</div>}{message.context&&<div className="cfa-context">{message.context}</div>}{message.steps?.length ? <ol className="cfa-steps" aria-label="Этапы обработки">{message.steps.map(step=><li key={step.label} data-state={step.state}>{step.state==="done"?"✓ ":""}{step.label}</li>)}</ol>:null}{message.facts&&<dl>{message.facts.map(fact=><div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}{message.media&&<div className="cfa-media">{message.media.map(video=><figure key={video.url}><video controls preload="none" src={video.url} poster={video.poster}/><figcaption>{video.streamer&&renderStreamer?.(video.streamer)}<span>{video.title}</span></figcaption></figure>)}</div>}{!!message.actions?.length&&<div className="cfa-actions">{message.actions.map(action=><button key={action.id} onClick={()=>void select(action.id,false)}>{action.label}</button>)}</div>}</article>)}
+          {all.map(message=><article key={message.id} className={`cfa-message ${message.role==="user"?"cfa-user":""} ${message.tone??"normal"}`}><div className="cfa-message-by">{message.role==="user"?"Вы":name}<time>{new Date(message.time).toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"})}</time></div><p>{message.text}</p>{message.streamer&&<div className="cfa-streamer">{renderStreamer?.(message.streamer)}</div>}{message.context&&<div className="cfa-context">{message.context}</div>}{message.steps?.length ? <ol className="cfa-steps" aria-label="Этапы обработки">{message.steps.map(step=><li key={step.label} data-state={step.state}>{step.state==="done"?"✓ ":""}{step.label}</li>)}</ol>:null}{message.facts&&<dl>{message.facts.map(fact=><div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}{message.media&&<div className="cfa-media">{message.media.map(video=><figure key={video.url}>{renderMedia?renderMedia(video):<video controls preload="none" src={video.url} poster={video.poster}/>}<figcaption>{video.streamer&&renderStreamer?.(video.streamer)}<span>{video.title}</span></figcaption></figure>)}</div>}{!!message.actions?.length&&<div className="cfa-actions">{message.actions.map(action=><button key={action.id} onClick={()=>void select(action.id,false)}>{action.label}</button>)}</div>}</article>)}
           {sending&&<p className="cfa-thinking">Смотрю данные…</p>}
         </div>
         {unread&&<button className="cfa-unread" onClick={()=>{follow.current=true;setUnread(false);if(chat.current)chat.current.scrollTop=chat.current.scrollHeight;}}>Новые сообщения ↓</button>}
