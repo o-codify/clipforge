@@ -71,10 +71,42 @@ try{
   await tick();assert((await windows()).some(w=>w.value.vodId==='v200'),'new broadcasts replenish automatically');
   const newest=(await windows()).find(w=>w.value.vodId==='v200');
   await db.sql`update jobs.job set state='failed',output='{"message":"fixture interrupted"}' where id=${newest.value.jobId}`;
-  await tick();assert.equal((await api.feeds())[0].policy.state,'error');
-  await api.configureFeed(options);await tick();
-  const retried=(await windows()).find(w=>w.value.vodId==='v200');
+  await Promise.all([tick(),tick()]);
+  const nextWindow=(await windows()).find(w=>w.value.vodId==='v200'&&w.value.start===900);
+  assert(nextWindow,'a failed range never blocks the next one');
+  assert.equal((await api.feeds())[0].policy.deferredWindows,1);
+  assert.equal((await db.sql`select count(*)::int n from jobs.job where data->>'vodId'='v200'`)[0].n,2,'concurrent ticks create only one next job');
+  await db.sql`update jobs.job set state='completed' where id=${nextWindow.value.jobId}`;
+  await tick();assert.equal((await api.feeds())[0].policy.state,'waiting-retry');
+  assert.equal((await windows()).find(w=>w.key===newest.key).value.jobId,newest.value.jobId,'respects retry delay');
+  await db.sql`update platform_runtime set value=jsonb_set(value,'{retryAt}',to_jsonb('2020-01-01T00:00:00Z'::text)) where key=${newest.key}`;
+  await Promise.all([tick(),tick()]);
+  const retried=(await windows()).find(w=>w.key===newest.key);
   assert.notEqual(retried.value.jobId,newest.value.jobId);assert.equal(retried.value.state,'submitted');
+  assert.equal(retried.value.attempt,2);
+  assert.equal((await db.sql`select count(*)::int n from jobs.job where data->>'vodId'='v200'`)[0].n,3,'only one delayed retry');
+  await db.sql`update jobs.job set state='failed',output='{"message":"still uncertain"}' where id=${retried.value.jobId}`;
+  await tick();assert.equal((await api.feeds())[0].policy.state,'waiting-retry');
+  const delayed=(await windows()).find(w=>w.key===newest.key).value;
+  assert(Date.parse(delayed.retryAt)>Date.now()+5*3600000,'second failure backs off longer');
+  await db.sql`update platform_runtime set value=jsonb_set(value,'{retryAt}',to_jsonb('2020-01-01T00:00:00Z'::text)) where key=${newest.key}`;
+  await tick();const last=(await windows()).find(w=>w.key===newest.key).value;
+  assert.equal(last.attempt,3);
+  await db.sql`update jobs.job set state='failed',output='{"message":"still uncertain"}' where id=${last.jobId}`;
+  await tick();await tick();assert.equal((await api.feeds())[0].policy.state,'needs-attention');
+  assert.equal((await windows()).find(w=>w.key===newest.key).value.retryAt,null,'persistent errors do not waste resources in a retry loop');
+  await db.sql`insert into vods values('v300','recrent','2026-10-04',900,'[{"title":"WARDOGS","start":0,"end":900}]')`;
+  await tick();assert((await windows()).some(w=>w.value.vodId==='v300'),'even an exhausted failure cannot block future broadcasts');
+  const future=(await windows()).find(w=>w.value.vodId==='v300');
+  await db.sql`update jobs.job set state='completed' where id=${future.value.jobId}`;
+  // A retained pre-fix failure also recovers automatically after deployment.
+  await db.sql`update platform_runtime set value=value-'attempt'-'retryAt' where key=${newest.key}`;
+  await tick();assert.equal((await windows()).find(w=>w.key===newest.key).value.attempt,2);
+  const legacyRetry=(await windows()).find(w=>w.key===newest.key).value;
+  await db.sql`update jobs.job set state='failed' where id=${legacyRetry.jobId}`;await tick();
+  await api.configureFeed(options);await tick();
+  const manual=(await windows()).find(w=>w.key===newest.key).value;
+  assert.equal(manual.attempt,1,'explicit retry restores the attempt budget');
   assert.equal(feedWindows([{id:'v1',chapters:[{title:'Dota 2',start:0,end:1800}]}],'wardogs').length,0);
   assert.deepEqual(feedWindows([{id:'v100',chapters},{id:'v200',chapters}], 'wardogs', {startVodId:'v100',startOffsetSeconds:2100}).filter(w=>w.vodId==='v100'),[
     {vodId:'v100',start:2100,end:3000},{vodId:'v100',start:3000,end:3900},

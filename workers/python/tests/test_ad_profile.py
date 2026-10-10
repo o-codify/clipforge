@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 import cv2
 import numpy as np
-from clipforge_worker.ad_profile import profile_ads, source_info, validate_vision, covered_by, persistent_regions, request, inference_threads, SAMPLES
+from clipforge_worker.ad_profile import profile_ads, source_info, validate_vision, covered_by, persistent_regions, request, inference_threads, verify_region, SAMPLES
 from clipforge_worker.__main__ import op_prepare_media
 
 
@@ -17,6 +17,22 @@ class Reporter:
 
 
 class AdProfileTest(unittest.TestCase):
+    def test_uncertain_crop_uses_context_without_assuming_advertising(self):
+        for kind in ('ad', 'game', 'chat'):
+            response = lambda value: {'done': True, 'message': {'content': json.dumps({'kind': value})}}
+            with self.subTest(kind=kind), patch('clipforge_worker.ad_profile.request', side_effect=[response('uncertain'), response(kind)]) as engine:
+                self.assertEqual(verify_region(1, np.zeros((360,640,3), np.uint8), dict(x=10,y=20,w=80,h=40)), kind)
+                self.assertEqual(engine.call_count, 2)
+                self.assertEqual(len(engine.call_args_list[0].args[2]['messages'][0]['images']), 1)
+                self.assertEqual(len(engine.call_args_list[1].args[2]['messages'][0]['images']), 2)
+
+    def test_context_does_not_turn_uncertainty_into_a_clean_result(self):
+        response = {'done': True, 'message': {'content': '{"kind":"uncertain"}'}}
+        with patch('clipforge_worker.ad_profile.request', return_value=response) as engine:
+            with self.assertRaisesRegex(ValueError, 'отложена'):
+                verify_region(1, np.zeros((360,640,3), np.uint8), dict(x=10,y=20,w=80,h=40))
+            self.assertEqual(engine.call_count, 2, 'no unbounded vision retries')
+
     def test_vision_uses_supervisor_cpu_budget_instead_of_host_cores(self):
         with patch.dict('os.environ',{'SPEECH_CPU_THREADS':'1','OMP_NUM_THREADS':'8'}),patch('os.cpu_count',return_value=32):
             self.assertEqual(inference_threads(),1)

@@ -108,7 +108,7 @@ export class PlatformsService {
       if(startOffsetSeconds<(old?.value.startOffsetSeconds??0))throw new BadRequestException('Начало действующей очереди можно переносить только вперёд');
       if(startOffsetSeconds>0&&!source.chapters.some(c=>c.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'_').replace(/^_|_$/g,'')===options.game&&startOffsetSeconds>=c.start&&startOffsetSeconds<c.end))throw new BadRequestException('Начало очереди должно находиться внутри выбранной игры');
       const value:PublicationFeed={...old?.value,...options,startOffsetSeconds,id:old?.value.id??randomUUID(),since:new Date(source.publishedAt).toISOString(),
-        state:options.enabled?'waiting':'paused',error:null,authorizedAt:new Date().toISOString()};
+        state:options.enabled?'waiting':'paused',error:null,deferredWindows:0,nextRetryAt:null,authorizedAt:new Date().toISOString()};
       await tx.execute(sql`insert into platform_runtime(key,value) values(${key},${JSON.stringify(value)}::jsonb)
         on conflict(key) do update set value=excluded.value,updated_at=now()`);
       await tx.execute(sql`update platform_runtime set value=value||${JSON.stringify({enabled:value.enabled,intervalMinutes:value.intervalMinutes})}::jsonb,updated_at=now()
@@ -130,7 +130,7 @@ export class PlatformsService {
         const failed=await tx.execute<{key:string;value:Record<string,unknown>}>(sql`select key,value from platform_runtime
           where key like ${'feed-window:'+value.id+':%'} and value->>'state'='failed' for update`);
         for(const item of failed){
-          const jobId=randomUUID(),window={...item.value,jobId,state:'reserved',error:null,createdAt:new Date().toISOString()};
+          const jobId=randomUUID(),window={...item.value,jobId,state:'reserved',error:null,attempt:1,retryAt:null,createdAt:new Date().toISOString()};
           const policy:BatchPublicationPolicy={jobId,login:value.login,channelId:value.channelId,enabled:true,intervalMinutes:value.intervalMinutes,
             dailyLimit:null,privacy:'public',authorizedAt:value.authorizedAt,state:'waiting-clips',feedId:value.id,game:value.game};
           await tx.execute(sql`update platform_runtime set value=${JSON.stringify(window)}::jsonb,updated_at=now() where key=${item.key}`);

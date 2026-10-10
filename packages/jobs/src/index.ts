@@ -216,6 +216,7 @@ export const publicationFeedOptions = z.object({
 }).strict();
 export type PublicationFeed = z.infer<typeof publicationFeedOptions> & {
   id:string;since:string;state:string;error?:string|null;authorizedAt:string;
+  deferredWindows?:number;nextRetryAt?:string|null;
 };
 export const publicationFeedKey=(login:string,game:string)=>`publication-feed:${login}:${game}`;
 
